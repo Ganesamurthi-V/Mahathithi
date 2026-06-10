@@ -24,7 +24,7 @@ export default function SearchScreen({ navigation }: any) {
   const [query, setQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<Record<string, string>>({});
-  const debounceRef = useRef<NodeJS.Timeout>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const search = useCallback(async (searchQuery: string, activeFilters: Record<string, string>, page = 1) => {
     dispatch(setSearching(true));

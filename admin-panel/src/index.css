@@ -4,22 +4,22 @@
   --primary: #FF6B35;
   --primary-light: #FF8F5E;
   --primary-dark: #E55A2B;
-  --secondary: #1A365D;
+  --secondary: #FFFFFF;
   --accent: #F4A940;
   --accent-light: #FFD166;
   
-  --bg-primary: #0B0F1A;
-  --bg-secondary: #111827;
-  --bg-card: #1A2035;
-  --bg-card-hover: #1F2847;
-  --bg-input: #0D1320;
+  --bg-primary: #F8FAFC;
+  --bg-secondary: #FFFFFF;
+  --bg-card: #FFFFFF;
+  --bg-card-hover: #F1F5F9;
+  --bg-input: #F8FAFC;
   
-  --text-primary: #F1F5F9;
-  --text-secondary: #94A3B8;
+  --text-primary: #0F172A;
+  --text-secondary: #334155;
   --text-muted: #64748B;
   
-  --border: #1E293B;
-  --border-light: #334155;
+  --border: #E2E8F0;
+  --border-light: #CBD5E1;
   
   --success: #10B981;
   --warning: #F59E0B;
@@ -95,7 +95,7 @@ body {
 .sidebar-logo h1 {
   font-size: 18px;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--primary-light), var(--accent));
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -488,7 +488,7 @@ select.form-input {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: radial-gradient(ellipse at top, #1a1f3a, var(--bg-primary));
+  background: radial-gradient(ellipse at top, #FFEDD5, var(--bg-primary));
 }
 
 .login-card {
@@ -522,7 +522,7 @@ select.form-input {
 .login-card .logo-section h1 {
   font-size: 24px;
   font-weight: 800;
-  background: linear-gradient(135deg, var(--primary-light), var(--accent));
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
