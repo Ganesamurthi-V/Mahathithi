@@ -2,7 +2,7 @@ import axios from 'axios';
 import EncryptedStorage from 'react-native-encrypted-storage';
 
 // Change this to your backend URL
-const API_BASE = 'http://10.0.2.2:3000/api'; // Android emulator → host localhost
+const API_BASE = 'http://10.114.88.165:3000/api'; // PC Wi-Fi IP
 
 const api = axios.create({
   baseURL: API_BASE,

@@ -117,7 +117,36 @@ router.patch('/enumerators/:id', async (req: AuthenticatedRequest, res: Response
   }
 });
 
-// Assign districts to enumerator
+// Delete enumerator (Soft Delete)
+router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const enumeratorId = req.params.id as string;
+    
+    // Prevent self-deletion
+    if (enumeratorId === req.enumerator!.id) {
+      throw new ValidationError('You cannot delete your own account');
+    }
+
+    const enumerator = await prisma.enumerator.update({
+      where: { id: enumeratorId },
+      data: { isActive: false },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        action: 'enumerator_deleted',
+        entityType: 'enumerator',
+        entityId: enumeratorId,
+        enumeratorId: req.enumerator!.id,
+        details: { loginId: enumerator.loginId, name: enumerator.name },
+      },
+    });
+
+    res.json({ success: true, message: 'Enumerator deleted (deactivated) successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
 router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const { districtIds } = req.body;
