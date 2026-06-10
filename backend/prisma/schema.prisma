@@ -1,0 +1,364 @@
+// MahaAthithi - Maharashtra Tourism Stakeholder Verification Platform
+// Prisma Schema - PostgreSQL
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearchPostgres"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMERATOR & AUTHENTICATION
+// ============================================================================
+
+model Enumerator {
+  id            String   @id @default(uuid())
+  loginId       String   @unique @map("login_id")
+  passwordHash  String   @map("password_hash")
+  name          String
+  phone         String?
+  email         String?
+  isActive      Boolean  @default(true) @map("is_active")
+  isAdmin       Boolean  @default(false) @map("is_admin")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  districts     EnumeratorDistrict[]
+  sessions      Session[]
+  surveys       Survey[]
+  phoneValidations PhoneValidation[]
+  auditLogs     AuditLog[]
+  lockedStakeholders Stakeholder[] @relation("LockedBy")
+
+  @@map("enumerators")
+}
+
+model District {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  state     String   @default("Maharashtra")
+  code      String?  @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  enumerators EnumeratorDistrict[]
+
+  @@map("districts")
+}
+
+model EnumeratorDistrict {
+  id            String   @id @default(uuid())
+  enumeratorId  String   @map("enumerator_id")
+  districtId    String   @map("district_id")
+  assignedAt    DateTime @default(now()) @map("assigned_at")
+
+  // Relations
+  enumerator    Enumerator @relation(fields: [enumeratorId], references: [id], onDelete: Cascade)
+  district      District   @relation(fields: [districtId], references: [id], onDelete: Cascade)
+
+  @@unique([enumeratorId, districtId])
+  @@map("enumerator_districts")
+}
+
+model Session {
+  id            String   @id @default(uuid())
+  enumeratorId  String   @map("enumerator_id")
+  refreshToken  String   @unique @map("refresh_token")
+  deviceInfo    String?  @map("device_info")
+  ipAddress     String?  @map("ip_address")
+  isValid       Boolean  @default(true) @map("is_valid")
+  expiresAt     DateTime @map("expires_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  enumerator    Enumerator @relation(fields: [enumeratorId], references: [id], onDelete: Cascade)
+
+  @@index([enumeratorId])
+  @@index([refreshToken])
+  @@map("sessions")
+}
+
+// ============================================================================
+// STAKEHOLDER DATA (Imported from CSV — 313,604 records)
+// ============================================================================
+
+enum StakeholderStatus {
+  PENDING
+  IN_PROGRESS
+  IN_REVIEW
+  COMPLETED
+}
+
+model Stakeholder {
+  id                       String            @id @default(uuid())
+  primaryKeyId             Int               @unique @map("primary_key_id")
+  uin                      String?           @map("uin")
+  dataSource               String?           @map("data_source")
+  cinNumber                String?           @map("cin_number")
+  gstNumber                String?           @map("gst_number")
+  tinNumber                String?           @map("tin_number")
+  companyNameStandardized  String?           @map("company_name_standardized")
+  companyNameOriginal      String?           @map("company_name_original")
+  fullAddressRaw           String?           @map("full_address_raw")
+  addressLine1             String?           @map("address_line_1")
+  addressLine2             String?           @map("address_line_2")
+  city                     String?           @map("city")
+  district                 String?           @map("district")
+  state                    String?           @map("state")
+  pinCode                  String?           @map("pin_code")
+  nicCode                  String?           @map("nic_code")
+  nicDescription           String?           @map("nic_description")
+  category                 String?           @map("category")
+  priorityWeight           Float?            @map("priority_weight")
+  companyClass             String?           @map("company_class")
+  companyStatus            String?           @map("company_status")
+  companyCategory          String?           @map("company_category")
+  authorizedCapital        Float?            @map("authorized_capital")
+  paidupCapital            Float?            @map("paidup_capital")
+  listingStatus            String?           @map("listing_status")
+  registrationDate         String?           @map("registration_date")
+  fuzzySimilarityScore     Float?            @map("fuzzy_similarity_score")
+  crossSourceMatch         String?           @map("cross_source_match")
+  humanReviewRequired      String?           @map("human_review_required")
+  dedupMatchStatus         String?           @map("dedup_match_status")
+  sourceLineageNotes       String?           @map("source_lineage_notes")
+
+  // Application-level fields
+  status                   StakeholderStatus @default(PENDING) @map("status")
+  lockedById               String?           @map("locked_by_id")
+  lockedAt                 DateTime?         @map("locked_at")
+  createdAt                DateTime          @default(now()) @map("created_at")
+  updatedAt                DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  lockedBy                 Enumerator?       @relation("LockedBy", fields: [lockedById], references: [id])
+  surveys                  Survey[]
+  phoneValidations         PhoneValidation[]
+
+  // === SEARCH INDEXES ===
+  // B-tree indexes for exact and range queries
+  @@index([district])
+  @@index([state])
+  @@index([pinCode])
+  @@index([category])
+  @@index([nicCode])
+  @@index([gstNumber])
+  @@index([status])
+  @@index([companyStatus])
+  @@index([lockedById])
+
+  // Composite indexes for common filter combinations
+  @@index([district, category])
+  @@index([state, category])
+  @@index([district, pinCode])
+  @@index([district, status])
+  @@index([state, district])
+  @@index([companyNameStandardized, district])
+
+  @@map("stakeholders")
+}
+
+// ============================================================================
+// SURVEY DATA (Collected by enumerators)
+// ============================================================================
+
+model Survey {
+  id              String   @id @default(uuid())
+  stakeholderId   String   @map("stakeholder_id")
+  enumeratorId    String   @map("enumerator_id")
+
+  // Contact Information (editable by enumerator)
+  contactPerson   String?  @map("contact_person")
+  designation     String?  @map("designation")
+  mobileNumber    String?  @map("mobile_number")
+  email           String?  @map("email")
+  website         String?  @map("website")
+  businessCategory String? @map("business_category")
+  notes           String?  @map("notes")
+
+  // Survey-specific fields
+  gstNumber       String?  @map("gst_number")
+  organizationType String? @map("organization_type")
+  remarks         String?  @map("remarks")
+
+  // GPS Data (from actual device)
+  latitude        Float?   @map("latitude")
+  longitude       Float?   @map("longitude")
+  gpsAccuracy     Float?   @map("gps_accuracy")
+
+  // Status & Sync
+  isDraft         Boolean  @default(true) @map("is_draft")
+  isCompleted     Boolean  @default(false) @map("is_completed")
+  isSynced        Boolean  @default(false) @map("is_synced")
+  localId         String?  @map("local_id") // SQLite local ID for sync mapping
+  completedAt     DateTime? @map("completed_at")
+  syncedAt        DateTime? @map("synced_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  stakeholder     Stakeholder @relation(fields: [stakeholderId], references: [id])
+  enumerator      Enumerator  @relation(fields: [enumeratorId], references: [id])
+  media           Media[]
+
+  @@unique([stakeholderId, enumeratorId])
+  @@index([stakeholderId])
+  @@index([enumeratorId])
+  @@index([isCompleted])
+  @@index([isSynced])
+  @@map("surveys")
+}
+
+// ============================================================================
+// MEDIA (Photos & Videos)
+// ============================================================================
+
+enum MediaType {
+  PHOTO
+  VIDEO
+}
+
+enum PhotoCategory {
+  BUILDING_FRONT
+  SIGNBOARD
+  INTERIOR
+  STAKEHOLDER
+  ADDITIONAL
+}
+
+model Media {
+  id              String        @id @default(uuid())
+  surveyId        String        @map("survey_id")
+  type            MediaType     @map("type")
+  photoCategory   PhotoCategory? @map("photo_category")
+
+  // Storage
+  filePath        String        @map("file_path")  // S3 key
+  fileUrl         String?       @map("file_url")   // S3 presigned URL
+  fileName        String        @map("file_name")
+  fileSize        Int?          @map("file_size")   // bytes
+  mimeType        String?       @map("mime_type")
+
+  // Metadata
+  latitude        Float?        @map("latitude")
+  longitude       Float?        @map("longitude")
+  gpsAccuracy     Float?        @map("gps_accuracy")
+  capturedAt      DateTime      @map("captured_at")
+  duration        Int?          @map("duration")    // seconds, for video
+  thumbnailPath   String?       @map("thumbnail_path") // for video
+
+  // Sync
+  isSynced        Boolean       @default(false) @map("is_synced")
+  localId         String?       @map("local_id")
+  syncedAt        DateTime?     @map("synced_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  // Relations
+  survey          Survey        @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@index([surveyId])
+  @@index([type])
+  @@map("media")
+}
+
+// ============================================================================
+// PHONE VALIDATION
+// ============================================================================
+
+enum VerificationStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  FAILED
+}
+
+model PhoneValidation {
+  id              String             @id @default(uuid())
+  stakeholderId   String             @map("stakeholder_id")
+  enumeratorId    String             @map("enumerator_id")
+  phoneNumber     String             @map("phone_number")
+  status          VerificationStatus @default(PENDING_VERIFICATION) @map("status")
+  method          String             @default("phone_call") @map("method")
+  verifiedAt      DateTime?          @map("verified_at")
+  remarks         String?            @map("remarks")
+
+  // Sync
+  isSynced        Boolean            @default(false) @map("is_synced")
+  localId         String?            @map("local_id")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  // Relations
+  stakeholder     Stakeholder        @relation(fields: [stakeholderId], references: [id])
+  enumerator      Enumerator         @relation(fields: [enumeratorId], references: [id])
+
+  @@index([stakeholderId])
+  @@index([enumeratorId])
+  @@map("phone_validations")
+}
+
+// ============================================================================
+// SYNC QUEUE
+// ============================================================================
+
+enum SyncStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum SyncAction {
+  CREATE
+  UPDATE
+  DELETE
+  UPLOAD_MEDIA
+}
+
+model SyncQueue {
+  id           String     @id @default(uuid())
+  entityType   String     @map("entity_type")    // survey, media, phone_validation
+  entityId     String     @map("entity_id")
+  action       SyncAction @map("action")
+  payload      Json?      @map("payload")
+  status       SyncStatus @default(PENDING) @map("status")
+  retryCount   Int        @default(0) @map("retry_count")
+  maxRetries   Int        @default(5) @map("max_retries")
+  errorMessage String?    @map("error_message")
+  processedAt  DateTime?  @map("processed_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([entityType, entityId])
+  @@map("sync_queue")
+}
+
+// ============================================================================
+// AUDIT LOGS
+// ============================================================================
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  action        String   @map("action")           // login, survey_created, stakeholder_locked, etc.
+  entityType    String?  @map("entity_type")
+  entityId      String?  @map("entity_id")
+  enumeratorId  String?  @map("enumerator_id")
+  details       Json?    @map("details")
+  ipAddress     String?  @map("ip_address")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  enumerator    Enumerator? @relation(fields: [enumeratorId], references: [id])
+
+  @@index([enumeratorId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

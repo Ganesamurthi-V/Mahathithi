@@ -1,0 +1,289 @@
+import { prisma } from '../../config/database';
+import { NotFoundError, ValidationError, ConflictError } from '../../utils/errors';
+import { logger } from '../../utils/logger';
+import { StakeholderService } from '../stakeholder/stakeholder.service';
+
+const stakeholderService = new StakeholderService();
+
+interface CreateSurveyData {
+  stakeholderId: string;
+  enumeratorId: string;
+  contactPerson?: string;
+  designation?: string;
+  mobileNumber?: string;
+  email?: string;
+  website?: string;
+  businessCategory?: string;
+  notes?: string;
+  gstNumber?: string;
+  organizationType?: string;
+  remarks?: string;
+  latitude?: number;
+  longitude?: number;
+  gpsAccuracy?: number;
+  localId?: string;
+}
+
+export class SurveyService {
+  /**
+   * Create or update a survey for a stakeholder
+   */
+  async createOrUpdate(data: CreateSurveyData) {
+    // Check if stakeholder exists and is accessible
+    const stakeholder = await prisma.stakeholder.findUnique({
+      where: { id: data.stakeholderId },
+    });
+
+    if (!stakeholder) {
+      throw new NotFoundError('Stakeholder');
+    }
+
+    // Check if locked by another enumerator
+    if (stakeholder.lockedById && stakeholder.lockedById !== data.enumeratorId) {
+      throw new ConflictError('This stakeholder has been completed by another enumerator');
+    }
+
+    // Upsert survey (one survey per stakeholder per enumerator)
+    const survey = await prisma.survey.upsert({
+      where: {
+        stakeholderId_enumeratorId: {
+          stakeholderId: data.stakeholderId,
+          enumeratorId: data.enumeratorId,
+        },
+      },
+      update: {
+        contactPerson: data.contactPerson,
+        designation: data.designation,
+        mobileNumber: data.mobileNumber,
+        email: data.email,
+        website: data.website,
+        businessCategory: data.businessCategory,
+        notes: data.notes,
+        gstNumber: data.gstNumber,
+        organizationType: data.organizationType,
+        remarks: data.remarks,
+        latitude: data.latitude,
+        longitude: data.longitude,
+        gpsAccuracy: data.gpsAccuracy,
+        isDraft: true,
+      },
+      create: {
+        stakeholderId: data.stakeholderId,
+        enumeratorId: data.enumeratorId,
+        contactPerson: data.contactPerson,
+        designation: data.designation,
+        mobileNumber: data.mobileNumber,
+        email: data.email,
+        website: data.website,
+        businessCategory: data.businessCategory,
+        notes: data.notes,
+        gstNumber: data.gstNumber,
+        organizationType: data.organizationType,
+        remarks: data.remarks,
+        latitude: data.latitude,
+        longitude: data.longitude,
+        gpsAccuracy: data.gpsAccuracy,
+        localId: data.localId,
+        isDraft: true,
+      },
+    });
+
+    // Update stakeholder status to IN_PROGRESS
+    if (stakeholder.status === 'PENDING') {
+      await prisma.stakeholder.update({
+        where: { id: data.stakeholderId },
+        data: { status: 'IN_PROGRESS' },
+      });
+    }
+
+    // Audit log
+    await prisma.auditLog.create({
+      data: {
+        action: 'survey_saved',
+        entityType: 'survey',
+        entityId: survey.id,
+        enumeratorId: data.enumeratorId,
+        details: { stakeholderId: data.stakeholderId, isDraft: true },
+      },
+    });
+
+    return survey;
+  }
+
+  /**
+   * Get survey for a stakeholder
+   */
+  async getByStakeholderId(stakeholderId: string) {
+    const survey = await prisma.survey.findFirst({
+      where: { stakeholderId },
+      include: {
+        media: true,
+        stakeholder: {
+          select: {
+            companyNameStandardized: true,
+            district: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    return survey;
+  }
+
+  /**
+   * Complete a survey with validation.
+   * Requirements:
+   * - Contact Person filled
+   * - Phone filled
+   * - GPS captured
+   * - Minimum 4 photos
+   * - 1 video
+   * - Phone verification completed
+   */
+  async completeSurvey(surveyId: string, enumeratorId: string) {
+    const survey = await prisma.survey.findUnique({
+      where: { id: surveyId },
+      include: {
+        media: true,
+        stakeholder: {
+          include: {
+            phoneValidations: {
+              where: { enumeratorId },
+            },
+          },
+        },
+      },
+    });
+
+    if (!survey) {
+      throw new NotFoundError('Survey');
+    }
+
+    if (survey.enumeratorId !== enumeratorId) {
+      throw new ConflictError('You can only complete your own surveys');
+    }
+
+    // === VALIDATION CHECKS ===
+    const validationErrors: string[] = [];
+
+    // 1. Contact Person
+    if (!survey.contactPerson || survey.contactPerson.trim() === '') {
+      validationErrors.push('Contact person name is required');
+    }
+
+    // 2. Phone
+    if (!survey.mobileNumber || survey.mobileNumber.trim() === '') {
+      validationErrors.push('Mobile number is required');
+    }
+
+    // 3. GPS
+    if (!survey.latitude || !survey.longitude) {
+      validationErrors.push('GPS coordinates are required');
+    }
+
+    // 4. Minimum 4 photos
+    const photos = survey.media.filter(m => m.type === 'PHOTO');
+    if (photos.length < 4) {
+      validationErrors.push(`Minimum 4 photos required (currently: ${photos.length})`);
+    }
+
+    // 5. 1 video
+    const videos = survey.media.filter(m => m.type === 'VIDEO');
+    if (videos.length < 1) {
+      validationErrors.push('At least 1 verification video is required');
+    }
+
+    // 6. Phone verification
+    const verifiedPhone = survey.stakeholder.phoneValidations.find(
+      pv => pv.status === 'VERIFIED'
+    );
+    if (!verifiedPhone) {
+      validationErrors.push('Phone verification must be completed');
+    }
+
+    // === DETERMINE STATUS ===
+    if (validationErrors.length === 0) {
+      // All requirements met → COMPLETED + LOCK
+      await prisma.$transaction([
+        prisma.survey.update({
+          where: { id: surveyId },
+          data: {
+            isDraft: false,
+            isCompleted: true,
+            completedAt: new Date(),
+          },
+        }),
+        prisma.stakeholder.update({
+          where: { id: survey.stakeholderId },
+          data: {
+            status: 'COMPLETED',
+            lockedById: enumeratorId,
+            lockedAt: new Date(),
+          },
+        }),
+        prisma.auditLog.create({
+          data: {
+            action: 'survey_completed',
+            entityType: 'survey',
+            entityId: surveyId,
+            enumeratorId,
+            details: {
+              stakeholderId: survey.stakeholderId,
+              photosCount: photos.length,
+              videosCount: videos.length,
+            },
+          },
+        }),
+      ]);
+
+      logger.info(`Survey completed: ${surveyId}, stakeholder locked by ${enumeratorId}`);
+
+      return {
+        status: 'COMPLETED',
+        message: 'Survey completed successfully. Stakeholder has been locked.',
+      };
+    } else {
+      // Requirements NOT met → IN_REVIEW
+      await prisma.$transaction([
+        prisma.survey.update({
+          where: { id: surveyId },
+          data: { isDraft: false },
+        }),
+        prisma.stakeholder.update({
+          where: { id: survey.stakeholderId },
+          data: { status: 'IN_REVIEW' },
+        }),
+      ]);
+
+      return {
+        status: 'IN_REVIEW',
+        message: 'Survey submitted for review. Some requirements are not met.',
+        missingRequirements: validationErrors,
+      };
+    }
+  }
+
+  /**
+   * Get surveys by enumerator
+   */
+  async getByEnumerator(enumeratorId: string) {
+    return prisma.survey.findMany({
+      where: { enumeratorId },
+      include: {
+        stakeholder: {
+          select: {
+            companyNameStandardized: true,
+            district: true,
+            city: true,
+            status: true,
+          },
+        },
+        media: {
+          select: { id: true, type: true, photoCategory: true },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+}
