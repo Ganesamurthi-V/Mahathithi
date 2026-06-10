@@ -38,6 +38,7 @@ export const getProfile = () => api.get('/auth/me');
 export const getEnumerators = () => api.get('/admin/enumerators');
 export const createEnumerator = (data: any) => api.post('/admin/enumerators', data);
 export const updateEnumerator = (id: string, data: any) => api.patch(`/admin/enumerators/${id}`, data);
+export const deleteEnumerator = (id: string) => api.delete(`/admin/enumerators/${id}`);
 export const assignDistricts = (id: string, districtIds: string[]) =>
   api.put(`/admin/enumerators/${id}/districts`, { districtIds });
 

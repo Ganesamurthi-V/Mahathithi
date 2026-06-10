@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { login as apiLogin, getProfile, getEnumerators, createEnumerator, updateEnumerator, assignDistricts, getDistricts, getAnalytics, getAuditLogs } from './api';
+import { login as apiLogin, getProfile, getEnumerators, createEnumerator, updateEnumerator, deleteEnumerator, assignDistricts, getDistricts, getAnalytics, getAuditLogs } from './api';
 
 // ============================================================================
 // TYPES
@@ -241,6 +241,19 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     }
   };
 
+  const handleDeleteEnumerator = async (enumerator: Enumerator) => {
+    if (!window.confirm(`Are you sure you want to delete enumerator "${enumerator.name}"? This action cannot be undone.`)) {
+      return;
+    }
+    try {
+      await deleteEnumerator(enumerator.id);
+      showToast('success', `Enumerator "${enumerator.name}" deleted successfully`);
+      loadData();
+    } catch (err: any) {
+      showToast('error', err.response?.data?.error?.message || 'Failed to delete enumerator');
+    }
+  };
+
   return (
     <div className="app-layout">
       {/* Sidebar */}
@@ -314,6 +327,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
             onCreate={() => setShowCreateModal(true)}
             onToggleActive={handleToggleActive}
             onAssignDistricts={(e) => setShowAssignModal(e)}
+            onDelete={handleDeleteEnumerator}
           />
         )}
         {activePage === 'districts' && (
@@ -432,13 +446,14 @@ function DashboardPage({ analytics, enumerators }: { analytics: any; enumerators
 // ============================================================================
 
 function EnumeratorsPage({
-  enumerators, districts, onCreate, onToggleActive, onAssignDistricts
+  enumerators, districts, onCreate, onToggleActive, onAssignDistricts, onDelete
 }: {
   enumerators: Enumerator[];
   districts: District[];
   onCreate: () => void;
   onToggleActive: (e: Enumerator) => void;
   onAssignDistricts: (e: Enumerator) => void;
+  onDelete: (e: Enumerator) => void;
 }) {
   return (
     <>
@@ -497,12 +512,22 @@ function EnumeratorsPage({
                       📍 Districts
                     </button>
                     {!e.isAdmin && (
-                      <button
-                        className={`btn btn-sm ${e.isActive ? 'btn-danger' : 'btn-success'}`}
-                        onClick={() => onToggleActive(e)}
-                      >
-                        {e.isActive ? 'Deactivate' : 'Activate'}
-                      </button>
+                      <>
+                        <button
+                          className={`btn btn-sm ${e.isActive ? 'btn-danger' : 'btn-success'}`}
+                          onClick={() => onToggleActive(e)}
+                        >
+                          {e.isActive ? 'Deactivate' : 'Activate'}
+                        </button>
+                        <button
+                          className="btn btn-sm btn-danger"
+                          onClick={() => onDelete(e)}
+                          style={{ padding: '6px 8px' }}
+                          title="Delete Enumerator"
+                        >
+                          🗑️
+                        </button>
+                      </>
                     )}
                   </div>
                 </td>
