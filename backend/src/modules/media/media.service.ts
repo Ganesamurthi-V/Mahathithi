@@ -20,16 +20,37 @@ interface UploadMediaData {
 
 export class MediaService {
   async upload(data: UploadMediaData) {
-    // Verify survey exists
+    // Verify survey exists (soft check — allow upload even if survey hasn't synced yet)
     const survey = await prisma.survey.findUnique({
       where: { id: data.surveyId },
     });
-    if (!survey) throw new NotFoundError('Survey');
+    // If survey not found by ID, try finding by stakeholderId embedded in the surveyId
+    // This handles 'draft_<stakeholderId>' pattern from offline-first mobile app
+    let resolvedSurveyId = data.surveyId;
+    if (!survey) {
+      // Try to find any survey linked to this stakeholder
+      const stakeholderId = data.surveyId.startsWith('draft_')
+        ? data.surveyId.replace('draft_', '')
+        : null;
+      if (stakeholderId) {
+        const existingSurvey = await prisma.survey.findFirst({
+          where: { stakeholderId },
+          orderBy: { updatedAt: 'desc' },
+        });
+        if (existingSurvey) {
+          resolvedSurveyId = existingSurvey.id;
+        } else {
+          throw new NotFoundError('Survey');
+        }
+      } else {
+        throw new NotFoundError('Survey');
+      }
+    }
 
     // Check photo limits (max 5)
     if (data.type === 'PHOTO') {
       const existingPhotos = await prisma.media.count({
-        where: { surveyId: data.surveyId, type: 'PHOTO' },
+        where: { surveyId: resolvedSurveyId, type: 'PHOTO' },
       });
       if (existingPhotos >= 5) {
         throw new Error('Maximum 5 photos allowed per survey');
@@ -39,7 +60,7 @@ export class MediaService {
     // Check video limit (max 1)
     if (data.type === 'VIDEO') {
       const existingVideos = await prisma.media.count({
-        where: { surveyId: data.surveyId, type: 'VIDEO' },
+        where: { surveyId: resolvedSurveyId, type: 'VIDEO' },
       });
       if (existingVideos >= 1) {
         throw new Error('Maximum 1 video allowed per survey');
@@ -49,12 +70,12 @@ export class MediaService {
     // Upload to S3
     const s3Key = generateS3Key(
       data.type === 'PHOTO' ? 'photo' : 'video',
-      data.surveyId,
+      resolvedSurveyId,
       data.fileName
     );
 
     await uploadToS3(s3Key, data.fileBuffer, data.mimeType, {
-      surveyId: data.surveyId,
+      surveyId: resolvedSurveyId,
       type: data.type,
       ...(data.latitude ? { latitude: data.latitude.toString() } : {}),
       ...(data.longitude ? { longitude: data.longitude.toString() } : {}),
@@ -66,7 +87,7 @@ export class MediaService {
     // Store metadata in DB
     const media = await prisma.media.create({
       data: {
-        surveyId: data.surveyId,
+        surveyId: resolvedSurveyId,
         type: data.type,
         photoCategory: data.photoCategory as any,
         filePath: s3Key,

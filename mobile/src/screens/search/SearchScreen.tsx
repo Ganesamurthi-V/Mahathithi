@@ -178,6 +178,8 @@ export default function SearchScreen({ navigation }: any) {
 
             {[
               { key: 'district', label: 'District', placeholder: 'e.g., PUNE' },
+              { key: 'taluka', label: 'Taluka', placeholder: 'e.g., Haveli' },
+              { key: 'city', label: 'Village / City', placeholder: 'e.g., Lonavala' },
               { key: 'state', label: 'State', placeholder: 'e.g., Maharashtra' },
               { key: 'pinCode', label: 'PIN Code', placeholder: 'e.g., 411001' },
               { key: 'category', label: 'Category', placeholder: 'e.g., Hotels & Resorts' },

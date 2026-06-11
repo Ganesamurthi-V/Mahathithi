@@ -12,6 +12,8 @@ interface SearchParams {
   category?: string;
   nicCode?: string;
   gst?: string;
+  taluka?: string;
+  city?: string;
   status?: string;
   page: number;
   limit: number;
@@ -28,7 +30,7 @@ export class StakeholderService {
   async search(params: SearchParams) {
     const {
       name, org, state, district, pinCode, category,
-      nicCode, gst, status, page, limit, assignedDistricts, isAdmin
+      nicCode, gst, status, taluka, city, page, limit, assignedDistricts, isAdmin
     } = params;
 
     const where: Prisma.StakeholderWhereInput = {};
@@ -96,6 +98,21 @@ export class StakeholderService {
       conditions.push({ gstNumber: { contains: gst, mode: 'insensitive' } });
     }
 
+    // Taluka filter
+    if (taluka) {
+      conditions.push({ taluka: { equals: taluka, mode: 'insensitive' } });
+    }
+
+    // City/Village filter
+    if (city) {
+      conditions.push({
+        OR: [
+          { city: { contains: city, mode: 'insensitive' } },
+          { village: { contains: city, mode: 'insensitive' } },
+        ],
+      });
+    }
+
     // Status filter
     if (status) {
       conditions.push({ status: status as any });
@@ -120,6 +137,8 @@ export class StakeholderService {
           companyNameStandardized: true,
           companyNameOriginal: true,
           city: true,
+          taluka: true,
+          village: true,
           district: true,
           state: true,
           pinCode: true,

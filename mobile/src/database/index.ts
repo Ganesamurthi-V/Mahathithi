@@ -32,6 +32,8 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
       address_line_1 TEXT,
       address_line_2 TEXT,
       city TEXT,
+      taluka TEXT,
+      village TEXT,
       district TEXT,
       state TEXT,
       pin_code TEXT,
@@ -57,6 +59,15 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
       updated_at TEXT
     );
   `);
+
+  // Migrate existing tables
+  try {
+    await database.executeSql('ALTER TABLE stakeholders ADD COLUMN taluka TEXT;');
+  } catch (e) { /* ignore if column already exists */ }
+
+  try {
+    await database.executeSql('ALTER TABLE stakeholders ADD COLUMN village TEXT;');
+  } catch (e) { /* ignore if column already exists */ }
 
   await database.executeSql(`
     CREATE TABLE IF NOT EXISTS surveys (
@@ -171,7 +182,7 @@ export const stakeholderDao = {
       await database.executeSql(
         `INSERT OR REPLACE INTO stakeholders (id, primary_key_id, uin, data_source, cin_number,
           gst_number, tin_number, company_name_standardized, company_name_original,
-          full_address_raw, address_line_1, address_line_2, city, district, state, pin_code,
+          full_address_raw, address_line_1, address_line_2, city, taluka, village, district, state, pin_code,
           nic_code, nic_description, category, priority_weight, company_class, company_status,
           company_category, authorized_capital, paidup_capital, listing_status, registration_date,
           fuzzy_similarity_score, cross_source_match, human_review_required, dedup_match_status,
@@ -179,7 +190,7 @@ export const stakeholderDao = {
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [s.id, s.primaryKeyId, s.uin, s.dataSource, s.cinNumber,
          s.gstNumber, s.tinNumber, s.companyNameStandardized, s.companyNameOriginal,
-         s.fullAddressRaw, s.addressLine1, s.addressLine2, s.city, s.district, s.state, s.pinCode,
+         s.fullAddressRaw, s.addressLine1, s.addressLine2, s.city, s.taluka, s.village, s.district, s.state, s.pinCode,
          s.nicCode, s.nicDescription, s.category, s.priorityWeight, s.companyClass, s.companyStatus,
          s.companyCategory, s.authorizedCapital, s.paidupCapital, s.listingStatus, s.registrationDate,
          s.fuzzySimilarityScore, s.crossSourceMatch, s.humanReviewRequired, s.dedupMatchStatus,
@@ -204,6 +215,14 @@ export const stakeholderDao = {
     if (filters.pinCode) {
       conditions.push(`pin_code LIKE ?`);
       params.push(`${filters.pinCode}%`);
+    }
+    if (filters.taluka) {
+      conditions.push(`taluka = ? COLLATE NOCASE`);
+      params.push(filters.taluka);
+    }
+    if (filters.city) {
+      conditions.push(`(city LIKE ? COLLATE NOCASE OR village LIKE ? COLLATE NOCASE)`);
+      params.push(`%${filters.city}%`, `%${filters.city}%`);
     }
     if (filters.category) {
       conditions.push(`category LIKE ? COLLATE NOCASE`);
@@ -306,6 +325,37 @@ export const surveyDao = {
   async markSynced(id: string): Promise<void> {
     const database = await getDB();
     await database.executeSql('UPDATE surveys SET is_synced = 1 WHERE id = ?', [id]);
+  },
+};
+
+// ============================================================================
+// MEDIA DAO
+// ============================================================================
+
+export const mediaDao = {
+  async save(media: any): Promise<void> {
+    const database = await getDB();
+    const id = media.id || `local_media_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    await database.executeSql(
+      `INSERT OR REPLACE INTO media (id, survey_id, type, photo_category, file_path, file_name, file_size, mime_type, latitude, longitude, gps_accuracy, captured_at, duration, thumbnail_path, is_synced)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, media.surveyId, media.type, media.photoCategory, media.filePath, media.fileName, media.fileSize, media.mimeType, media.latitude, media.longitude, media.gpsAccuracy, media.capturedAt, media.duration, media.thumbnailPath, media.isSynced ? 1 : 0]
+    );
+  },
+
+  async getUnsynced(): Promise<any[]> {
+    const database = await getDB();
+    const [results] = await database.executeSql('SELECT * FROM media WHERE is_synced = 0');
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i));
+    }
+    return rows;
+  },
+
+  async markSynced(id: string): Promise<void> {
+    const database = await getDB();
+    await database.executeSql('UPDATE media SET is_synced = 1 WHERE id = ?', [id]);
   },
 };
 

@@ -3,6 +3,8 @@ import { View, Text, TouchableOpacity, Image, StyleSheet, Alert, ScrollView, Pla
 import { launchCamera } from 'react-native-image-picker';
 import Geolocation from 'react-native-geolocation-service';
 import { colors, spacing, borderRadius, typography } from '../../theme';
+import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
+import { mediaDao } from '../../database';
 
 const PHOTO_CATEGORIES = [
   { key: 'BUILDING_FRONT', label: 'Building Front', icon: '🏢', required: true },
@@ -17,14 +19,24 @@ export default function PhotoCaptureScreen({ route, navigation }: any) {
   const [photos, setPhotos] = useState<Record<string, any>>({});
 
   const capturePhoto = async (category: string) => {
+    const hasCameraPermission = await requestCameraPermission();
+    if (!hasCameraPermission) {
+      Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+      return;
+    }
+
+    const hasLocationPermission = await requestLocationPermission();
+    if (!hasLocationPermission) {
+      Alert.alert('Permission Denied', 'Location permission is required for geotagging photos.');
+      return;
+    }
+
     // Get GPS first
     Geolocation.getCurrentPosition(
       async (position) => {
         const result = await launchCamera({
           mediaType: 'photo',
-          quality: 0.8,
-          maxWidth: 1920,
-          maxHeight: 1080,
+          quality: 1, // Maximum quality
           saveToPhotos: false,
           includeExtra: true,
         });
@@ -120,9 +132,31 @@ export default function PhotoCaptureScreen({ route, navigation }: any) {
       <TouchableOpacity
         style={[styles.doneBtn, !canProceed && styles.doneBtnDisabled]}
         disabled={!canProceed}
-        onPress={() => {
-          Alert.alert('Photos Saved', `${capturedCount} photos saved successfully`);
-          navigation.goBack();
+        onPress={async () => {
+          try {
+            for (const key in photos) {
+              const p = photos[key];
+              await mediaDao.save({
+                surveyId,
+                type: 'PHOTO',
+                photoCategory: key,
+                filePath: p.uri,
+                fileName: p.fileName,
+                fileSize: p.fileSize,
+                mimeType: p.type,
+                latitude: p.latitude,
+                longitude: p.longitude,
+                gpsAccuracy: p.gpsAccuracy,
+                capturedAt: p.capturedAt,
+                isSynced: false,
+              });
+            }
+            Alert.alert('Photos Saved', `${capturedCount} photos saved successfully`);
+            navigation.goBack();
+          } catch (e) {
+            console.error('Failed to save photos to DB', e);
+            Alert.alert('Error', 'Failed to save photos to the database.');
+          }
         }}
       >
         <Text style={styles.doneBtnText}>

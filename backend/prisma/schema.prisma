@@ -109,6 +109,8 @@ model Stakeholder {
   addressLine1             String?           @map("address_line_1")
   addressLine2             String?           @map("address_line_2")
   city                     String?           @map("city")
+  taluka                   String?           @map("taluka")
+  village                  String?           @map("village")
   district                 String?           @map("district")
   state                    String?           @map("state")
   pinCode                  String?           @map("pin_code")
