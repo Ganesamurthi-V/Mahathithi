@@ -337,7 +337,7 @@ function buildPrismaData(row: StakeholderRow) {
     humanReviewRequired:     row.humanReviewRequired,
     dedupMatchStatus:        row.dedupMatchStatus,
     sourceLineageNotes:      row.sourceLineageNotes,
-    status:                  'PENDING' as const,
+    status:                  'OPEN' as const,
   };
 }
 
