@@ -824,7 +824,13 @@ function StakeholdersPage() {
     setLoading(false);
   }, [filters]);
 
-  useEffect(() => { doSearch(1); }, []);
+  // Live table filtering with debounce
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      doSearch(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [filters, doSearch]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -886,9 +892,7 @@ function StakeholdersPage() {
               onChange={(e) => setFilters({ ...filters, status: e.target.value })}
             >
               <option value="">All</option>
-              <option value="PENDING">Pending</option>
-              <option value="IN_PROGRESS">In Progress</option>
-              <option value="IN_REVIEW">In Review</option>
+              <option value="PENDING">Open</option>
               <option value="CLOSED">Closed</option>
             </select>
           </div>
