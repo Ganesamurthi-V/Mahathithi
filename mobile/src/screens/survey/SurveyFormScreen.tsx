@@ -7,7 +7,7 @@ import { useForm, Controller } from 'react-hook-form';
 import Geolocation from 'react-native-geolocation-service';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
-import { surveyService } from '../../services/api';
+import { surveyService, mediaService } from '../../services/api';
 import { surveyDao, syncQueueDao, mediaDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows, iconSizes } from '../../theme';
@@ -15,6 +15,7 @@ import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
 import { launchCamera } from 'react-native-image-picker';
 import { Video as VideoCompressor } from 'react-native-compressor';
+import Video from 'react-native-video';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface SurveyFormData {
@@ -101,6 +102,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const [gps, setGps] = useState<{ latitude: number; longitude: number; accuracy: number } | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadText, setUploadText] = useState('');
   const [completionPercent, setCompletionPercent] = useState(0);
 
   // Media State
@@ -338,6 +340,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
   const onSubmit = async (data: SurveyFormData) => {
     setSaving(true);
+    setUploadText('Saving survey data...');
     const surveyId = existingSurvey?.id || `draft_${stakeholderId}`;
     const surveyPayload = {
       id: surveyId,
@@ -354,27 +357,73 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       if (netState.isConnected) {
         await surveyService.createOrUpdate(surveyPayload);
         await saveMediaToDb(surveyId);
-        // Sync queue for media uploads would be triggered separately by background job or Sync screen
-        Alert.alert('Saved', 'Survey and media saved to server successfully');
+
+        // Upload media sequentially
+        let uploadCount = 0;
+        const totalMedia = Object.keys(photos).length + (video ? 1 : 0);
+
+        for (const key in photos) {
+          uploadCount++;
+          setUploadText(`Uploading Photo ${uploadCount}/${totalMedia}...`);
+          const p = photos[key];
+          const formData = new FormData();
+          formData.append('surveyId', surveyId);
+          formData.append('type', 'PHOTO');
+          formData.append('photoCategory', key);
+          if (p.latitude) formData.append('latitude', String(p.latitude));
+          if (p.longitude) formData.append('longitude', String(p.longitude));
+          if (p.gpsAccuracy) formData.append('gpsAccuracy', String(p.gpsAccuracy));
+          formData.append('file', {
+            uri: p.uri,
+            name: p.fileName,
+            type: p.type,
+          } as any);
+          await mediaService.upload(formData);
+        }
+
+        if (video) {
+          uploadCount++;
+          setUploadText(`Uploading Video ${uploadCount}/${totalMedia}...`);
+          const formData = new FormData();
+          formData.append('surveyId', surveyId);
+          formData.append('type', 'VIDEO');
+          if (video.latitude) formData.append('latitude', String(video.latitude));
+          if (video.longitude) formData.append('longitude', String(video.longitude));
+          if (video.gpsAccuracy) formData.append('gpsAccuracy', String(video.gpsAccuracy));
+          if (video.duration) formData.append('duration', String(video.duration));
+          formData.append('file', {
+            uri: video.uri,
+            name: video.fileName,
+            type: video.type || 'video/mp4',
+          } as any);
+          await mediaService.upload(formData);
+        }
+
+        setUploadText('Finalizing survey...');
+        await surveyService.complete(surveyId);
+
+        Alert.alert('Saved', 'Survey and media uploaded successfully');
       } else {
         await surveyDao.save(surveyPayload);
         await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
         await saveMediaToDb(surveyId);
         Alert.alert('Saved Offline', 'Survey and media saved locally.');
       }
-      navigation.goBack();
+      navigation.navigate('Main', { screen: 'Stakeholders' });
     } catch (e: any) {
+      console.error(e);
       try {
         await surveyDao.save(surveyPayload);
         await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
         await saveMediaToDb(surveyId);
         Alert.alert('Saved Offline', 'Could not reach server. Survey saved locally.');
-        navigation.goBack();
+        navigation.navigate('Main', { screen: 'Stakeholders' });
       } catch (offlineError) {
         Alert.alert('Error', 'Failed to save survey');
       }
     }
     setSaving(false);
+    setUploadText('');
   };
 
   const fields: { name: keyof SurveyFormData; label: string; placeholder: string; required?: boolean; keyboardType?: any }[] = [
@@ -499,13 +548,18 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
             {video ? (
               <View>
-                <View style={styles.videoMetaBox}>
-                  <Icon name="play-circle-outline" size={32} color={colors.primary} />
-                  <Text style={styles.videoMetaText}>{video.duration ? `${Math.round(video.duration)}s` : 'Video recorded'}</Text>
+                <View style={{ width: '100%', height: 200, borderRadius: borderRadius.lg, overflow: 'hidden', marginBottom: spacing.md, backgroundColor: '#000' }}>
+                  <Video
+                    source={{ uri: video.uri }}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="contain"
+                    controls={true}
+                    paused={true}
+                  />
                 </View>
                 <View style={styles.photoActions}>
                   <TouchableOpacity style={styles.retakeBtn} onPress={captureVideo}>
-                    <Icon name="video-retake" size={16} color={colors.textSecondary} />
+                    <Icon name="camera-retake" size={16} color={colors.textSecondary} />
                     <Text style={styles.retakeBtnText}>Retake</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.removeBtn} onPress={() => setVideo(null)}>
@@ -533,7 +587,10 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             disabled={saving}
           >
             {saving ? (
-              <ActivityIndicator color="#FFF" />
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <ActivityIndicator color="#FFF" />
+                {uploadText ? <Text style={[styles.submitText, { marginLeft: spacing.md }]}>{uploadText}</Text> : null}
+              </View>
             ) : (
               <>
                 <Icon name="content-save-outline" size={20} color="#FFF" />

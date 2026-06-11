@@ -1,5 +1,6 @@
 import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert, Animated } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { setStats, setLoading } from '../../store/slices/dashboardSlice';
@@ -99,7 +100,11 @@ export default function DashboardScreen({ navigation }: any) {
     dispatch(setLoading(false));
   }, [dispatch]);
 
-  useEffect(() => { loadStats(); }, [loadStats]);
+  useFocusEffect(
+    useCallback(() => {
+      loadStats();
+    }, [loadStats])
+  );
 
   const handleLogout = () => {
     Alert.alert(

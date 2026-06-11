@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Animated, Easing } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { stakeholderService } from '../../services/api';
@@ -118,7 +119,11 @@ export default function StakeholderListScreen({ navigation }: any) {
     }
   };
 
-  useEffect(() => { loadStakeholders(); }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadStakeholders();
+    }, [])
+  );
 
   const renderItem = useCallback(({ item, index }: { item: any, index: number }) => (
     <StakeholderCard 

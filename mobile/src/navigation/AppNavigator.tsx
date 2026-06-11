@@ -5,6 +5,8 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../store';
 import { checkSession } from '../store/slices/authSlice';
+import { runAutoSync } from '../store/slices/syncThunks';
+import NetInfo from '@react-native-community/netinfo';
 import { colors, typography, shadows, spacing } from '../theme';
 import { moderateScale, verticalScale } from '../theme/responsive';
 
@@ -102,6 +104,19 @@ export function AppNavigator() {
   useEffect(() => {
     dispatch(checkSession());
   }, [dispatch]);
+
+  // Global Auto-Sync Listener
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      if (state.isConnected) {
+        dispatch(runAutoSync() as any);
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [dispatch, isAuthenticated]);
 
   if (isLoading) {
     return (
