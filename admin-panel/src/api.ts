@@ -54,4 +54,15 @@ export const getAuditLogs = (params?: any) => api.get('/admin/audit-logs', { par
 // Dashboard
 export const getDashboardStats = () => api.get('/dashboard/stats');
 
+// Stakeholders
+export const searchStakeholders = (params: any) => api.get('/stakeholders/search', { params });
+export const getStakeholderById = (id: string) => api.get(`/stakeholders/${id}`);
+
+// Surveys
+export const getSurveyByStakeholder = (stakeholderId: string) =>
+  api.get(`/surveys/stakeholder/${stakeholderId}`);
+
+// Media
+export const getMediaBySurvey = (surveyId: string) => api.get(`/media/survey/${surveyId}`);
+
 export default api;

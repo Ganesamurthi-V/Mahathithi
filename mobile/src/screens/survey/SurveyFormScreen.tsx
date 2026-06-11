@@ -11,6 +11,7 @@ import { surveyService } from '../../services/api';
 import { surveyDao, syncQueueDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography } from '../../theme';
+import { requestLocationPermission } from '../../utils/permissions';
 
 interface SurveyFormData {
   contactPerson: string;
@@ -48,8 +49,16 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     captureGPS();
   }, []);
 
-  const captureGPS = () => {
+  const captureGPS = async () => {
     setGpsLoading(true);
+
+    const hasPermission = await requestLocationPermission();
+    if (!hasPermission) {
+      Alert.alert('Permission Denied', 'Location permission is required to capture GPS.');
+      setGpsLoading(false);
+      return;
+    }
+
     Geolocation.getCurrentPosition(
       (position) => {
         setGps({
@@ -77,6 +86,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     setSaving(true);
 
     const surveyPayload = {
+      id: existingSurvey?.id || `draft_${stakeholderId}`,
       stakeholderId,
       enumeratorId: user!.id,
       ...data,

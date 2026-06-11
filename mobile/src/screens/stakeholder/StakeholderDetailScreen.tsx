@@ -37,7 +37,9 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
     { label: 'Company Name', value: s.companyNameOriginal },
     { label: 'Address', value: s.fullAddressRaw },
     { label: 'District', value: s.district },
+    { label: 'Taluka', value: s.taluka },
     { label: 'City', value: s.city },
+    { label: 'Village', value: s.village },
     { label: 'State', value: s.state },
     { label: 'PIN Code', value: s.pinCode },
     { label: 'GST Number', value: s.gstNumber },
@@ -107,7 +109,9 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
       )}
 
       {/* Action Buttons */}
-      {s.status !== 'COMPLETED' && (
+      {s.status !== 'COMPLETED' && (() => {
+        const activeSurveyId = survey?.id || `draft_${stakeholderId}`;
+        return (
         <View style={styles.actions}>
           <TouchableOpacity
             style={styles.actionPrimary}
@@ -119,13 +123,13 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
           <View style={styles.actionRow}>
             <TouchableOpacity
               style={styles.actionSecondary}
-              onPress={() => navigation.navigate('PhotoCapture', { stakeholderId, surveyId: survey?.id })}
+              onPress={() => navigation.navigate('PhotoCapture', { stakeholderId, surveyId: activeSurveyId })}
             >
               <Text style={styles.actionSecondaryText}>📷 Photos</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.actionSecondary}
-              onPress={() => navigation.navigate('VideoCapture', { stakeholderId, surveyId: survey?.id })}
+              onPress={() => navigation.navigate('VideoCapture', { stakeholderId, surveyId: activeSurveyId })}
             >
               <Text style={styles.actionSecondaryText}>🎥 Video</Text>
             </TouchableOpacity>
@@ -137,7 +141,8 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
             </TouchableOpacity>
           </View>
         </View>
-      )}
+        );
+      })()}
     </ScrollView>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { login as apiLogin, getProfile, getEnumerators, createEnumerator, updateEnumerator, deleteEnumerator, assignDistricts, getDistricts, getAnalytics, getAuditLogs } from './api';
+import { login as apiLogin, getProfile, getEnumerators, createEnumerator, updateEnumerator, deleteEnumerator, assignDistricts, getDistricts, getAnalytics, getAuditLogs, searchStakeholders, getSurveyByStakeholder, getMediaBySurvey } from './api';
 
 // ============================================================================
 // TYPES
@@ -278,6 +278,9 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
           <div className="nav-section">
             <div className="nav-section-title">Management</div>
+            <div className={`nav-item ${activePage === 'stakeholders' ? 'active' : ''}`} onClick={() => setActivePage('stakeholders')}>
+              <span className="icon">🏢</span> Stakeholders
+            </div>
             <div className={`nav-item ${activePage === 'enumerators' ? 'active' : ''}`} onClick={() => setActivePage('enumerators')}>
               <span className="icon">👥</span> Enumerators
             </div>
@@ -319,6 +322,9 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       <main className="main-content">
         {activePage === 'dashboard' && (
           <DashboardPage analytics={analytics} enumerators={enumerators} />
+        )}
+        {activePage === 'stakeholders' && (
+          <StakeholdersPage />
         )}
         {activePage === 'enumerators' && (
           <EnumeratorsPage
@@ -780,6 +786,371 @@ function AssignDistrictsModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// STAKEHOLDERS PAGE
+// ============================================================================
+
+function StakeholdersPage() {
+  const [stakeholders, setStakeholders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState({
+    name: '', district: '', pinCode: '', category: '', status: '',
+  });
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [selectedStakeholder, setSelectedStakeholder] = useState<any>(null);
+
+  const doSearch = useCallback(async (pageNum = 1) => {
+    setLoading(true);
+    try {
+      const params: any = { page: pageNum, limit: 20 };
+      if (filters.name) params.name = filters.name;
+      if (filters.district) params.district = filters.district;
+      if (filters.pinCode) params.pinCode = filters.pinCode;
+      if (filters.category) params.category = filters.category;
+      if (filters.status) params.status = filters.status;
+
+      const res = await searchStakeholders(params);
+      setStakeholders(res.data.data.stakeholders || res.data.data || []);
+      setTotal(res.data.data.total || res.data.data?.length || 0);
+      setPage(pageNum);
+    } catch (err) {
+      console.error('Search failed:', err);
+    }
+    setLoading(false);
+  }, [filters]);
+
+  useEffect(() => { doSearch(1); }, []);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    doSearch(1);
+  };
+
+  const getStatusBadge = (status: string) => {
+    const map: Record<string, string> = {
+      PENDING: 'badge-pending',
+      IN_PROGRESS: 'badge-active',
+      IN_REVIEW: 'badge-admin',
+      COMPLETED: 'badge-active',
+    };
+    return map[status] || 'badge-pending';
+  };
+
+  return (
+    <>
+      <div className="page-header">
+        <h2>Stakeholders</h2>
+        <p>Browse and verify stakeholder submissions with photos and videos</p>
+      </div>
+
+      {/* Search Filters */}
+      <div className="card" style={{ marginBottom: '24px' }}>
+        <form onSubmit={handleSearch} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ flex: '2', minWidth: '200px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Organization Name</label>
+            <input
+              className="form-input"
+              placeholder="Search by name..."
+              value={filters.name}
+              onChange={(e) => setFilters({ ...filters, name: e.target.value })}
+            />
+          </div>
+          <div style={{ flex: '1', minWidth: '140px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>District</label>
+            <input
+              className="form-input"
+              placeholder="District"
+              value={filters.district}
+              onChange={(e) => setFilters({ ...filters, district: e.target.value })}
+            />
+          </div>
+          <div style={{ flex: '1', minWidth: '120px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>PIN Code</label>
+            <input
+              className="form-input"
+              placeholder="PIN Code"
+              value={filters.pinCode}
+              onChange={(e) => setFilters({ ...filters, pinCode: e.target.value })}
+            />
+          </div>
+          <div style={{ flex: '1', minWidth: '120px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Status</label>
+            <select
+              className="form-input"
+              value={filters.status}
+              onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+            >
+              <option value="">All</option>
+              <option value="PENDING">Pending</option>
+              <option value="IN_PROGRESS">In Progress</option>
+              <option value="IN_REVIEW">In Review</option>
+              <option value="COMPLETED">Completed</option>
+            </select>
+          </div>
+          <button type="submit" className="btn btn-primary" style={{ height: '42px' }} disabled={loading}>
+            {loading ? '...' : '🔍 Search'}
+          </button>
+        </form>
+      </div>
+
+      {/* Results count */}
+      <div style={{ marginBottom: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
+        Showing {stakeholders.length} results {total > 0 && `of ${total.toLocaleString()} total`}
+      </div>
+
+      {/* Stakeholder Table */}
+      <div className="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Organization</th>
+              <th>District</th>
+              <th>City / Taluka</th>
+              <th>PIN Code</th>
+              <th>Category</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stakeholders.length === 0 && (
+              <tr>
+                <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                  {loading ? 'Searching...' : 'No stakeholders found. Try adjusting your search filters.'}
+                </td>
+              </tr>
+            )}
+            {stakeholders.map((s: any) => (
+              <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setSelectedStakeholder(s)}>
+                <td style={{ fontWeight: '600', color: 'var(--text-primary)', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {s.companyNameStandardized || s.companyNameOriginal || '—'}
+                </td>
+                <td>{s.district || '—'}</td>
+                <td style={{ fontSize: '13px' }}>{s.city || s.taluka || '—'}</td>
+                <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.pinCode || '—'}</code></td>
+                <td style={{ fontSize: '12px' }}>{s.category || '—'}</td>
+                <td>
+                  <span className={`badge ${getStatusBadge(s.status)}`}>
+                    {(s.status || 'PENDING').replace('_', ' ')}
+                  </span>
+                </td>
+                <td>
+                  <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); setSelectedStakeholder(s); }}>
+                    📸 View Gallery
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', marginTop: '24px' }}>
+        <button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => doSearch(page - 1)}>
+          ← Previous
+        </button>
+        <span style={{ display: 'flex', alignItems: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+          Page {page}
+        </span>
+        <button className="btn btn-secondary btn-sm" disabled={stakeholders.length < 20} onClick={() => doSearch(page + 1)}>
+          Next →
+        </button>
+      </div>
+
+      {/* Verification Gallery Modal */}
+      {selectedStakeholder && (
+        <VerificationGalleryModal
+          stakeholder={selectedStakeholder}
+          onClose={() => setSelectedStakeholder(null)}
+        />
+      )}
+    </>
+  );
+}
+
+// ============================================================================
+// VERIFICATION GALLERY MODAL
+// ============================================================================
+
+function VerificationGalleryModal({ stakeholder, onClose }: { stakeholder: any; onClose: () => void }) {
+  const [survey, setSurvey] = useState<any>(null);
+  const [media, setMedia] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [lightbox, setLightbox] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadVerificationData();
+  }, [stakeholder.id]);
+
+  const loadVerificationData = async () => {
+    setLoading(true);
+    try {
+      // Load survey
+      const svRes = await getSurveyByStakeholder(stakeholder.id).catch(() => ({ data: { data: null } }));
+      const surveyData = svRes.data.data;
+      setSurvey(surveyData);
+
+      // Load media if survey exists
+      if (surveyData?.id) {
+        const mediaRes = await getMediaBySurvey(surveyData.id).catch(() => ({ data: { data: [] } }));
+        setMedia(mediaRes.data.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load verification data:', err);
+    }
+    setLoading(false);
+  };
+
+  const photos = media.filter((m: any) => m.type === 'PHOTO');
+  const videos = media.filter((m: any) => m.type === 'VIDEO');
+
+  const categoryLabels: Record<string, string> = {
+    BUILDING_FRONT: '🏢 Building Front',
+    SIGNBOARD: '🪧 Signboard',
+    INTERIOR: '🏠 Interior',
+    STAKEHOLDER: '👤 Stakeholder',
+    ADDITIONAL: '📸 Additional',
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="gallery-modal" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="gallery-header">
+          <div>
+            <h3 style={{ margin: 0 }}>{stakeholder.companyNameStandardized || stakeholder.companyNameOriginal}</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
+              {stakeholder.district} • {stakeholder.pinCode} • <span className={`badge ${stakeholder.status === 'COMPLETED' ? 'badge-active' : 'badge-pending'}`}>{(stakeholder.status || 'PENDING').replace('_', ' ')}</span>
+            </p>
+          </div>
+          <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>
+            Loading verification data...
+          </div>
+        ) : (
+          <div className="gallery-body">
+            {/* Stakeholder Info */}
+            <div className="gallery-section">
+              <h4 className="gallery-section-title">📋 Stakeholder Details</h4>
+              <div className="gallery-info-grid">
+                {[
+                  { label: 'Address', value: stakeholder.fullAddressRaw },
+                  { label: 'City', value: stakeholder.city },
+                  { label: 'Taluka', value: stakeholder.taluka },
+                  { label: 'Village', value: stakeholder.village },
+                  { label: 'Category', value: stakeholder.category },
+                  { label: 'GST', value: stakeholder.gstNumber },
+                  { label: 'NIC Code', value: stakeholder.nicCode },
+                  { label: 'NIC Description', value: stakeholder.nicDescription },
+                ].filter(r => r.value).map((row, i) => (
+                  <div key={i} className="gallery-info-item">
+                    <span className="gallery-info-label">{row.label}</span>
+                    <span className="gallery-info-value">{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Survey Data */}
+            {survey && (
+              <div className="gallery-section">
+                <h4 className="gallery-section-title">📝 Survey Data</h4>
+                <div className="gallery-info-grid">
+                  {[
+                    { label: 'Contact Person', value: survey.contactPerson },
+                    { label: 'Designation', value: survey.designation },
+                    { label: 'Mobile', value: survey.mobileNumber },
+                    { label: 'Email', value: survey.email },
+                    { label: 'Website', value: survey.website },
+                    { label: 'Org Type', value: survey.organizationType },
+                    { label: 'GPS', value: survey.latitude ? `${survey.latitude.toFixed(5)}, ${survey.longitude.toFixed(5)}` : null },
+                    { label: 'Remarks', value: survey.remarks },
+                  ].filter(r => r.value).map((row, i) => (
+                    <div key={i} className="gallery-info-item">
+                      <span className="gallery-info-label">{row.label}</span>
+                      <span className="gallery-info-value">{row.value}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Surveyed by: {survey.enumerator?.name || 'Unknown'} • {survey.createdAt ? new Date(survey.createdAt).toLocaleDateString() : ''}
+                </div>
+              </div>
+            )}
+
+            {/* Photo Gallery */}
+            <div className="gallery-section">
+              <h4 className="gallery-section-title">📷 Verification Photos ({photos.length})</h4>
+              {photos.length > 0 ? (
+                <div className="photo-grid">
+                  {photos.map((photo: any) => (
+                    <div key={photo.id} className="photo-card" onClick={() => setLightbox(photo.fileUrl)}>
+                      <img src={photo.fileUrl} alt={photo.photoCategory || 'Photo'} />
+                      <div className="photo-card-overlay">
+                        <span className="photo-card-category">{categoryLabels[photo.photoCategory] || photo.photoCategory}</span>
+                        {photo.latitude && (
+                          <span className="photo-card-gps">📍 {photo.latitude.toFixed(4)}, {photo.longitude.toFixed(4)}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="gallery-empty">No photos uploaded yet</div>
+              )}
+            </div>
+
+            {/* Video Section */}
+            <div className="gallery-section">
+              <h4 className="gallery-section-title">🎥 Verification Video ({videos.length})</h4>
+              {videos.length > 0 ? (
+                <div className="video-grid">
+                  {videos.map((video: any) => (
+                    <div key={video.id} className="video-card">
+                      <video controls preload="metadata" style={{ width: '100%', borderRadius: '8px' }}>
+                        <source src={video.fileUrl} type={video.mimeType || 'video/mp4'} />
+                        Your browser does not support video playback.
+                      </video>
+                      <div className="video-meta">
+                        <span>📐 {video.fileSize ? `${(video.fileSize / (1024 * 1024)).toFixed(1)} MB` : '—'}</span>
+                        <span>⏱️ {video.duration ? `${video.duration}s` : '—'}</span>
+                        {video.latitude && <span>📍 {video.latitude.toFixed(4)}, {video.longitude.toFixed(4)}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="gallery-empty">No video uploaded yet</div>
+              )}
+            </div>
+
+            {/* No Media at all */}
+            {!survey && media.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: '48px', marginBottom: '12px' }}>📭</div>
+                <p>No survey or media data has been submitted for this stakeholder yet.</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Lightbox */}
+      {lightbox && (
+        <div className="lightbox-overlay" onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="Full size" />
+          <button className="lightbox-close" onClick={() => setLightbox(null)}>✕</button>
+        </div>
+      )}
     </div>
   );
 }

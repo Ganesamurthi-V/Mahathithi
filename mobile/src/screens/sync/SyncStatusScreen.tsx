@@ -6,8 +6,8 @@ import {
   startSync, syncComplete, syncFailed, updateSyncProgress,
   setPendingCount, setFailedCount,
 } from '../../store/slices/syncSlice';
-import { syncService } from '../../services/api';
-import { surveyDao, syncQueueDao, stakeholderDao, appStateDao } from '../../database';
+import { syncService, mediaService, surveyService } from '../../services/api';
+import { surveyDao, syncQueueDao, stakeholderDao, appStateDao, mediaDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography } from '../../theme';
 
@@ -80,7 +80,74 @@ export default function SyncStatusScreen() {
         }
       }
 
+      // Step 1.5: Upload Pending Media
       dispatch(updateSyncProgress(50));
+      const unsyncedMedia = await mediaDao.getUnsynced();
+
+      if (unsyncedMedia.length > 0) {
+        // Build a mapping of local survey IDs to server survey IDs
+        const surveyIdMap: Record<string, string> = {};
+
+        for (const media of unsyncedMedia) {
+          try {
+            const localSurveyId = media.survey_id;
+
+            // Resolve local draft ID to server survey ID
+            let serverSurveyId = surveyIdMap[localSurveyId];
+            if (!serverSurveyId) {
+              // Extract stakeholderId from draft_<stakeholderId> pattern
+              const stakeholderId = localSurveyId?.startsWith('draft_')
+                ? localSurveyId.replace('draft_', '')
+                : null;
+
+              if (stakeholderId) {
+                // Look up the server survey for this stakeholder
+                try {
+                  const svRes = await surveyService.getByStakeholder(stakeholderId);
+                  serverSurveyId = svRes.data?.data?.id;
+                } catch { /* no server survey yet */ }
+              }
+
+              // If it's already a server UUID, use it directly
+              if (!serverSurveyId) {
+                serverSurveyId = localSurveyId;
+              }
+
+              surveyIdMap[localSurveyId] = serverSurveyId;
+            }
+
+            if (!serverSurveyId) {
+              console.warn(`Skipping media ${media.id}: no server survey ID found`);
+              continue;
+            }
+
+            const formData = new FormData();
+            formData.append('surveyId', serverSurveyId);
+            formData.append('type', media.type);
+            if (media.photo_category) formData.append('photoCategory', media.photo_category);
+            if (media.latitude) formData.append('latitude', media.latitude.toString());
+            if (media.longitude) formData.append('longitude', media.longitude.toString());
+            if (media.gps_accuracy) formData.append('gpsAccuracy', media.gps_accuracy.toString());
+            if (media.duration) formData.append('duration', media.duration.toString());
+            formData.append('localId', media.id);
+
+            formData.append('file', {
+              uri: media.file_path,
+              type: media.mime_type || 'image/jpeg',
+              name: media.file_name || `upload_${Date.now()}`,
+            } as any);
+
+            await mediaService.upload(formData);
+            await mediaDao.markSynced(media.id);
+            console.log(`✅ Media uploaded: ${media.type} ${media.id}`);
+          } catch (mediaErr: any) {
+            console.error(`❌ Media upload failed for ${media.id}:`, mediaErr?.response?.data || mediaErr.message);
+            // Continue with next media item — don't block the whole sync
+          }
+        }
+      }
+
+      dispatch(updateSyncProgress(75));
 
       // Step 2: Get changes from server (locked stakeholders, etc.)
       const lastSync = await appStateDao.get('last_sync_time');

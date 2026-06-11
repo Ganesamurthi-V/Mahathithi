@@ -1,8 +1,3 @@
-/**
- * Prisma Seed Script
- * Creates default admin user and Maharashtra districts
- */
-
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 

@@ -2,31 +2,65 @@ import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { launchCamera } from 'react-native-image-picker';
 import Geolocation from 'react-native-geolocation-service';
+import { Video as VideoCompressor } from 'react-native-compressor';
 import { colors, spacing, borderRadius, typography } from '../../theme';
+import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
+import { mediaDao } from '../../database';
 
 export default function VideoCaptureScreen({ route, navigation }: any) {
   const { stakeholderId, surveyId } = route.params;
   const [video, setVideo] = useState<any>(null);
   const [recording, setRecording] = useState(false);
+  const [compressing, setCompressing] = useState(false);
 
   const captureVideo = async () => {
+    const hasCameraPermission = await requestCameraPermission();
+    if (!hasCameraPermission) {
+      Alert.alert('Permission Denied', 'Camera permission is required to record video.');
+      return;
+    }
+
+    const hasLocationPermission = await requestLocationPermission();
+    if (!hasLocationPermission) {
+      Alert.alert('Permission Denied', 'Location permission is required for geotagging videos.');
+      return;
+    }
+
     setRecording(true);
 
     Geolocation.getCurrentPosition(
       async (position) => {
         const result = await launchCamera({
           mediaType: 'video',
-          videoQuality: 'medium',
+          videoQuality: 'high',
           durationLimit: 60, // 60 seconds max
           saveToPhotos: false,
         });
 
         if (result.assets && result.assets[0]) {
           const asset = result.assets[0];
+          let finalUri = asset.uri;
+          
+          setCompressing(true);
+          try {
+            if (asset.uri) {
+              finalUri = await VideoCompressor.compress(
+                asset.uri,
+                {
+                  compressionMethod: 'manual',
+                  bitrate: 1500000, // 1.5 Mbps guarantees 60s video stays under 12MB
+                }
+              );
+            }
+          } catch (e) {
+            console.error('Compression failed', e);
+          }
+          setCompressing(false);
+
           setVideo({
-            uri: asset.uri,
+            uri: finalUri,
             fileName: asset.fileName,
-            fileSize: asset.fileSize,
+            fileSize: asset.fileSize, // Original file size, unfortunately compressor doesn't return new size
             type: asset.type,
             duration: asset.duration,
             latitude: position.coords.latitude,
@@ -78,10 +112,10 @@ export default function VideoCaptureScreen({ route, navigation }: any) {
             </View>
           </View>
         ) : (
-          <TouchableOpacity style={styles.captureBtn} onPress={captureVideo} disabled={recording}>
-            <Text style={styles.captureIcon}>{recording ? '⏳' : '🎥'}</Text>
+          <TouchableOpacity style={styles.captureBtn} onPress={captureVideo} disabled={recording || compressing}>
+            <Text style={styles.captureIcon}>{(recording || compressing) ? '⏳' : '🎥'}</Text>
             <Text style={styles.captureText}>
-              {recording ? 'Opening Camera...' : 'Tap to Record Video'}
+              {compressing ? 'Compressing Video...' : recording ? 'Opening Camera...' : 'Tap to Record Video'}
             </Text>
             <Text style={styles.captureHint}>Max 60 seconds • ~12MB</Text>
           </TouchableOpacity>
@@ -90,9 +124,29 @@ export default function VideoCaptureScreen({ route, navigation }: any) {
         <TouchableOpacity
           style={[styles.doneBtn, !video && styles.doneBtnDisabled]}
           disabled={!video}
-          onPress={() => {
-            Alert.alert('Video Saved', 'Verification video saved successfully');
-            navigation.goBack();
+          onPress={async () => {
+            if (!video) return;
+            try {
+              await mediaDao.save({
+                surveyId,
+                type: 'VIDEO',
+                filePath: video.uri,
+                fileName: video.fileName,
+                fileSize: video.fileSize,
+                mimeType: video.type || 'video/mp4',
+                latitude: video.latitude,
+                longitude: video.longitude,
+                gpsAccuracy: video.gpsAccuracy,
+                capturedAt: video.capturedAt,
+                duration: video.duration,
+                isSynced: false,
+              });
+              Alert.alert('Video Saved', 'Verification video saved successfully');
+              navigation.goBack();
+            } catch (e) {
+              console.error('Failed to save video to DB', e);
+              Alert.alert('Error', 'Failed to save video to the database.');
+            }
           }}
         >
           <Text style={styles.doneBtnText}>

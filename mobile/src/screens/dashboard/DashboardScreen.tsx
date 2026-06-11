@@ -1,8 +1,9 @@
 import React, { useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { setStats, setLoading } from '../../store/slices/dashboardSlice';
+import { logout } from '../../store/slices/authSlice';
 import { dashboardService } from '../../services/api';
 import { syncQueueDao } from '../../database';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
@@ -26,6 +27,17 @@ export default function DashboardScreen({ navigation }: any) {
 
   useEffect(() => { loadStats(); }, [loadStats]);
 
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to log out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Logout', style: 'destructive', onPress: () => dispatch(logout()) }
+      ]
+    );
+  };
+
   const statCards = [
     { label: 'Completed', value: stats.completed, color: colors.success, icon: '✅' },
     { label: 'Pending', value: stats.pending, color: colors.statusPending, icon: '⏳' },
@@ -45,8 +57,13 @@ export default function DashboardScreen({ navigation }: any) {
           <Text style={styles.greeting}>Welcome back,</Text>
           <Text style={styles.userName}>{user?.name}</Text>
         </View>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{user?.name?.[0] || 'U'}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{user?.name?.[0] || 'U'}</Text>
+          </View>
+          <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+            <Text style={{ fontSize: 20 }}>🚪</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -139,6 +156,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center',
   },
   avatarText: { color: '#FFF', fontSize: 20, fontWeight: '700' },
+  logoutBtn: {
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: colors.bgCard, justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: colors.border,
+  },
   districtBar: {
     backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
     padding: spacing.lg, marginBottom: spacing.xxl, borderWidth: 1, borderColor: colors.border,
