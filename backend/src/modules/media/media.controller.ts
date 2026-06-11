@@ -20,6 +20,7 @@ export class MediaController {
       }
 
       const media = await mediaService.upload({
+        enumeratorId: req.enumerator!.id,
         surveyId,
         type: type as 'PHOTO' | 'VIDEO',
         photoCategory,

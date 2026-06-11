@@ -4,6 +4,7 @@ import { NotFoundError } from '../../utils/errors';
 import { logger } from '../../utils/logger';
 
 interface UploadMediaData {
+  enumeratorId: string;
   surveyId: string;
   type: 'PHOTO' | 'VIDEO';
   photoCategory?: string;
@@ -40,7 +41,16 @@ export class MediaService {
         if (existingSurvey) {
           resolvedSurveyId = existingSurvey.id;
         } else {
-          throw new NotFoundError('Survey');
+          // Survey not found on server. Auto-create a blank draft survey to attach media to.
+          const newSurvey = await prisma.survey.create({
+            data: {
+              stakeholderId,
+              enumeratorId: data.enumeratorId,
+              isDraft: true,
+              isSynced: true,
+            }
+          });
+          resolvedSurveyId = newSurvey.id;
         }
       } else {
         throw new NotFoundError('Survey');

@@ -3,11 +3,6 @@ import { config } from './index';
 import { logger } from '../utils/logger';
 
 const prisma = new PrismaClient({
-  datasources: {
-    db: {
-      url: config.database.url,
-    },
-  },
   log: config.env === 'development'
     ? [
         { level: 'query', emit: 'event' },
