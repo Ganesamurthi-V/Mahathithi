@@ -355,8 +355,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     try {
       const netState = await NetInfo.fetch();
       if (netState.isConnected) {
-        await surveyService.createOrUpdate(surveyPayload);
-        await saveMediaToDb(surveyId);
+        const response = await surveyService.createOrUpdate(surveyPayload);
+        const realSurveyId = response.data?.data?.id || surveyId;
+        await saveMediaToDb(realSurveyId);
 
         // Upload media sequentially
         let uploadCount = 0;
@@ -367,7 +368,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           setUploadText(`Uploading Photo ${uploadCount}/${totalMedia}...`);
           const p = photos[key];
           const formData = new FormData();
-          formData.append('surveyId', surveyId);
+          formData.append('surveyId', realSurveyId);
           formData.append('type', 'PHOTO');
           formData.append('photoCategory', key);
           if (p.latitude) formData.append('latitude', String(p.latitude));
@@ -385,7 +386,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           uploadCount++;
           setUploadText(`Uploading Video ${uploadCount}/${totalMedia}...`);
           const formData = new FormData();
-          formData.append('surveyId', surveyId);
+          formData.append('surveyId', realSurveyId);
           formData.append('type', 'VIDEO');
           if (video.latitude) formData.append('latitude', String(video.latitude));
           if (video.longitude) formData.append('longitude', String(video.longitude));
@@ -400,7 +401,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         }
 
         setUploadText('Finalizing survey...');
-        await surveyService.complete(surveyId);
+        await surveyService.complete(realSurveyId);
 
         Alert.alert('Saved', 'Survey and media uploaded successfully');
       } else {
