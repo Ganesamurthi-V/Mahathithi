@@ -23,104 +23,101 @@ export const runAutoSync = createAsyncThunk(
     dispatch(startSync());
 
     try {
-      // Step 1: Upload pending surveys
       dispatch(updateSyncProgress(10));
       const unsyncedSurveys = await surveyDao.getUnsynced();
-
-      if (unsyncedSurveys.length > 0) {
-        const surveyPayloads = unsyncedSurveys.map((s: any) => ({
-          stakeholderId: s.stakeholder_id,
-          contactPerson: s.contact_person,
-          designation: s.designation,
-          mobileNumber: s.mobile_number,
-          email: s.email,
-          website: s.website,
-          businessCategory: s.business_category,
-          notes: s.notes,
-          gstNumber: s.gst_number,
-          organizationType: s.organization_type,
-          remarks: s.remarks,
-          latitude: s.latitude,
-          longitude: s.longitude,
-          gpsAccuracy: s.gps_accuracy,
-          localId: s.id,
-        }));
-
-        await syncService.upload({
-          surveys: surveyPayloads,
-          phoneValidations: [],
-          mediaMetadata: [],
-        });
-
-        for (const s of unsyncedSurveys) {
-          await surveyDao.markSynced(s.id);
-        }
-      }
-
-      // Step 1.5: Upload Pending Media
-      dispatch(updateSyncProgress(40));
       const unsyncedMedia = await mediaDao.getUnsynced();
-      
-      const completedSurveyIds = new Set<string>();
 
-      if (unsyncedMedia.length > 0) {
-        const surveyIdMap: Record<string, string> = {};
+      // Group by local survey ID to process 1-by-1
+      const surveyIdsToProcess = new Set<string>();
+      unsyncedSurveys.forEach((s: any) => surveyIdsToProcess.add(s.id));
+      unsyncedMedia.forEach((m: any) => surveyIdsToProcess.add(m.survey_id));
 
-        for (const media of unsyncedMedia) {
-          try {
-            const localSurveyId = media.survey_id;
-            let serverSurveyId = surveyIdMap[localSurveyId];
-            
-            if (!serverSurveyId) {
-              const stakeholderId = localSurveyId?.startsWith('draft_')
-                ? localSurveyId.replace('draft_', '')
-                : null;
+      let processedCount = 0;
+      const total = surveyIdsToProcess.size;
 
-              if (stakeholderId) {
-                try {
-                  const svRes = await surveyService.getByStakeholder(stakeholderId);
-                  serverSurveyId = svRes.data?.data?.id;
-                } catch { /* no server survey yet */ }
-              }
+      // === 1-by-1 Pipeline ===
+      for (const localSurveyId of surveyIdsToProcess) {
+        processedCount++;
+        dispatch(updateSyncProgress(10 + Math.floor((processedCount / total) * 70))); // Scales 10% to 80%
 
-              if (!serverSurveyId) serverSurveyId = localSurveyId;
-              surveyIdMap[localSurveyId] = serverSurveyId;
-            }
-
-            if (!serverSurveyId) continue;
-
-            const formData = new FormData();
-            formData.append('surveyId', serverSurveyId);
-            formData.append('type', media.type);
-            if (media.photo_category) formData.append('photoCategory', media.photo_category);
-            if (media.latitude) formData.append('latitude', media.latitude.toString());
-            if (media.longitude) formData.append('longitude', media.longitude.toString());
-            if (media.gps_accuracy) formData.append('gpsAccuracy', media.gps_accuracy.toString());
-            if (media.duration) formData.append('duration', media.duration.toString());
-            formData.append('localId', media.id);
-
-            formData.append('file', {
-              uri: media.file_path,
-              type: media.mime_type || 'image/jpeg',
-              name: media.file_name || `upload_${Date.now()}`,
-            } as any);
-
-            await mediaService.upload(formData);
-            await mediaDao.markSynced(media.id);
-            completedSurveyIds.add(serverSurveyId);
-          } catch (mediaErr: any) {
-            console.error(`Media upload failed for ${media.id}:`, mediaErr?.response?.data || mediaErr.message);
-          }
-        }
-      }
-
-      // Step 1.6: Complete uploaded surveys
-      dispatch(updateSyncProgress(70));
-      for (const surveyId of completedSurveyIds) {
         try {
-          await surveyService.complete(surveyId);
-        } catch (completeErr) {
-          console.error(`Failed to complete survey ${surveyId}`, completeErr);
+          const surveyLocal = unsyncedSurveys.find((s: any) => s.id === localSurveyId);
+          let serverSurveyId = localSurveyId;
+          let stakeholderId = surveyLocal?.stakeholder_id || (localSurveyId.startsWith('draft_') ? localSurveyId.replace('draft_', '') : null);
+
+          // Step A: Upload Text Payload (if unsynced)
+          if (surveyLocal) {
+            const surveyPayload = {
+              stakeholderId: surveyLocal.stakeholder_id,
+              contactPerson: surveyLocal.contact_person,
+              designation: surveyLocal.designation,
+              mobileNumber: surveyLocal.mobile_number,
+              email: surveyLocal.email,
+              website: surveyLocal.website,
+              businessCategory: surveyLocal.business_category,
+              notes: surveyLocal.notes,
+              gstNumber: surveyLocal.gst_number,
+              organizationType: surveyLocal.organization_type,
+              remarks: surveyLocal.remarks,
+              latitude: surveyLocal.latitude,
+              longitude: surveyLocal.longitude,
+              gpsAccuracy: surveyLocal.gps_accuracy,
+              localId: surveyLocal.id,
+            };
+
+            await syncService.upload({
+              surveys: [surveyPayload],
+              phoneValidations: [],
+              mediaMetadata: [],
+            });
+            await surveyDao.markSynced(localSurveyId);
+          }
+
+          // Step B: Resolve serverSurveyId from Stakeholder
+          if (stakeholderId) {
+             try {
+               const svRes = await surveyService.getByStakeholder(stakeholderId);
+               if (svRes.data?.data?.id) serverSurveyId = svRes.data.data.id;
+             } catch { /* ignore if not found */ }
+          }
+
+          // Step C: Upload Media for this Survey sequentially
+          const surveyMedia = unsyncedMedia.filter((m: any) => m.survey_id === localSurveyId);
+          for (const media of surveyMedia) {
+             try {
+               const formData = new FormData();
+               formData.append('surveyId', serverSurveyId);
+               formData.append('type', media.type);
+               if (media.photo_category) formData.append('photoCategory', media.photo_category);
+               if (media.latitude) formData.append('latitude', media.latitude.toString());
+               if (media.longitude) formData.append('longitude', media.longitude.toString());
+               if (media.gps_accuracy) formData.append('gpsAccuracy', media.gps_accuracy.toString());
+               if (media.duration) formData.append('duration', media.duration.toString());
+               formData.append('localId', media.id);
+
+               formData.append('file', {
+                 uri: media.file_path,
+                 type: media.mime_type || 'image/jpeg',
+                 name: media.file_name || `upload_${Date.now()}`,
+               } as any);
+
+               await mediaService.upload(formData);
+               await mediaDao.markSynced(media.id);
+             } catch (mediaErr: any) {
+               console.error(`Media upload failed for ${media.id}`, mediaErr?.response?.data || mediaErr.message);
+               // Throw an error to intentionally break this specific survey's pipeline (prevents completion)
+               throw new Error(`Media failed: ${media.id}`); 
+             }
+          }
+
+          // Step D: Complete Survey
+          await surveyService.complete(serverSurveyId);
+          console.log(`✅ Fully synced survey ${localSurveyId}`);
+
+        } catch (surveyErr: any) {
+          // If ANY step in this survey fails (Text, Media, or Complete), it catches here.
+          // We log it, and seamlessly let the loop move onto the NEXT survey!
+          console.error(`❌ Failed to sync survey ${localSurveyId}:`, surveyErr.message);
         }
       }
 

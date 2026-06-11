@@ -57,23 +57,23 @@ export class MediaService {
       }
     }
 
-    // Check photo limits (max 5)
+    // Check photo limits (relaxed for sync pipeline)
     if (data.type === 'PHOTO') {
       const existingPhotos = await prisma.media.count({
         where: { surveyId: resolvedSurveyId, type: 'PHOTO' },
       });
-      if (existingPhotos >= 5) {
-        throw new Error('Maximum 5 photos allowed per survey');
+      if (existingPhotos >= 50) {
+        throw new Error('Maximum 50 photos allowed per survey');
       }
     }
 
-    // Check video limit (max 1)
+    // Check video limit (relaxed for sync pipeline)
     if (data.type === 'VIDEO') {
       const existingVideos = await prisma.media.count({
         where: { surveyId: resolvedSurveyId, type: 'VIDEO' },
       });
-      if (existingVideos >= 1) {
-        throw new Error('Maximum 1 video allowed per survey');
+      if (existingVideos >= 10) {
+        throw new Error('Maximum 10 videos allowed per survey');
       }
     }
 

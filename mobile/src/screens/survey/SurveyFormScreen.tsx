@@ -214,7 +214,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         const result = await launchCamera({
           mediaType: 'photo',
           quality: 0.8,
-          saveToPhotos: false,
+          saveToPhotos: true,
           includeExtra: true,
         });
 
@@ -259,7 +259,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           mediaType: 'video',
           videoQuality: 'high',
           durationLimit: 60,
-          saveToPhotos: false,
+          saveToPhotos: true,
         });
 
         if (result.assets && result.assets[0]) {
