@@ -1,11 +1,12 @@
-import React, { useEffect } from 'react';
-import { ActivityIndicator, View, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { ActivityIndicator, View, StyleSheet, Text, Animated, TouchableOpacity, Platform } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../store';
 import { checkSession } from '../store/slices/authSlice';
-import { colors } from '../theme';
+import { colors, typography, shadows, spacing } from '../theme';
+import { moderateScale, verticalScale } from '../theme/responsive';
 
 // Screens
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -16,38 +17,83 @@ import StakeholderDetailScreen from '../screens/stakeholder/StakeholderDetailScr
 import SurveyFormScreen from '../screens/survey/SurveyFormScreen';
 import PhotoCaptureScreen from '../screens/survey/PhotoCaptureScreen';
 import VideoCaptureScreen from '../screens/survey/VideoCaptureScreen';
-import PhoneVerificationScreen from '../screens/survey/PhoneVerificationScreen';
 import SyncStatusScreen from '../screens/sync/SyncStatusScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
+// Custom Animated Tab Bar Button
+const TabBarButton = ({ children, onPress, accessibilityState }: any) => {
+  const focused = accessibilityState.selected;
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const slideAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(scaleAnim, {
+        toValue: focused ? 1.15 : 1,
+        useNativeDriver: true,
+        friction: 5,
+        tension: 40,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: focused ? -4 : 0,
+        duration: 200,
+        useNativeDriver: true,
+      })
+    ]).start();
+  }, [focused]);
+
+  return (
+    <TouchableOpacity
+      activeOpacity={1}
+      onPress={onPress}
+      style={styles.tabButtonContainer}
+    >
+      <Animated.View style={[styles.tabButton, { transform: [{ scale: scaleAnim }, { translateY: slideAnim }] }]}>
+        {children}
+      </Animated.View>
+    </TouchableOpacity>
+  );
+};
+
+// Icons map
+const TAB_ICONS: Record<string, string> = {
+  Dashboard: '🏠',
+  Search: '🔍',
+  Stakeholders: '📋',
+  SyncTab: '🔄',
+};
+
 function MainTabs() {
   return (
     <Tab.Navigator
-      screenOptions={{
+      screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: colors.bgSecondary,
+          backgroundColor: colors.bgCard,
           borderTopColor: colors.border,
           borderTopWidth: 1,
-          height: 60,
-          paddingBottom: 8,
-          paddingTop: 8,
+          height: Platform.OS === 'ios' ? verticalScale(88) : verticalScale(68),
+          paddingBottom: Platform.OS === 'ios' ? verticalScale(28) : verticalScale(8),
+          paddingTop: verticalScale(8),
+          ...shadows.elevated,
         },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-      }}
+        tabBarLabelStyle: { fontSize: moderateScale(11), fontWeight: '700', marginTop: verticalScale(4) },
+        tabBarIcon: ({ focused }) => (
+          <Text style={{ fontSize: moderateScale(22), opacity: focused ? 1 : 0.6 }}>
+            {TAB_ICONS[route.name]}
+          </Text>
+        ),
+        tabBarButton: (props) => <TabBarButton {...props} />,
+      })}
     >
-      <Tab.Screen name="Dashboard" component={DashboardScreen}
-        options={{ tabBarLabel: 'Dashboard', tabBarIcon: () => null }} />
-      <Tab.Screen name="Search" component={SearchScreen}
-        options={{ tabBarLabel: 'Search', tabBarIcon: () => null }} />
-      <Tab.Screen name="Stakeholders" component={StakeholderListScreen}
-        options={{ tabBarLabel: 'List', tabBarIcon: () => null }} />
-      <Tab.Screen name="SyncTab" component={SyncStatusScreen}
-        options={{ tabBarLabel: 'Sync', tabBarIcon: () => null }} />
+      <Tab.Screen name="Dashboard" component={DashboardScreen} options={{ tabBarLabel: 'Home' }} />
+      <Tab.Screen name="Search" component={SearchScreen} options={{ tabBarLabel: 'Search' }} />
+      <Tab.Screen name="Stakeholders" component={StakeholderListScreen} options={{ tabBarLabel: 'List' }} />
+      <Tab.Screen name="SyncTab" component={SyncStatusScreen} options={{ tabBarLabel: 'Sync' }} />
     </Tab.Navigator>
   );
 }
@@ -71,10 +117,12 @@ export function AppNavigator() {
   return (
     <Stack.Navigator
       screenOptions={{
-        headerStyle: { backgroundColor: colors.bgSecondary },
+        headerStyle: { backgroundColor: colors.bgCard },
         headerTintColor: colors.textPrimary,
-        headerTitleStyle: { fontWeight: '700' },
+        headerTitleStyle: { fontWeight: '700', fontSize: moderateScale(18), fontFamily: Platform.OS === 'ios' ? 'System' : 'sans-serif-medium' },
+        headerShadowVisible: false,
         contentStyle: { backgroundColor: colors.bgPrimary },
+        headerBackTitleVisible: false,
       }}
     >
       {!isAuthenticated ? (
@@ -83,15 +131,13 @@ export function AppNavigator() {
         <>
           <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
           <Stack.Screen name="StakeholderDetail" component={StakeholderDetailScreen}
-            options={{ title: 'Stakeholder Details' }} />
+            options={{ title: 'Details' }} />
           <Stack.Screen name="SurveyForm" component={SurveyFormScreen}
             options={{ title: 'Survey Form' }} />
           <Stack.Screen name="PhotoCapture" component={PhotoCaptureScreen}
             options={{ title: 'Capture Photos' }} />
           <Stack.Screen name="VideoCapture" component={VideoCaptureScreen}
             options={{ title: 'Record Video' }} />
-          <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen}
-            options={{ title: 'Phone Verification' }} />
         </>
       )}
     </Stack.Navigator>
@@ -104,5 +150,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: colors.bgPrimary,
+  },
+  tabButtonContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tabButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

@@ -1,3 +1,5 @@
+import { moderateScale } from './responsive';
+
 // MahaAthithi Theme — Maharashtra Tourism Color Palette
 export const colors = {
   // Primary palette — Saffron/Orange (Maharashtra flag)
@@ -59,34 +61,34 @@ export const colors = {
 };
 
 export const spacing = {
-  xs: 4,
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 20,
-  xxl: 24,
-  xxxl: 32,
-  huge: 48,
+  xs: moderateScale(4),
+  sm: moderateScale(8),
+  md: moderateScale(12),
+  lg: moderateScale(16),
+  xl: moderateScale(20),
+  xxl: moderateScale(24),
+  xxxl: moderateScale(32),
+  huge: moderateScale(48),
 };
 
 export const borderRadius = {
-  sm: 6,
-  md: 10,
-  lg: 14,
-  xl: 18,
-  full: 100,
+  sm: moderateScale(6),
+  md: moderateScale(10),
+  lg: moderateScale(14),
+  xl: moderateScale(18),
+  full: 100, // Avoid scaling fully rounded borders to ensure they remain circles
 };
 
 export const typography = {
-  h1: { fontSize: 28, fontWeight: '800' as const, letterSpacing: -0.5 },
-  h2: { fontSize: 22, fontWeight: '700' as const, letterSpacing: -0.3 },
-  h3: { fontSize: 18, fontWeight: '600' as const },
-  body: { fontSize: 15, fontWeight: '400' as const, lineHeight: 22 },
-  bodySmall: { fontSize: 13, fontWeight: '400' as const, lineHeight: 18 },
-  caption: { fontSize: 11, fontWeight: '500' as const, letterSpacing: 0.5, textTransform: 'uppercase' as const },
-  label: { fontSize: 13, fontWeight: '600' as const },
-  button: { fontSize: 15, fontWeight: '700' as const },
-  stat: { fontSize: 32, fontWeight: '800' as const },
+  h1: { fontSize: moderateScale(28), fontWeight: '800' as const, letterSpacing: -0.5 },
+  h2: { fontSize: moderateScale(22), fontWeight: '700' as const, letterSpacing: -0.3 },
+  h3: { fontSize: moderateScale(18), fontWeight: '600' as const },
+  body: { fontSize: moderateScale(15), fontWeight: '400' as const, lineHeight: moderateScale(22) },
+  bodySmall: { fontSize: moderateScale(13), fontWeight: '400' as const, lineHeight: moderateScale(18) },
+  caption: { fontSize: moderateScale(11), fontWeight: '500' as const, letterSpacing: 0.5, textTransform: 'uppercase' as const },
+  label: { fontSize: moderateScale(13), fontWeight: '600' as const },
+  button: { fontSize: moderateScale(15), fontWeight: '700' as const },
+  stat: { fontSize: moderateScale(32), fontWeight: '800' as const },
 };
 
 export const shadows = {
@@ -104,4 +106,31 @@ export const shadows = {
     shadowRadius: 12,
     elevation: 8,
   },
+  glow: {
+    shadowColor: '#FF6B35',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+};
+
+export const animations = {
+  timing: {
+    quick: 150,
+    normal: 300,
+    slow: 500,
+  },
+  spring: {
+    bouncy: { tension: 50, friction: 5 },
+    smooth: { tension: 40, friction: 7 },
+  },
+};
+
+export const iconSizes = {
+  sm: moderateScale(16),
+  md: moderateScale(24),
+  lg: moderateScale(32),
+  xl: moderateScale(48),
+  huge: moderateScale(64),
 };
