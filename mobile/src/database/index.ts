@@ -53,7 +53,7 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
       human_review_required TEXT,
       dedup_match_status TEXT,
       source_lineage_notes TEXT,
-      status TEXT DEFAULT 'PENDING',
+      status TEXT DEFAULT 'OPEN',
       locked_by_id TEXT,
       locked_at TEXT,
       updated_at TEXT

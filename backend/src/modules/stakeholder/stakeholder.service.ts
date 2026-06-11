@@ -118,8 +118,9 @@ export class StakeholderService {
       conditions.push({ status: status as any });
     }
 
-    // Exclude completed stakeholders locked by others
-    // (Enumerators should not see stakeholders completed by someone else)
+    if (!isAdmin) {
+      conditions.push({ status: { not: 'CLOSED' } });
+    }
 
     if (conditions.length > 0) {
       where.AND = conditions;
@@ -195,13 +196,18 @@ export class StakeholderService {
       throw new NotFoundError('Stakeholder');
     }
 
-    // District restriction check
-    if (!isAdmin && stakeholder.district) {
-      const hasAccess = enumeratorDistricts.some(
-        d => d.toUpperCase() === stakeholder.district!.toUpperCase()
-      );
-      if (!hasAccess) {
-        throw new ForbiddenError('You are not assigned to this district');
+    // District and status restriction check
+    if (!isAdmin) {
+      if (stakeholder.status === 'CLOSED') {
+        throw new NotFoundError('Stakeholder');
+      }
+      if (stakeholder.district) {
+        const hasAccess = enumeratorDistricts.some(
+          d => d.toUpperCase() === stakeholder.district!.toUpperCase()
+        );
+        if (!hasAccess) {
+          throw new ForbiddenError('You are not assigned to this district');
+        }
       }
     }
 
@@ -224,12 +230,8 @@ export class StakeholderService {
       where.updatedAt = { gt: new Date(since) };
     }
 
-    // Exclude stakeholders completed by other enumerators
-    where.OR = [
-      { status: { not: 'COMPLETED' } },
-      { lockedById: enumeratorId },
-      { lockedById: null },
-    ];
+    // Only return OPEN stakeholders
+    where.status = 'OPEN';
 
     const stakeholders = await prisma.stakeholder.findMany({
       where,
@@ -260,7 +262,7 @@ export class StakeholderService {
     const updated = await prisma.stakeholder.update({
       where: { id: stakeholderId },
       data: {
-        status: 'COMPLETED',
+        status: 'CLOSED',
         lockedById: enumeratorId,
         lockedAt: new Date(),
       },

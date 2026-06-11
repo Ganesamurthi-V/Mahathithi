@@ -143,7 +143,7 @@ export class SyncService {
 
     // Separate into locked (by others) and updated
     const lockedByOthers = updatedStakeholders.filter(
-      s => s.lockedById && s.lockedById !== enumeratorId && s.status === 'COMPLETED'
+      s => s.lockedById && s.lockedById !== enumeratorId && s.status === 'CLOSED'
     );
 
     return {

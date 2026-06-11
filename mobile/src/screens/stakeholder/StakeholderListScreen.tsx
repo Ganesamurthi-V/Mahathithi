@@ -6,10 +6,8 @@ import { stakeholderService } from '../../services/api';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 
 const STATUS_COLORS: Record<string, string> = {
-  PENDING: colors.statusPending,
-  IN_PROGRESS: colors.statusInProgress,
-  IN_REVIEW: colors.statusInReview,
-  COMPLETED: colors.statusCompleted,
+  OPEN: colors.statusPending,
+  CLOSED: colors.statusCompleted,
 };
 
 const SkeletonCard = () => {
@@ -78,7 +76,7 @@ const StakeholderCard = React.memo(({ item, index, onPress }: { item: any, index
             {item.companyNameStandardized || 'Unknown Organization'}
           </Text>
           <View style={[styles.badge, { backgroundColor: STATUS_COLORS[item.status] || colors.statusPending }]}>
-            <Text style={styles.badgeText}>{item.status?.replace('_', ' ')}</Text>
+            <Text style={styles.badgeText}>{(item.status || 'OPEN').replace('_', ' ')}</Text>
           </View>
         </View>
         <View style={styles.metaRow}>

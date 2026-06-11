@@ -1,13 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Animated, LayoutAnimation, UIManager, Platform } from 'react-native';
 import { stakeholderService, surveyService } from '../../services/api';
-import { colors, spacing, borderRadius, typography, shadows, animations } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { moderateScale } from '../../theme/responsive';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-const CollapsibleSection = ({ title, children, defaultExpanded = false, index }: { title: string, children: React.ReactNode, defaultExpanded?: boolean, index: number }) => {
+const CollapsibleSection = ({ title, icon, children, defaultExpanded = false, index }: { title: string, icon: string, children: React.ReactNode, defaultExpanded?: boolean, index: number }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const slideAnim = useRef(new Animated.Value(50)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -17,7 +20,7 @@ const CollapsibleSection = ({ title, children, defaultExpanded = false, index }:
       Animated.timing(fadeAnim, { toValue: 1, duration: 400, delay: index * 100, useNativeDriver: true }),
       Animated.spring(slideAnim, { toValue: 0, tension: 40, friction: 8, delay: index * 100, useNativeDriver: true }),
     ]).start();
-  }, []);
+  }, [fadeAnim, slideAnim, index]);
 
   const toggleExpand = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -25,10 +28,15 @@ const CollapsibleSection = ({ title, children, defaultExpanded = false, index }:
   };
 
   return (
-    <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
+    <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }], marginBottom: spacing.lg }}>
       <TouchableOpacity style={styles.sectionHeader} onPress={toggleExpand} activeOpacity={0.8}>
-        <Text style={styles.sectionTitle}>{title}</Text>
-        <Text style={styles.chevron}>{expanded ? '▲' : '▼'}</Text>
+        <View style={styles.sectionHeaderLeft}>
+          <View style={styles.sectionIconWrapper}>
+            <Icon name={icon} size={moderateScale(20)} color={colors.primary} />
+          </View>
+          <Text style={styles.sectionTitle}>{title}</Text>
+        </View>
+        <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={moderateScale(24)} color={colors.textMuted} />
       </TouchableOpacity>
       {expanded && (
         <View style={styles.infoCard}>
@@ -54,7 +62,7 @@ const ActionButton = ({ icon, text, onPress, primary = false }: { icon: string, 
         onPressOut={handlePressOut}
         activeOpacity={0.9}
       >
-        {icon && <Text style={primary ? styles.actionPrimaryIcon : styles.actionSecondaryIcon}>{icon}</Text>}
+        {icon && <Icon name={icon} size={moderateScale(20)} color={primary ? '#FFF' : colors.primary} style={styles.actionIcon} />}
         <Text style={primary ? styles.actionPrimaryText : styles.actionSecondaryText}>{text}</Text>
       </TouchableOpacity>
     </Animated.View>
@@ -70,15 +78,15 @@ const SkeletonDetail = () => {
         Animated.timing(pulseAnim, { toValue: 0.5, duration: 800, useNativeDriver: true }),
       ])
     ).start();
-  }, []);
+  }, [pulseAnim]);
 
   return (
     <Animated.View style={[styles.container, { padding: spacing.xl, opacity: pulseAnim }]}>
-      <View style={[styles.statusBar, { borderColor: colors.border, borderLeftColor: colors.border }]} />
-      <View style={{ height: 40, backgroundColor: colors.border, borderRadius: 8, marginBottom: 16, width: '40%' }} />
-      <View style={{ height: 150, backgroundColor: colors.border, borderRadius: 12, marginBottom: 24 }} />
-      <View style={{ height: 40, backgroundColor: colors.border, borderRadius: 8, marginBottom: 16, width: '40%' }} />
-      <View style={{ height: 200, backgroundColor: colors.border, borderRadius: 12 }} />
+      <View style={{ height: moderateScale(100), backgroundColor: colors.border, borderRadius: borderRadius.xl, marginBottom: spacing.xl }} />
+      <View style={{ height: moderateScale(40), backgroundColor: colors.border, borderRadius: borderRadius.md, marginBottom: spacing.md, width: '40%' }} />
+      <View style={{ height: moderateScale(150), backgroundColor: colors.border, borderRadius: borderRadius.xl, marginBottom: spacing.xxl }} />
+      <View style={{ height: moderateScale(40), backgroundColor: colors.border, borderRadius: borderRadius.md, marginBottom: spacing.md, width: '40%' }} />
+      <View style={{ height: moderateScale(200), backgroundColor: colors.border, borderRadius: borderRadius.xl }} />
     </Animated.View>
   );
 };
@@ -88,6 +96,7 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
   const [stakeholder, setStakeholder] = useState<any>(null);
   const [survey, setSurvey] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     loadData();
@@ -155,112 +164,120 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
     ));
   };
 
+  const statusColor = getStatusColor(s.status);
+  const isCompleted = s.status === 'CLOSED';
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Status Header */}
-      <View style={[styles.statusBar, { borderLeftColor: getStatusColor(s.status) }]}>
-        <View>
-          <Text style={styles.statusLabel}>STATUS</Text>
-          <Text style={[styles.statusValue, { color: getStatusColor(s.status) }]}>
-            {s.status?.replace('_', ' ')}
-          </Text>
-        </View>
-        <View style={styles.uinBadge}>
-          <Text style={styles.uinLabel}>UIN</Text>
-          <Text style={styles.uin}>{s.uin}</Text>
-        </View>
-      </View>
-
-      <CollapsibleSection title="📋 Basic Information" index={0} defaultExpanded={true}>
-        {renderInfoRows(basicInfo)}
-      </CollapsibleSection>
-
-      <CollapsibleSection title="📍 Location Details" index={1}>
-        {renderInfoRows(locationInfo)}
-      </CollapsibleSection>
-
-      <CollapsibleSection title="🏛 Registration Info" index={2}>
-        {renderInfoRows(registrationInfo)}
-      </CollapsibleSection>
-
-      {/* Survey Data (if exists) */}
-      {survey && (
-        <CollapsibleSection title="📝 Survey Data" index={3} defaultExpanded={true}>
-          {renderInfoRows([
-            { label: 'Contact Person', value: survey.contactPerson },
-            { label: 'Designation', value: survey.designation },
-            { label: 'Mobile', value: survey.mobileNumber },
-            { label: 'Email', value: survey.email },
-            { label: 'Website', value: survey.website },
-            { label: 'GPS', value: survey.latitude ? `${survey.latitude.toFixed(6)}, ${survey.longitude.toFixed(6)}` : null },
-          ])}
-        </CollapsibleSection>
-      )}
-
-      {/* Action Buttons */}
-      {s.status !== 'COMPLETED' && (() => {
-        const activeSurveyId = survey?.id || `draft_${stakeholderId}`;
-        return (
-        <View style={styles.actions}>
-          <ActionButton 
-            primary
-            icon="📝"
-            text="Start / Edit Survey"
-            onPress={() => navigation.navigate('SurveyForm', { stakeholderId, stakeholder: s, survey })}
-          />
-
-          <View style={styles.actionRow}>
-            <ActionButton 
-              icon="📷"
-              text="Photos"
-              onPress={() => navigation.navigate('PhotoCapture', { stakeholderId, surveyId: activeSurveyId })}
-            />
-            <ActionButton 
-              icon="🎥"
-              text="Video"
-              onPress={() => navigation.navigate('VideoCapture', { stakeholderId, surveyId: activeSurveyId })}
-            />
+    <View style={styles.mainContainer}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {/* Hero Header */}
+        <View style={[styles.heroHeader, { backgroundColor: statusColor + '15', borderColor: statusColor + '40' }]}>
+          <View style={styles.heroStatusContainer}>
+            <View style={[styles.statusIndicator, { backgroundColor: statusColor }]} />
+            <Text style={[styles.statusValue, { color: statusColor }]}>
+              {s.status?.replace('_', ' ')}
+            </Text>
+          </View>
+          <View style={styles.heroTitleContainer}>
+            <Text style={styles.heroTitle} numberOfLines={2}>
+              {s.companyNameStandardized || s.companyNameOriginal || 'Unknown Organization'}
+            </Text>
+            <View style={styles.uinBadge}>
+              <Icon name="identifier" size={moderateScale(12)} color={colors.textMuted} style={{ marginRight: 2 }} />
+              <Text style={styles.uin}>{s.uin}</Text>
+            </View>
           </View>
         </View>
-        );
-      })()}
-    </ScrollView>
+
+        <CollapsibleSection title="Basic Information" icon="domain" index={0} defaultExpanded={true}>
+          {renderInfoRows(basicInfo)}
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Location Details" icon="map-marker-radius-outline" index={1}>
+          {renderInfoRows(locationInfo)}
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Registration Info" icon="file-document-outline" index={2}>
+          {renderInfoRows(registrationInfo)}
+        </CollapsibleSection>
+
+        {/* Survey Data (if exists) */}
+        {survey && (
+          <CollapsibleSection title="Survey Data" icon="clipboard-text-outline" index={3} defaultExpanded={true}>
+            {renderInfoRows([
+              { label: 'Contact Person', value: survey.contactPerson },
+              { label: 'Designation', value: survey.designation },
+              { label: 'Mobile', value: survey.mobileNumber },
+              { label: 'Email', value: survey.email },
+              { label: 'Website', value: survey.website },
+              { label: 'GPS', value: survey.latitude ? `${survey.latitude.toFixed(6)}, ${survey.longitude.toFixed(6)}` : null },
+            ])}
+          </CollapsibleSection>
+        )}
+      </ScrollView>
+
+      {/* Fixed Bottom Action Bar */}
+      {!isCompleted && (
+        <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
+          {(() => {
+            return (
+              <ActionButton 
+                primary
+                icon="pencil-outline"
+                text="Start / Edit Survey"
+                onPress={() => navigation.navigate('SurveyForm', { stakeholderId, stakeholder: s, survey })}
+              />
+            );
+          })()}
+        </View>
+      )}
+    </View>
   );
 }
 
 function getStatusColor(status: string) {
   const map: Record<string, string> = {
-    PENDING: colors.statusPending,
-    IN_PROGRESS: colors.statusInProgress,
-    IN_REVIEW: colors.statusInReview,
-    COMPLETED: colors.statusCompleted,
+    OPEN: colors.warning,
+    CLOSED: colors.success,
   };
   return map[status] || colors.statusPending;
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bgPrimary },
-  content: { padding: spacing.xl, paddingBottom: 100 },
-  statusBar: {
-    backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
-    padding: spacing.xl, borderWidth: 1, borderColor: colors.border,
-    borderLeftWidth: 6, flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: spacing.xxl,
-    ...shadows.card,
-  },
-  statusLabel: { ...typography.caption, color: colors.textMuted },
-  statusValue: { fontSize: 20, fontWeight: '800', marginTop: 2, letterSpacing: 0.5 },
-  uinBadge: { backgroundColor: colors.bgInput, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, alignItems: 'flex-end' },
-  uinLabel: { ...typography.caption, color: colors.textMuted, fontSize: 9 },
-  uin: { ...typography.bodySmall, color: colors.textPrimary, fontWeight: '700', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  mainContainer: { flex: 1, backgroundColor: colors.bgPrimary },
+  container: { flex: 1 },
+  content: { padding: spacing.xl, paddingBottom: moderateScale(140) }, // Extra padding for bottom bar
   
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md, paddingVertical: 4 },
+  heroHeader: {
+    borderRadius: borderRadius.xl,
+    padding: spacing.xl, borderWidth: 1,
+    marginBottom: spacing.xxl,
+    ...shadows.elevated,
+  },
+  heroStatusContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md },
+  statusIndicator: { width: moderateScale(10), height: moderateScale(10), borderRadius: moderateScale(5), marginRight: spacing.sm },
+  statusValue: { fontSize: moderateScale(14), fontWeight: '800', letterSpacing: 1 },
+  heroTitleContainer: { marginTop: spacing.xs },
+  heroTitle: { ...typography.h1, color: colors.textPrimary, marginBottom: spacing.md },
+  
+  uinBadge: { 
+    alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center',
+    backgroundColor: colors.bgInput, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, 
+    borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.border
+  },
+  uin: { ...typography.bodySmall, color: colors.textSecondary, fontWeight: '700', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
+  sectionHeaderLeft: { flexDirection: 'row', alignItems: 'center' },
+  sectionIconWrapper: { 
+    width: moderateScale(36), height: moderateScale(36), borderRadius: moderateScale(18), 
+    backgroundColor: colors.primaryBg, justifyContent: 'center', alignItems: 'center', marginRight: spacing.md 
+  },
   sectionTitle: { ...typography.h3, color: colors.textPrimary },
-  chevron: { color: colors.textMuted, fontSize: 12 },
   
   infoCard: {
-    backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
-    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.xxl, overflow: 'hidden',
+    backgroundColor: colors.bgCard, borderRadius: borderRadius.xl,
+    borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm, overflow: 'hidden',
     ...shadows.card,
   },
   infoRow: { padding: spacing.lg },
@@ -268,22 +285,27 @@ const styles = StyleSheet.create({
   infoLabel: { ...typography.caption, color: colors.textMuted, marginBottom: spacing.xs },
   infoValue: { ...typography.body, color: colors.textPrimary, fontWeight: '500' },
   
-  actions: { marginTop: spacing.lg },
+  bottomActionBar: { 
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: colors.bgPrimary, 
+    paddingHorizontal: spacing.xl, paddingTop: spacing.md,
+    borderTopWidth: 1, borderTopColor: colors.border,
+    shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 10, elevation: 20,
+  },
   actionPrimary: {
     flexDirection: 'row', justifyContent: 'center', backgroundColor: colors.primary, 
-    borderRadius: borderRadius.md, padding: spacing.lg, alignItems: 'center', marginBottom: spacing.md,
+    borderRadius: borderRadius.full, padding: spacing.lg, alignItems: 'center', marginBottom: spacing.md,
     ...shadows.elevated,
   },
-  actionPrimaryIcon: { fontSize: 20, marginRight: 8 },
-  actionPrimaryText: { ...typography.button, color: '#FFF', fontSize: 16 },
+  actionIcon: { marginRight: spacing.sm },
+  actionPrimaryText: { ...typography.button, color: '#FFF', fontSize: moderateScale(16) },
   
   actionRow: { flexDirection: 'row', gap: spacing.md },
   actionSecondary: {
     flexDirection: 'row', justifyContent: 'center', backgroundColor: colors.bgCard, 
-    borderRadius: borderRadius.md, padding: spacing.lg, alignItems: 'center', 
+    borderRadius: borderRadius.full, padding: spacing.md, alignItems: 'center', 
     borderWidth: 1, borderColor: colors.border,
     ...shadows.card,
   },
-  actionSecondaryIcon: { fontSize: 20, marginRight: 8 },
-  actionSecondaryText: { ...typography.label, color: colors.textPrimary, fontSize: 15 },
+  actionSecondaryText: { ...typography.label, color: colors.primary, fontSize: moderateScale(14) },
 });
