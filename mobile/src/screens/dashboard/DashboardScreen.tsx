@@ -1,18 +1,90 @@
-import React, { useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert } from 'react-native';
+import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert, Animated, Easing } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { setStats, setLoading } from '../../store/slices/dashboardSlice';
 import { logout } from '../../store/slices/authSlice';
 import { dashboardService } from '../../services/api';
 import { syncQueueDao } from '../../database';
-import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, animations, iconSizes } from '../../theme';
+import { moderateScale } from '../../theme/responsive';
+
+const StatCard = React.memo(({ card, index }: { card: any, index: number }) => {
+  const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacityAnim, {
+        toValue: 1,
+        duration: 400,
+        delay: index * 100,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        friction: 6,
+        tension: 40,
+        delay: index * 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.View style={[
+      styles.statCard, 
+      { borderLeftColor: card.color, opacity: opacityAnim, transform: [{ scale: scaleAnim }] }
+    ]}>
+      <Text style={styles.statIcon}>{card.icon}</Text>
+      <Text style={styles.statValue}>{card.value.toLocaleString()}</Text>
+      <Text style={styles.statLabel}>{card.label}</Text>
+    </Animated.View>
+  );
+});
+
+const ActionButton = React.memo(({ icon, text, onPress }: { icon: string, text: string, onPress: () => void }) => {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, { toValue: 0.95, useNativeDriver: true }).start();
+  };
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true }).start();
+  };
+
+  return (
+    <Animated.View style={{ flex: 1, transform: [{ scale: scaleAnim }] }}>
+      <TouchableOpacity
+        style={styles.actionButton}
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        activeOpacity={0.9}
+      >
+        <View style={styles.actionIconContainer}>
+          <Text style={styles.actionIcon}>{icon}</Text>
+        </View>
+        <Text style={styles.actionText}>{text}</Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+});
 
 export default function DashboardScreen({ navigation }: any) {
   const dispatch = useDispatch<AppDispatch>();
   const { user } = useSelector((state: RootState) => state.auth);
   const { stats, isLoading } = useSelector((state: RootState) => state.dashboard);
   const { lastSyncTime, pendingCount, failedCount } = useSelector((state: RootState) => state.sync);
+
+  const [greeting, setGreeting] = useState('Welcome back,');
+
+  useEffect(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) setGreeting('Good morning,');
+    else if (hour < 18) setGreeting('Good afternoon,');
+    else setGreeting('Good evening,');
+  }, []);
 
   const loadStats = useCallback(async () => {
     dispatch(setLoading(true));
@@ -38,12 +110,12 @@ export default function DashboardScreen({ navigation }: any) {
     );
   };
 
-  const statCards = [
+  const statCards = useMemo(() => [
     { label: 'Completed', value: stats.completed, color: colors.success, icon: '✅' },
     { label: 'Pending', value: stats.pending, color: colors.statusPending, icon: '⏳' },
     { label: 'In Progress', value: stats.inProgress, color: colors.info, icon: '🔄' },
     { label: 'In Review', value: stats.inReview, color: colors.warning, icon: '🔍' },
-  ];
+  ], [stats]);
 
   return (
     <ScrollView
@@ -54,15 +126,15 @@ export default function DashboardScreen({ navigation }: any) {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>Welcome back,</Text>
+          <Text style={styles.greeting}>{greeting}</Text>
           <Text style={styles.userName}>{user?.name}</Text>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{user?.name?.[0] || 'U'}</Text>
           </View>
           <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
-            <Text style={{ fontSize: 20 }}>🚪</Text>
+            <Text style={{ fontSize: iconSizes.sm }}>🚪</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -82,12 +154,8 @@ export default function DashboardScreen({ navigation }: any) {
       {/* Stat Cards */}
       <Text style={styles.sectionTitle}>Stakeholder Overview</Text>
       <View style={styles.statsGrid}>
-        {statCards.map((card) => (
-          <View key={card.label} style={[styles.statCard, { borderLeftColor: card.color }]}>
-            <Text style={styles.statIcon}>{card.icon}</Text>
-            <Text style={styles.statValue}>{card.value.toLocaleString()}</Text>
-            <Text style={styles.statLabel}>{card.label}</Text>
-          </View>
+        {statCards.map((card, index) => (
+          <StatCard key={card.label} card={card} index={index} />
         ))}
       </View>
 
@@ -123,20 +191,8 @@ export default function DashboardScreen({ navigation }: any) {
       {/* Quick Actions */}
       <Text style={styles.sectionTitle}>Quick Actions</Text>
       <View style={styles.actionsRow}>
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={() => navigation.navigate('Search')}
-        >
-          <Text style={styles.actionIcon}>🔍</Text>
-          <Text style={styles.actionText}>Search</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={() => navigation.navigate('SyncTab')}
-        >
-          <Text style={styles.actionIcon}>🔄</Text>
-          <Text style={styles.actionText}>Sync Now</Text>
-        </TouchableOpacity>
+        <ActionButton icon="🔍" text="Search" onPress={() => navigation.navigate('Search')} />
+        <ActionButton icon="🔄" text="Sync Now" onPress={() => navigation.navigate('SyncTab')} />
       </View>
     </ScrollView>
   );
@@ -150,14 +206,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xxl,
   },
   greeting: { ...typography.bodySmall, color: colors.textSecondary },
-  userName: { ...typography.h2, color: colors.textPrimary },
+  userName: { ...typography.h2, color: colors.primary, flexWrap: 'wrap', maxWidth: '80%' },
   avatar: {
-    width: 48, height: 48, borderRadius: 24,
+    width: moderateScale(48), height: moderateScale(48), borderRadius: moderateScale(24),
     backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center',
+    ...shadows.glow,
   },
-  avatarText: { color: '#FFF', fontSize: 20, fontWeight: '700' },
+  avatarText: { color: '#FFF', fontSize: moderateScale(20), fontWeight: '700' },
   logoutBtn: {
-    width: 48, height: 48, borderRadius: 24,
+    width: moderateScale(48), height: moderateScale(48), borderRadius: moderateScale(24),
     backgroundColor: colors.bgCard, justifyContent: 'center', alignItems: 'center',
     borderWidth: 1, borderColor: colors.border,
   },
@@ -172,24 +229,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
     borderWidth: 1, borderColor: 'rgba(255,107,53,0.2)',
   },
-  districtTagText: { color: colors.primary, fontSize: 12, fontWeight: '600' },
+  districtTagText: { color: colors.primary, fontSize: moderateScale(12), fontWeight: '600' },
   sectionTitle: { ...typography.h3, color: colors.textPrimary, marginBottom: spacing.lg },
   statsGrid: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginBottom: spacing.xxxl,
+    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: spacing.xxxl,
   },
   statCard: {
-    flex: 1, minWidth: '45%', backgroundColor: colors.bgCard,
-    borderRadius: borderRadius.md, padding: spacing.lg,
-    borderWidth: 1, borderColor: colors.border, borderLeftWidth: 3,
+    width: '48%', backgroundColor: colors.bgCard,
+    borderRadius: borderRadius.md, padding: spacing.lg, marginBottom: spacing.md,
+    borderWidth: 1, borderColor: colors.border, borderLeftWidth: moderateScale(4),
     ...shadows.card,
   },
-  statIcon: { fontSize: 24, marginBottom: spacing.sm },
+  statIcon: { fontSize: iconSizes.md, marginBottom: spacing.sm },
   statValue: { ...typography.stat, color: colors.textPrimary },
-  statLabel: { ...typography.caption, color: colors.textMuted },
+  statLabel: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs },
   syncCard: {
     backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
     padding: spacing.xl, borderWidth: 1, borderColor: colors.border,
     marginBottom: spacing.xxxl,
+    ...shadows.card,
   },
   syncRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -199,12 +257,17 @@ const styles = StyleSheet.create({
   syncValue: { ...typography.bodySmall, color: colors.textPrimary, fontWeight: '600' },
   syncDivider: { height: 1, backgroundColor: colors.border },
   syncBadge: { borderRadius: borderRadius.full, paddingHorizontal: spacing.md, paddingVertical: spacing.xs },
-  syncBadgeText: { fontSize: 13, fontWeight: '700' },
+  syncBadgeText: { fontSize: moderateScale(13), fontWeight: '700' },
   actionsRow: { flexDirection: 'row', gap: spacing.md },
   actionButton: {
-    flex: 1, backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
+    backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
     padding: spacing.xl, alignItems: 'center', borderWidth: 1, borderColor: colors.border,
+    ...shadows.card,
   },
-  actionIcon: { fontSize: 28, marginBottom: spacing.sm },
+  actionIconContainer: {
+    width: moderateScale(56), height: moderateScale(56), borderRadius: moderateScale(28), backgroundColor: colors.bgInput,
+    justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md,
+  },
+  actionIcon: { fontSize: iconSizes.md },
   actionText: { ...typography.label, color: colors.textPrimary },
 });

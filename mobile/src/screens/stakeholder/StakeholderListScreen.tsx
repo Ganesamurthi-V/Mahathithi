@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Animated, Easing } from 'react-native';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { stakeholderService } from '../../services/api';
-import { colors, spacing, borderRadius, typography } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 
 const STATUS_COLORS: Record<string, string> = {
   PENDING: colors.statusPending,
@@ -12,14 +12,95 @@ const STATUS_COLORS: Record<string, string> = {
   COMPLETED: colors.statusCompleted,
 };
 
+const SkeletonCard = () => {
+  const pulseAnim = useRef(new Animated.Value(0.5)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.5, duration: 800, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+
+  return (
+    <Animated.View style={[styles.card, { opacity: pulseAnim }]}>
+      <View style={styles.cardHeader}>
+        <View style={styles.skeletonTextLarge} />
+        <View style={styles.skeletonBadge} />
+      </View>
+      <View style={styles.metaRow}>
+        <View style={styles.skeletonTextSmall} />
+        <View style={styles.skeletonTextSmall} />
+      </View>
+    </Animated.View>
+  );
+};
+
+const StakeholderCard = React.memo(({ item, index, onPress }: { item: any, index: number, onPress: () => void }) => {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(20)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 300,
+        delay: Math.min(index * 50, 500),
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 300,
+        delay: Math.min(index * 50, 500),
+        useNativeDriver: true,
+        easing: Easing.out(Easing.cubic),
+      }),
+    ]).start();
+  }, []);
+
+  const handlePressIn = () => Animated.spring(scaleAnim, { toValue: 0.98, useNativeDriver: true }).start();
+  const handlePressOut = () => Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true }).start();
+
+  return (
+    <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }}>
+      <TouchableOpacity
+        style={[styles.card, { borderLeftColor: STATUS_COLORS[item.status] || colors.statusPending }]}
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        activeOpacity={0.9}
+      >
+        <View style={styles.cardHeader}>
+          <Text style={styles.orgName} numberOfLines={1}>
+            {item.companyNameStandardized || 'Unknown Organization'}
+          </Text>
+          <View style={[styles.badge, { backgroundColor: STATUS_COLORS[item.status] || colors.statusPending }]}>
+            <Text style={styles.badgeText}>{item.status?.replace('_', ' ')}</Text>
+          </View>
+        </View>
+        <View style={styles.metaRow}>
+          <Text style={styles.meta}>📍 {item.district || '—'}</Text>
+          <Text style={styles.meta}>🏙 {item.city || '—'}</Text>
+          <Text style={styles.meta}>📮 {item.pinCode || '—'}</Text>
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+});
+
 export default function StakeholderListScreen({ navigation }: any) {
   const { user } = useSelector((state: RootState) => state.auth);
   const [stakeholders, setStakeholders] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
   const loadStakeholders = async (p = 1) => {
+    if (p === 1) setInitialLoading(true);
     setLoading(true);
     try {
       const res = await stakeholderService.search({ page: p, limit: 20 });
@@ -33,47 +114,51 @@ export default function StakeholderListScreen({ navigation }: any) {
       setPage(p);
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoading(false);
+      setInitialLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => { loadStakeholders(); }, []);
+
+  const renderItem = useCallback(({ item, index }: { item: any, index: number }) => (
+    <StakeholderCard 
+      item={item} 
+      index={index}
+      onPress={() => navigation.navigate('StakeholderDetail', { stakeholderId: item.id })} 
+    />
+  ), [navigation]);
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Stakeholders</Text>
-        <Text style={styles.count}>{stakeholders.length} loaded</Text>
+        {!initialLoading && (
+          <View style={styles.countBadge}>
+            <Text style={styles.countText}>{stakeholders.length} items</Text>
+          </View>
+        )}
       </View>
 
-      <FlatList
-        data={stakeholders}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.card}
-            onPress={() => navigation.navigate('StakeholderDetail', { stakeholderId: item.id })}
-          >
-            <View style={styles.cardHeader}>
-              <Text style={styles.orgName} numberOfLines={1}>
-                {item.companyNameStandardized || 'Unknown Organization'}
-              </Text>
-              <View style={[styles.badge, { backgroundColor: STATUS_COLORS[item.status] || colors.statusPending }]}>
-                <Text style={styles.badgeText}>{item.status?.replace('_', ' ')}</Text>
-              </View>
-            </View>
-            <View style={styles.metaRow}>
-              <Text style={styles.meta}>📍 {item.district || '—'}</Text>
-              <Text style={styles.meta}>🏙 {item.city || '—'}</Text>
-              <Text style={styles.meta}>📮 {item.pinCode || '—'}</Text>
-            </View>
-          </TouchableOpacity>
-        )}
-        keyExtractor={item => item.id}
-        contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={loading && page === 1} onRefresh={() => loadStakeholders(1)} tintColor={colors.primary} />}
-        onEndReached={() => hasMore && !loading && loadStakeholders(page + 1)}
-        onEndReachedThreshold={0.3}
-      />
+      {initialLoading ? (
+        <View style={styles.list}>
+          {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
+        </View>
+      ) : (
+        <FlatList
+          data={stakeholders}
+          renderItem={renderItem}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.list}
+          refreshControl={<RefreshControl refreshing={loading && page === 1} onRefresh={() => loadStakeholders(1)} tintColor={colors.primary} />}
+          onEndReached={() => hasMore && !loading && loadStakeholders(page + 1)}
+          onEndReachedThreshold={0.3}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+        />
+      )}
     </View>
   );
 }
@@ -82,16 +167,24 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgPrimary },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.xl },
   title: { ...typography.h2, color: colors.textPrimary },
-  count: { ...typography.bodySmall, color: colors.textMuted },
+  countBadge: { backgroundColor: colors.bgCard, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: colors.border },
+  countText: { ...typography.caption, color: colors.textSecondary },
   list: { paddingHorizontal: spacing.lg, paddingBottom: 100 },
   card: {
     backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
     padding: spacing.lg, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border,
+    borderLeftWidth: 4,
+    ...shadows.card,
   },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
   orgName: { ...typography.body, fontWeight: '600', color: colors.textPrimary, flex: 1, marginRight: spacing.sm },
-  badge: { borderRadius: borderRadius.full, paddingHorizontal: 8, paddingVertical: 3 },
-  badgeText: { color: '#FFF', fontSize: 9, fontWeight: '700', textTransform: 'uppercase' },
+  badge: { borderRadius: borderRadius.full, paddingHorizontal: 10, paddingVertical: 4 },
+  badgeText: { color: '#FFF', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   metaRow: { flexDirection: 'row', gap: spacing.lg },
   meta: { ...typography.bodySmall, color: colors.textSecondary },
+  
+  // Skeleton styles
+  skeletonTextLarge: { width: '60%', height: 20, backgroundColor: colors.border, borderRadius: 4 },
+  skeletonBadge: { width: 60, height: 20, backgroundColor: colors.border, borderRadius: 10 },
+  skeletonTextSmall: { width: '30%', height: 14, backgroundColor: colors.border, borderRadius: 4 },
 });

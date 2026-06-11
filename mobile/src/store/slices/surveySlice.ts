@@ -4,7 +4,6 @@ interface SurveyState {
   currentSurvey: any | null;
   photos: any[];
   video: any | null;
-  phoneVerification: any | null;
   gpsData: { latitude: number; longitude: number; accuracy: number } | null;
   isDirty: boolean;
 }
@@ -13,7 +12,6 @@ const initialState: SurveyState = {
   currentSurvey: null,
   photos: [],
   video: null,
-  phoneVerification: null,
   gpsData: null,
   isDirty: false,
 };
@@ -45,9 +43,6 @@ const surveySlice = createSlice({
       state.video = action.payload;
       state.isDirty = true;
     },
-    setPhoneVerification: (state, action: PayloadAction<any>) => {
-      state.phoneVerification = action.payload;
-    },
     setGpsData: (state, action: PayloadAction<{ latitude: number; longitude: number; accuracy: number }>) => {
       state.gpsData = action.payload;
     },
@@ -55,7 +50,6 @@ const surveySlice = createSlice({
       state.currentSurvey = null;
       state.photos = [];
       state.video = null;
-      state.phoneVerification = null;
       state.gpsData = null;
       state.isDirty = false;
     },
@@ -64,6 +58,6 @@ const surveySlice = createSlice({
 
 export const {
   setCurrentSurvey, updateSurveyField, addPhoto, removePhoto,
-  setVideo, setPhoneVerification, setGpsData, resetSurvey,
+  setVideo, setGpsData, resetSurvey,
 } = surveySlice.actions;
 export default surveySlice.reducer;
