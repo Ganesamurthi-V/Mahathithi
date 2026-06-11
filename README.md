@@ -57,6 +57,9 @@ npm run db:seed
 # Import stakeholder CSV (313,604 records)
 npm run import:csv -- --file="../MahaAthithi_Master_Database_v3 (1).csv"
 
+#delete all the values for database 
+npx prisma db push --force-reset
+
 # Start development server
 npm run dev
 ```
