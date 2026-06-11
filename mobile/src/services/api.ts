@@ -2,7 +2,7 @@ import axios from 'axios';
 import EncryptedStorage from 'react-native-encrypted-storage';
 
 // Change this to your backend URL
-const API_BASE = 'http://10.114.88.165:3000/api'; // PC Wi-Fi IP
+const API_BASE = 'https://mahathithi-test.up.railway.app/api';
 
 const api = axios.create({
   baseURL: API_BASE,
