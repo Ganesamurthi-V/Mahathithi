@@ -13,10 +13,8 @@ import { colors, spacing, borderRadius, typography, shadows, animations, iconSiz
 import { moderateScale } from '../../theme/responsive';
 
 const STATUS_COLORS: Record<string, string> = {
-  PENDING: colors.statusPending,
-  IN_PROGRESS: colors.statusInProgress,
-  IN_REVIEW: colors.statusInReview,
-  COMPLETED: colors.statusCompleted,
+  OPEN: colors.statusPending,
+  CLOSED: colors.statusCompleted,
 };
 
 const StakeholderCard = React.memo(({ item, onPress }: { item: any, onPress: () => void }) => {
@@ -39,7 +37,7 @@ const StakeholderCard = React.memo(({ item, onPress }: { item: any, onPress: () 
             {item.companyNameStandardized || item.company_name_standardized || 'Unknown'}
           </Text>
           <View style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[item.status] || colors.statusPending }]}>
-            <Text style={styles.statusText}>{(item.status || 'PENDING').replace('_', ' ')}</Text>
+            <Text style={styles.statusText}>{(item.status || 'OPEN').replace('_', ' ')}</Text>
           </View>
         </View>
         <View style={styles.resultMeta}>
@@ -234,7 +232,6 @@ export default function SearchScreen({ navigation }: any) {
                 { key: 'category', label: 'Category', placeholder: 'e.g., Hotels & Resorts' },
                 { key: 'nicCode', label: 'NIC Code', placeholder: 'e.g., 55101' },
                 { key: 'gst', label: 'GST Number', placeholder: 'GST Number' },
-                { key: 'status', label: 'Status', placeholder: 'PENDING / IN_PROGRESS / COMPLETED' },
               ].map((f) => (
                 <View key={f.key} style={styles.filterGroup}>
                   <Text style={styles.filterLabel}>{f.label}</Text>

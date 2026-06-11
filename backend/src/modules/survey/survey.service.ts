@@ -88,14 +88,6 @@ export class SurveyService {
       },
     });
 
-    // Update stakeholder status to IN_PROGRESS
-    if (stakeholder.status === 'PENDING') {
-      await prisma.stakeholder.update({
-        where: { id: data.stakeholderId },
-        data: { status: 'IN_PROGRESS' },
-      });
-    }
-
     // Audit log
     await prisma.auditLog.create({
       data: {
@@ -204,7 +196,7 @@ export class SurveyService {
 
     // === DETERMINE STATUS ===
     if (validationErrors.length === 0) {
-      // All requirements met → COMPLETED + LOCK
+      // All requirements met → CLOSED + LOCK
       await prisma.$transaction([
         prisma.survey.update({
           where: { id: surveyId },
@@ -217,7 +209,7 @@ export class SurveyService {
         prisma.stakeholder.update({
           where: { id: survey.stakeholderId },
           data: {
-            status: 'COMPLETED',
+            status: 'CLOSED',
             lockedById: enumeratorId,
             lockedAt: new Date(),
           },
@@ -240,25 +232,21 @@ export class SurveyService {
       logger.info(`Survey completed: ${surveyId}, stakeholder locked by ${enumeratorId}`);
 
       return {
-        status: 'COMPLETED',
-        message: 'Survey completed successfully. Stakeholder has been locked.',
+        status: 'CLOSED',
+        message: 'Survey completed successfully. Stakeholder has been closed and locked.',
       };
     } else {
-      // Requirements NOT met → IN_REVIEW
+      // Requirements NOT met → remains OPEN
       await prisma.$transaction([
         prisma.survey.update({
           where: { id: surveyId },
           data: { isDraft: false },
         }),
-        prisma.stakeholder.update({
-          where: { id: survey.stakeholderId },
-          data: { status: 'IN_REVIEW' },
-        }),
       ]);
 
       return {
-        status: 'IN_REVIEW',
-        message: 'Survey submitted for review. Some requirements are not met.',
+        status: 'OPEN',
+        message: 'Survey submitted but not complete. Some requirements are not met.',
         missingRequirements: validationErrors,
       };
     }

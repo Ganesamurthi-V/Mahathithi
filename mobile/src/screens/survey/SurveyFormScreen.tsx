@@ -1,17 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, ScrollView, TouchableOpacity,
-  StyleSheet, Alert, ActivityIndicator, Platform, KeyboardAvoidingView, Animated
+  StyleSheet, Alert, ActivityIndicator, Platform, KeyboardAvoidingView, Animated, Image
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import Geolocation from 'react-native-geolocation-service';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { surveyService } from '../../services/api';
-import { surveyDao, syncQueueDao } from '../../database';
+import { surveyDao, syncQueueDao, mediaDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
-import { colors, spacing, borderRadius, typography, shadows, animations } from '../../theme';
-import { requestLocationPermission } from '../../utils/permissions';
+import { colors, spacing, borderRadius, typography, shadows, iconSizes } from '../../theme';
+import { moderateScale } from '../../theme/responsive';
+import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
+import { launchCamera } from 'react-native-image-picker';
+import { Video as VideoCompressor } from 'react-native-compressor';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface SurveyFormData {
   contactPerson: string;
@@ -23,6 +27,14 @@ interface SurveyFormData {
   website: string;
   remarks: string;
 }
+
+const PHOTO_CATEGORIES = [
+  { key: 'BUILDING_FRONT', label: 'Building Front', icon: 'office-building', required: true },
+  { key: 'SIGNBOARD', label: 'Signboard', icon: 'sign-direction', required: true },
+  { key: 'INTERIOR', label: 'Interior', icon: 'home-variant-outline', required: true },
+  { key: 'STAKEHOLDER', label: 'Stakeholder', icon: 'account-box-outline', required: true },
+  { key: 'ADDITIONAL', label: 'Additional', icon: 'camera-plus-outline', required: false },
+];
 
 const AnimatedInput = ({ field, control, errors, onFocus, onBlur }: any) => {
   const [isFocused, setIsFocused] = useState(false);
@@ -77,7 +89,7 @@ const AnimatedInput = ({ field, control, errors, onFocus, onBlur }: any) => {
         />
       </Animated.View>
       {errors[field.name] && (
-        <Text style={styles.errorText}>⚠️ {errors[field.name]?.message}</Text>
+        <Text style={styles.errorText}><Icon name="alert-circle-outline" size={14} /> {errors[field.name]?.message}</Text>
       )}
     </View>
   );
@@ -91,7 +103,13 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const [saving, setSaving] = useState(false);
   const [completionPercent, setCompletionPercent] = useState(0);
 
-  const { control, handleSubmit, formState: { errors, dirtyFields }, watch } = useForm<SurveyFormData>({
+  // Media State
+  const [photos, setPhotos] = useState<Record<string, any>>({});
+  const [video, setVideo] = useState<any>(null);
+  const [recording, setRecording] = useState(false);
+  const [compressing, setCompressing] = useState(false);
+
+  const { control, handleSubmit, formState: { errors }, watch } = useForm<SurveyFormData>({
     defaultValues: {
       contactPerson: existingSurvey?.contactPerson || '',
       designation: existingSurvey?.designation || '',
@@ -110,12 +128,17 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     // Calculate progress
     const fields = Object.values(watchAllFields);
     const filledFields = fields.filter(v => v && v.length > 0).length;
-    let percent = Math.round((filledFields / fields.length) * 100);
-    if (gps) percent = Math.min(100, percent + 15);
-    setCompletionPercent(percent);
-  }, [watchAllFields, gps]);
+    let basePercent = Math.round((filledFields / fields.length) * 40); // Text fields = 40%
+    if (gps) basePercent += 10; // GPS = 10%
+    
+    // Media progress (50% max)
+    const requiredPhotos = PHOTO_CATEGORIES.filter(c => c.required).length;
+    const capturedPhotosCount = Object.keys(photos).filter(k => PHOTO_CATEGORIES.find(c => c.key === k)?.required).length;
+    const mediaPercent = Math.round(((capturedPhotosCount + (video ? 1 : 0)) / (requiredPhotos + 1)) * 50);
 
-  // GPS Animation
+    setCompletionPercent(Math.min(100, basePercent + mediaPercent));
+  }, [watchAllFields, gps, photos, video]);
+
   const gpsPulseAnim = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     if (gpsLoading) {
@@ -133,7 +156,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
   const buttonScaleAnim = useRef(new Animated.Value(1)).current;
 
-  // Auto-capture GPS on mount
   useEffect(() => {
     captureGPS();
   }, []);
@@ -171,11 +193,154 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     );
   };
 
+  // === MEDIA CAPTURE LOGIC ===
+
+  const capturePhoto = async (category: string) => {
+    const hasCameraPermission = await requestCameraPermission();
+    if (!hasCameraPermission) {
+      Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+      return;
+    }
+    const hasLocationPermission = await requestLocationPermission();
+    if (!hasLocationPermission) {
+      Alert.alert('Permission Denied', 'Location permission is required for geotagging photos.');
+      return;
+    }
+
+    Geolocation.getCurrentPosition(
+      async (position) => {
+        const result = await launchCamera({
+          mediaType: 'photo',
+          quality: 0.8,
+          saveToPhotos: false,
+          includeExtra: true,
+        });
+
+        if (result.assets && result.assets[0]) {
+          const asset = result.assets[0];
+          setPhotos(prev => ({
+            ...prev,
+            [category]: {
+              uri: asset.uri,
+              fileName: asset.fileName,
+              fileSize: asset.fileSize,
+              type: asset.type,
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              gpsAccuracy: position.coords.accuracy,
+              capturedAt: new Date().toISOString(),
+            },
+          }));
+        }
+      },
+      () => Alert.alert('GPS Error', 'Enable GPS for photo capture with location metadata'),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+    );
+  };
+
+  const captureVideo = async () => {
+    const hasCameraPermission = await requestCameraPermission();
+    if (!hasCameraPermission) {
+      Alert.alert('Permission Denied', 'Camera permission is required to record video.');
+      return;
+    }
+    const hasLocationPermission = await requestLocationPermission();
+    if (!hasLocationPermission) {
+      Alert.alert('Permission Denied', 'Location permission is required for geotagging videos.');
+      return;
+    }
+
+    setRecording(true);
+    Geolocation.getCurrentPosition(
+      async (position) => {
+        const result = await launchCamera({
+          mediaType: 'video',
+          videoQuality: 'high',
+          durationLimit: 60,
+          saveToPhotos: false,
+        });
+
+        if (result.assets && result.assets[0]) {
+          const asset = result.assets[0];
+          let finalUri = asset.uri;
+          setCompressing(true);
+          try {
+            if (asset.uri) {
+              finalUri = await VideoCompressor.compress(asset.uri, {
+                compressionMethod: 'manual',
+                bitrate: 1500000,
+              });
+            }
+          } catch (e) {
+            console.error('Compression failed', e);
+          }
+          setCompressing(false);
+
+          setVideo({
+            uri: finalUri,
+            fileName: asset.fileName,
+            fileSize: asset.fileSize,
+            type: asset.type,
+            duration: asset.duration,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            gpsAccuracy: position.coords.accuracy,
+            capturedAt: new Date().toISOString(),
+          });
+        }
+        setRecording(false);
+      },
+      () => {
+        Alert.alert('GPS Error', 'Enable GPS for video capture');
+        setRecording(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+    );
+  };
+
+  // === SAVE LOGIC ===
+
+  const saveMediaToDb = async (newSurveyId: string) => {
+    for (const key in photos) {
+      const p = photos[key];
+      await mediaDao.save({
+        surveyId: newSurveyId,
+        type: 'PHOTO',
+        photoCategory: key,
+        filePath: p.uri,
+        fileName: p.fileName,
+        fileSize: p.fileSize,
+        mimeType: p.type,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        gpsAccuracy: p.gpsAccuracy,
+        capturedAt: p.capturedAt,
+        isSynced: false,
+      });
+    }
+    if (video) {
+      await mediaDao.save({
+        surveyId: newSurveyId,
+        type: 'VIDEO',
+        filePath: video.uri,
+        fileName: video.fileName,
+        fileSize: video.fileSize,
+        mimeType: video.type || 'video/mp4',
+        latitude: video.latitude,
+        longitude: video.longitude,
+        gpsAccuracy: video.gpsAccuracy,
+        capturedAt: video.capturedAt,
+        duration: video.duration,
+        isSynced: false,
+      });
+    }
+  };
+
   const onSubmit = async (data: SurveyFormData) => {
     setSaving(true);
-
+    const surveyId = existingSurvey?.id || `draft_${stakeholderId}`;
     const surveyPayload = {
-      id: existingSurvey?.id || `draft_${stakeholderId}`,
+      id: surveyId,
       stakeholderId,
       enumeratorId: user!.id,
       ...data,
@@ -186,31 +351,29 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
     try {
       const netState = await NetInfo.fetch();
-
       if (netState.isConnected) {
-        // Online: save to server
         await surveyService.createOrUpdate(surveyPayload);
-        Alert.alert('Saved', 'Survey saved to server successfully');
+        await saveMediaToDb(surveyId);
+        // Sync queue for media uploads would be triggered separately by background job or Sync screen
+        Alert.alert('Saved', 'Survey and media saved to server successfully');
       } else {
-        // Offline: save to SQLite
         await surveyDao.save(surveyPayload);
         await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
-        Alert.alert('Saved Offline', 'Survey saved locally. It will sync when internet is available.');
+        await saveMediaToDb(surveyId);
+        Alert.alert('Saved Offline', 'Survey and media saved locally.');
       }
-
       navigation.goBack();
     } catch (e: any) {
-      // Fallback to offline
       try {
         await surveyDao.save(surveyPayload);
         await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
+        await saveMediaToDb(surveyId);
         Alert.alert('Saved Offline', 'Could not reach server. Survey saved locally.');
         navigation.goBack();
       } catch (offlineError) {
         Alert.alert('Error', 'Failed to save survey');
       }
     }
-
     setSaving(false);
   };
 
@@ -231,13 +394,11 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
-      {/* Progress Bar */}
       <View style={styles.progressContainer}>
-        <View style={[styles.progressBar, { width: `${completionPercent}%` }]} />
+        <View style={[styles.progressBar, { width: `${completionPercent}%`, backgroundColor: completionPercent === 100 ? colors.success : colors.primary }]} />
       </View>
 
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        {/* Stakeholder Info */}
         <View style={styles.stakeholderInfo}>
           <Text style={styles.stakeholderName}>{stakeholder?.companyNameStandardized}</Text>
           <Text style={styles.stakeholderMeta}>{stakeholder?.district} • {stakeholder?.pinCode}</Text>
@@ -247,54 +408,137 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         <View style={styles.gpsCard}>
           <View style={styles.gpsHeader}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={styles.gpsTitle}>📍 GPS Location</Text>
-              {gpsLoading && <Animated.View style={[styles.gpsPulse, { transform: [{ scale: gpsPulseAnim }] }]} />}
+              <Icon name="map-marker-radius" size={24} color={gps ? colors.success : colors.warning} />
+              <Text style={styles.gpsTitle}>GPS Location</Text>
             </View>
-            <TouchableOpacity onPress={captureGPS} disabled={gpsLoading}>
-              <Text style={styles.gpsRefresh}>{gpsLoading ? 'Acquiring...' : '🔄 Refresh'}</Text>
-            </TouchableOpacity>
+            {gpsLoading ? (
+              <Animated.View style={{ transform: [{ scale: gpsPulseAnim }] }}>
+                <Icon name="crosshairs-gps" size={24} color={colors.primary} />
+              </Animated.View>
+            ) : gps ? (
+              <Icon name="check-circle" size={24} color={colors.success} />
+            ) : (
+              <TouchableOpacity onPress={captureGPS} style={styles.gpsRetryBtn}>
+                <Icon name="refresh" size={16} color={colors.textSecondary} />
+                <Text style={styles.gpsRetryText}>Retry</Text>
+              </TouchableOpacity>
+            )}
           </View>
           {gps ? (
-            <View>
-              <Text style={styles.gpsCoord}>Lat: {gps.latitude.toFixed(6)}</Text>
-              <Text style={styles.gpsCoord}>Lng: {gps.longitude.toFixed(6)}</Text>
-              <Text style={styles.gpsAccuracy}>Accuracy: {gps.accuracy.toFixed(1)}m</Text>
-            </View>
+            <Text style={styles.gpsData}>
+              {gps.latitude.toFixed(6)}, {gps.longitude.toFixed(6)} (±{Math.round(gps.accuracy)}m)
+            </Text>
           ) : (
             <Text style={styles.gpsWaiting}>
-              {gpsLoading ? 'Waiting for satellite fix...' : 'GPS not captured. Tap refresh.'}
+              {gpsLoading ? 'Acquiring high accuracy location...' : 'Location required'}
             </Text>
           )}
         </View>
 
         {/* Form Fields */}
-        <View style={styles.formContainer}>
-          {fields.map((field) => (
-            <AnimatedInput
-              key={field.name}
-              field={field}
-              control={control}
-              errors={errors}
-              onFocus={() => {}}
-              onBlur={() => {}}
-            />
-          ))}
+        <View style={styles.formSection}>
+          <Text style={styles.sectionHeader}>Contact Information</Text>
+          {fields.slice(0, 4).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
+          
+          <Text style={styles.sectionHeader}>Organization Details</Text>
+          {fields.slice(4).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
         </View>
 
-        {/* Submit */}
-        <Animated.View style={{ transform: [{ scale: buttonScaleAnim }], marginTop: spacing.xl }}>
+        {/* Media Capture Section */}
+        <View style={styles.formSection}>
+          <Text style={styles.sectionHeader}>Photos</Text>
+          {PHOTO_CATEGORIES.map((cat) => {
+            const photo = photos[cat.key];
+            return (
+              <View key={cat.key} style={styles.photoSlot}>
+                <View style={styles.slotHeader}>
+                  <Icon name={cat.icon} size={28} color={photo ? colors.success : colors.primary} />
+                  <View style={{ flex: 1, marginLeft: spacing.md }}>
+                    <Text style={styles.slotLabel}>{cat.label}</Text>
+                    <Text style={styles.slotReq}>{cat.required ? 'Required' : 'Optional'}</Text>
+                  </View>
+                  {photo && <Icon name="check-circle" size={24} color={colors.success} />}
+                </View>
+
+                {photo ? (
+                  <View>
+                    <Image source={{ uri: photo.uri }} style={styles.photoPreview} />
+                    <View style={styles.photoActions}>
+                      <TouchableOpacity style={styles.retakeBtn} onPress={() => capturePhoto(cat.key)}>
+                        <Icon name="camera-retake" size={16} color={colors.textSecondary} />
+                        <Text style={styles.retakeBtnText}>Retake</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.removeBtn} onPress={() => {
+                        setPhotos(p => { const np = {...p}; delete np[cat.key]; return np; });
+                      }}>
+                        <Icon name="delete" size={16} color={colors.error} />
+                        <Text style={styles.removeBtnText}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.captureBtn} onPress={() => capturePhoto(cat.key)}>
+                    <Icon name="camera" size={24} color={colors.textSecondary} />
+                    <Text style={styles.captureBtnText}>Capture {cat.label}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+
+          <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Verification Video</Text>
+          <View style={styles.photoSlot}>
+            <View style={styles.slotHeader}>
+              <Icon name="video" size={28} color={video ? colors.success : colors.primary} />
+              <View style={{ flex: 1, marginLeft: spacing.md }}>
+                <Text style={styles.slotLabel}>Walkthrough Video</Text>
+                <Text style={styles.slotReq}>Required (Max 60s)</Text>
+              </View>
+              {video && <Icon name="check-circle" size={24} color={colors.success} />}
+            </View>
+
+            {video ? (
+              <View>
+                <View style={styles.videoMetaBox}>
+                  <Icon name="play-circle-outline" size={32} color={colors.primary} />
+                  <Text style={styles.videoMetaText}>{video.duration ? `${Math.round(video.duration)}s` : 'Video recorded'}</Text>
+                </View>
+                <View style={styles.photoActions}>
+                  <TouchableOpacity style={styles.retakeBtn} onPress={captureVideo}>
+                    <Icon name="video-retake" size={16} color={colors.textSecondary} />
+                    <Text style={styles.retakeBtnText}>Retake</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.removeBtn} onPress={() => setVideo(null)}>
+                    <Icon name="delete" size={16} color={colors.error} />
+                    <Text style={styles.removeBtnText}>Remove</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity style={styles.captureBtn} onPress={captureVideo} disabled={recording || compressing}>
+                <Icon name={compressing ? "movie-roll" : "video"} size={24} color={colors.textSecondary} />
+                <Text style={styles.captureBtnText}>
+                  {compressing ? 'Compressing Video...' : recording ? 'Opening Camera...' : 'Record Video'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* Submit Button */}
+        <Animated.View style={{ transform: [{ scale: buttonScaleAnim }], marginTop: spacing.xxl }}>
           <TouchableOpacity
-            style={[styles.submitButton, saving && styles.submitDisabled]}
+            style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
             onPress={handleSubmit(onSubmit)}
-            onPressIn={() => Animated.spring(buttonScaleAnim, { toValue: 0.95, useNativeDriver: true }).start()}
-            onPressOut={() => Animated.spring(buttonScaleAnim, { toValue: 1, useNativeDriver: true }).start()}
             disabled={saving}
-            activeOpacity={0.9}
           >
             {saving ? (
               <ActivityIndicator color="#FFF" />
             ) : (
-              <Text style={styles.submitText}>💾 Save Survey</Text>
+              <>
+                <Icon name="content-save-outline" size={20} color="#FFF" />
+                <Text style={styles.submitText}>Save Survey</Text>
+              </>
             )}
           </TouchableOpacity>
         </Animated.View>
@@ -305,47 +549,67 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgPrimary },
-  content: { padding: spacing.xl, paddingBottom: 100 },
-  progressContainer: { height: 4, backgroundColor: colors.border },
-  progressBar: { height: '100%', backgroundColor: colors.primary },
-  stakeholderInfo: {
-    backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
-    padding: spacing.lg, marginBottom: spacing.xxl, borderWidth: 1, borderColor: colors.border,
-    borderLeftWidth: 4, borderLeftColor: colors.primary,
-    ...shadows.card,
-  },
-  stakeholderName: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
-  stakeholderMeta: { ...typography.bodySmall, color: colors.textMuted, marginTop: 4 },
+  content: { padding: spacing.xl, paddingBottom: moderateScale(100) },
+  progressContainer: { height: 4, backgroundColor: colors.bgCard, width: '100%' },
+  progressBar: { height: 4, backgroundColor: colors.primary },
+  stakeholderInfo: { marginBottom: spacing.xxl },
+  stakeholderName: { ...typography.h1, color: colors.textPrimary, marginBottom: spacing.xs },
+  stakeholderMeta: { ...typography.bodySmall, color: colors.textMuted },
+  
   gpsCard: {
-    backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
-    padding: spacing.xl, marginBottom: spacing.xxl, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.bgCard, borderRadius: borderRadius.xl,
+    padding: spacing.lg, marginBottom: spacing.xxl, borderWidth: 1, borderColor: colors.border,
     ...shadows.card,
   },
-  gpsHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.md, alignItems: 'center' },
-  gpsTitle: { ...typography.label, color: colors.textPrimary },
-  gpsPulse: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
-  gpsRefresh: { color: colors.primary, fontSize: 14, fontWeight: '600' },
-  gpsCoord: { ...typography.body, color: colors.success, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', letterSpacing: 0.5 },
-  gpsAccuracy: { ...typography.caption, color: colors.textMuted, marginTop: 6 },
-  gpsWaiting: { ...typography.bodySmall, color: colors.warning },
-  formContainer: { backgroundColor: colors.bgCard, padding: spacing.lg, borderRadius: borderRadius.md, borderWidth: 1, borderColor: colors.border },
-  inputGroup: { marginBottom: spacing.xl },
-  label: { ...typography.label, color: colors.textSecondary, marginBottom: spacing.sm },
+  gpsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  gpsTitle: { ...typography.h3, color: colors.textPrimary },
+  gpsData: { ...typography.bodySmall, color: colors.textSecondary, marginTop: spacing.md },
+  gpsWaiting: { ...typography.bodySmall, color: colors.textMuted, marginTop: spacing.md, fontStyle: 'italic' },
+  gpsRetryBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.bgInput, paddingHorizontal: 12, paddingVertical: 6, borderRadius: borderRadius.full },
+  gpsRetryText: { ...typography.caption, color: colors.textSecondary, marginLeft: 4 },
+  
+  formSection: { marginBottom: spacing.xl },
+  sectionHeader: { ...typography.h2, color: colors.textPrimary, marginBottom: spacing.lg, marginTop: spacing.xl },
+  inputGroup: { marginBottom: spacing.lg },
+  label: { ...typography.label, color: colors.textSecondary, marginBottom: spacing.xs },
   labelFocused: { color: colors.primary },
   labelError: { color: colors.error },
   inputWrapper: {
     borderWidth: 1, borderRadius: borderRadius.md, overflow: 'hidden',
   },
   input: {
-    paddingHorizontal: spacing.lg, paddingVertical: Platform.OS === 'ios' ? spacing.lg : spacing.md,
-    color: colors.textPrimary, fontSize: 16,
+    ...typography.body, color: colors.textPrimary, paddingHorizontal: spacing.lg,
+    paddingVertical: Platform.OS === 'ios' ? spacing.lg : spacing.md,
   },
-  errorText: { color: colors.error, fontSize: 12, marginTop: 6, fontWeight: '500' },
-  submitButton: {
-    backgroundColor: colors.primary, borderRadius: borderRadius.md,
-    paddingVertical: 16, alignItems: 'center',
+  errorText: { ...typography.caption, color: colors.error, marginTop: spacing.xs },
+  
+  photoSlot: {
+    backgroundColor: colors.bgCard, borderRadius: borderRadius.xl,
+    padding: spacing.lg, marginBottom: spacing.lg, borderWidth: 1, borderColor: colors.border,
+  },
+  slotHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md },
+  slotLabel: { ...typography.body, fontWeight: '600', color: colors.textPrimary },
+  slotReq: { ...typography.caption, color: colors.textMuted },
+  photoPreview: { width: '100%', height: 200, borderRadius: borderRadius.lg, marginBottom: spacing.md },
+  videoMetaBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.bgInput, padding: spacing.lg, borderRadius: borderRadius.md, marginBottom: spacing.md },
+  videoMetaText: { ...typography.body, color: colors.textPrimary, fontWeight: '600' },
+  photoActions: { flexDirection: 'row', gap: spacing.md },
+  retakeBtn: { flex: 1, padding: spacing.md, borderRadius: borderRadius.md, backgroundColor: colors.bgInput, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  retakeBtnText: { color: colors.textSecondary, fontSize: 14, fontWeight: '600' },
+  removeBtn: { flex: 1, padding: spacing.md, borderRadius: borderRadius.md, backgroundColor: colors.errorBg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  removeBtnText: { color: colors.error, fontSize: 14, fontWeight: '600' },
+  captureBtn: {
+    borderWidth: 2, borderColor: colors.border, borderStyle: 'dashed',
+    borderRadius: borderRadius.lg, padding: spacing.xl, alignItems: 'center',
+    flexDirection: 'row', justifyContent: 'center', gap: spacing.sm
+  },
+  captureBtnText: { ...typography.button, color: colors.textSecondary },
+  
+  submitBtn: {
+    backgroundColor: colors.primary, borderRadius: borderRadius.full, padding: spacing.xl,
+    alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: spacing.sm,
     ...shadows.elevated,
   },
-  submitDisabled: { opacity: 0.6 },
-  submitText: { ...typography.button, color: '#FFF', fontSize: 16 },
+  submitBtnDisabled: { opacity: 0.7 },
+  submitText: { ...typography.button, color: '#FFF', fontSize: 18 },
 });

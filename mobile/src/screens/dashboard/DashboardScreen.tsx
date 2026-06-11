@@ -1,13 +1,13 @@
 import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert, Animated } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { setStats, setLoading } from '../../store/slices/dashboardSlice';
 import { logout } from '../../store/slices/authSlice';
 import { dashboardService } from '../../services/api';
-import { syncQueueDao } from '../../database';
-import { colors, spacing, borderRadius, typography, shadows, animations, iconSizes } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, iconSizes } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const StatCard = React.memo(({ card, index }: { card: any, index: number }) => {
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
@@ -29,14 +29,16 @@ const StatCard = React.memo(({ card, index }: { card: any, index: number }) => {
         useNativeDriver: true,
       }),
     ]).start();
-  }, []);
+  }, [index, opacityAnim, scaleAnim]);
 
   return (
     <Animated.View style={[
       styles.statCard, 
-      { borderLeftColor: card.color, opacity: opacityAnim, transform: [{ scale: scaleAnim }] }
+      { opacity: opacityAnim, transform: [{ scale: scaleAnim }] }
     ]}>
-      <Text style={styles.statIcon}>{card.icon}</Text>
+      <View style={[styles.statIconWrapper, { backgroundColor: card.color + '20' }]}>
+        <Icon name={card.icon} size={iconSizes.md} color={card.color} />
+      </View>
       <Text style={styles.statValue}>{card.value.toLocaleString()}</Text>
       <Text style={styles.statLabel}>{card.label}</Text>
     </Animated.View>
@@ -63,7 +65,7 @@ const ActionButton = React.memo(({ icon, text, onPress }: { icon: string, text: 
         activeOpacity={0.9}
       >
         <View style={styles.actionIconContainer}>
-          <Text style={styles.actionIcon}>{icon}</Text>
+          <Icon name={icon} size={iconSizes.md} color={colors.primary} />
         </View>
         <Text style={styles.actionText}>{text}</Text>
       </TouchableOpacity>
@@ -111,10 +113,8 @@ export default function DashboardScreen({ navigation }: any) {
   };
 
   const statCards = useMemo(() => [
-    { label: 'Completed', value: stats.completed, color: colors.success, icon: '✅' },
-    { label: 'Pending', value: stats.pending, color: colors.statusPending, icon: '⏳' },
-    { label: 'In Progress', value: stats.inProgress, color: colors.info, icon: '🔄' },
-    { label: 'In Review', value: stats.inReview, color: colors.warning, icon: '🔍' },
+    { label: 'Completed', value: stats.completed, color: colors.success, icon: 'check-circle-outline' },
+    { label: 'Open Tasks', value: stats.open, color: colors.warning, icon: 'clipboard-list-outline' },
   ], [stats]);
 
   return (
@@ -125,16 +125,16 @@ export default function DashboardScreen({ navigation }: any) {
     >
       {/* Header */}
       <View style={styles.header}>
-        <View>
+        <View style={styles.headerTextContainer}>
           <Text style={styles.greeting}>{greeting}</Text>
           <Text style={styles.userName}>{user?.name}</Text>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
-          <View style={styles.avatar}>
+        <View style={styles.headerActions}>
+          <TouchableOpacity style={styles.avatar}>
             <Text style={styles.avatarText}>{user?.name?.[0] || 'U'}</Text>
-          </View>
+          </TouchableOpacity>
           <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
-            <Text style={{ fontSize: iconSizes.sm }}>🚪</Text>
+            <Icon name="logout" size={moderateScale(20)} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -142,17 +142,18 @@ export default function DashboardScreen({ navigation }: any) {
       {/* Districts */}
       <View style={styles.districtBar}>
         <Text style={styles.districtLabel}>Assigned Districts:</Text>
-        <View style={styles.districtTags}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.districtTags}>
           {user?.districts?.map((d: any) => (
             <View key={d.id} style={styles.districtTag}>
+              <Icon name="map-marker-outline" size={moderateScale(14)} color={colors.primary} style={{ marginRight: 4 }} />
               <Text style={styles.districtTagText}>{d.name}</Text>
             </View>
           ))}
-        </View>
+        </ScrollView>
       </View>
 
       {/* Stat Cards */}
-      <Text style={styles.sectionTitle}>Stakeholder Overview</Text>
+      <Text style={styles.sectionTitle}>Overview</Text>
       <View style={styles.statsGrid}>
         {statCards.map((card, index) => (
           <StatCard key={card.label} card={card} index={index} />
@@ -163,36 +164,49 @@ export default function DashboardScreen({ navigation }: any) {
       <Text style={styles.sectionTitle}>Sync Status</Text>
       <View style={styles.syncCard}>
         <View style={styles.syncRow}>
-          <Text style={styles.syncLabel}>Last Sync</Text>
+          <View style={styles.syncLabelContainer}>
+            <Icon name="clock-outline" size={moderateScale(20)} color={colors.textMuted} />
+            <Text style={styles.syncLabel}>Last Sync</Text>
+          </View>
           <Text style={styles.syncValue}>
             {lastSyncTime ? new Date(lastSyncTime).toLocaleString() : 'Never'}
           </Text>
         </View>
         <View style={styles.syncDivider} />
         <View style={styles.syncRow}>
-          <Text style={styles.syncLabel}>Pending Uploads</Text>
+          <View style={styles.syncLabelContainer}>
+            <Icon name="cloud-upload-outline" size={moderateScale(20)} color={colors.textMuted} />
+            <Text style={styles.syncLabel}>Pending Uploads</Text>
+          </View>
           <View style={[styles.syncBadge, { backgroundColor: pendingCount > 0 ? colors.warningBg : colors.successBg }]}>
             <Text style={[styles.syncBadgeText, { color: pendingCount > 0 ? colors.warning : colors.success }]}>
               {pendingCount}
             </Text>
           </View>
         </View>
-        <View style={styles.syncDivider} />
-        <View style={styles.syncRow}>
-          <Text style={styles.syncLabel}>Failed Uploads</Text>
-          <View style={[styles.syncBadge, { backgroundColor: failedCount > 0 ? colors.errorBg : colors.successBg }]}>
-            <Text style={[styles.syncBadgeText, { color: failedCount > 0 ? colors.error : colors.success }]}>
-              {failedCount}
-            </Text>
-          </View>
-        </View>
+        {failedCount > 0 && (
+          <>
+            <View style={styles.syncDivider} />
+            <View style={styles.syncRow}>
+              <View style={styles.syncLabelContainer}>
+                <Icon name="alert-circle-outline" size={moderateScale(20)} color={colors.error} />
+                <Text style={[styles.syncLabel, { color: colors.error }]}>Failed Uploads</Text>
+              </View>
+              <View style={[styles.syncBadge, { backgroundColor: colors.errorBg }]}>
+                <Text style={[styles.syncBadgeText, { color: colors.error }]}>
+                  {failedCount}
+                </Text>
+              </View>
+            </View>
+          </>
+        )}
       </View>
 
       {/* Quick Actions */}
       <Text style={styles.sectionTitle}>Quick Actions</Text>
       <View style={styles.actionsRow}>
-        <ActionButton icon="🔍" text="Search" onPress={() => navigation.navigate('Search')} />
-        <ActionButton icon="🔄" text="Sync Now" onPress={() => navigation.navigate('SyncTab')} />
+        <ActionButton icon="magnify" text="Search" onPress={() => navigation.navigate('Search')} />
+        <ActionButton icon="sync" text="Sync Now" onPress={() => navigation.navigate('SyncTab')} />
       </View>
     </ScrollView>
   );
@@ -200,74 +214,82 @@ export default function DashboardScreen({ navigation }: any) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgPrimary },
-  content: { padding: spacing.xl },
+  content: { padding: spacing.xl, paddingBottom: moderateScale(40) },
   header: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginBottom: spacing.xxl,
+    marginBottom: spacing.xxl, paddingTop: spacing.md,
   },
-  greeting: { ...typography.bodySmall, color: colors.textSecondary },
-  userName: { ...typography.h2, color: colors.primary, flexWrap: 'wrap', maxWidth: '80%' },
+  headerTextContainer: { flex: 1, paddingRight: spacing.md },
+  greeting: { ...typography.bodySmall, color: colors.textSecondary, marginBottom: spacing.xs },
+  userName: { ...typography.h2, color: colors.primary, flexWrap: 'wrap' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   avatar: {
-    width: moderateScale(48), height: moderateScale(48), borderRadius: moderateScale(24),
+    width: moderateScale(50), height: moderateScale(50), borderRadius: moderateScale(25),
     backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center',
     ...shadows.glow,
   },
-  avatarText: { color: '#FFF', fontSize: moderateScale(20), fontWeight: '700' },
+  avatarText: { color: '#FFF', fontSize: moderateScale(22), fontWeight: '700' },
   logoutBtn: {
-    width: moderateScale(48), height: moderateScale(48), borderRadius: moderateScale(24),
+    width: moderateScale(40), height: moderateScale(40), borderRadius: moderateScale(20),
     backgroundColor: colors.bgCard, justifyContent: 'center', alignItems: 'center',
     borderWidth: 1, borderColor: colors.border,
   },
   districtBar: {
-    backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
+    backgroundColor: colors.bgCard, borderRadius: borderRadius.lg,
     padding: spacing.lg, marginBottom: spacing.xxl, borderWidth: 1, borderColor: colors.border,
+    ...shadows.card,
   },
-  districtLabel: { ...typography.caption, color: colors.textMuted, marginBottom: spacing.sm },
-  districtTags: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  districtLabel: { ...typography.caption, color: colors.textMuted, marginBottom: spacing.md },
+  districtTags: { flexDirection: 'row', alignItems: 'center' },
   districtTag: {
+    flexDirection: 'row', alignItems: 'center',
     backgroundColor: colors.primaryBg, borderRadius: borderRadius.full,
-    paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
-    borderWidth: 1, borderColor: 'rgba(255,107,53,0.2)',
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderWidth: 1, borderColor: 'rgba(255,107,53,0.3)',
+    marginRight: spacing.sm,
   },
-  districtTagText: { color: colors.primary, fontSize: moderateScale(12), fontWeight: '600' },
-  sectionTitle: { ...typography.h3, color: colors.textPrimary, marginBottom: spacing.lg },
+  districtTagText: { color: colors.primary, fontSize: moderateScale(13), fontWeight: '600' },
+  sectionTitle: { ...typography.h3, color: colors.textPrimary, marginBottom: spacing.lg, letterSpacing: 0.5 },
   statsGrid: {
-    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: spacing.xxxl,
+    flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.xxxl,
   },
   statCard: {
     width: '48%', backgroundColor: colors.bgCard,
-    borderRadius: borderRadius.md, padding: spacing.lg, marginBottom: spacing.md,
-    borderWidth: 1, borderColor: colors.border, borderLeftWidth: moderateScale(4),
-    ...shadows.card,
+    borderRadius: borderRadius.xl, padding: spacing.xl,
+    borderWidth: 1, borderColor: colors.border,
+    ...shadows.elevated,
   },
-  statIcon: { fontSize: iconSizes.md, marginBottom: spacing.sm },
-  statValue: { ...typography.stat, color: colors.textPrimary },
-  statLabel: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs },
+  statIconWrapper: {
+    width: moderateScale(48), height: moderateScale(48), borderRadius: moderateScale(24),
+    justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md,
+  },
+  statValue: { ...typography.stat, color: colors.textPrimary, marginBottom: spacing.xs },
+  statLabel: { ...typography.bodySmall, color: colors.textSecondary, fontWeight: '500' },
   syncCard: {
-    backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
+    backgroundColor: colors.bgCard, borderRadius: borderRadius.xl,
     padding: spacing.xl, borderWidth: 1, borderColor: colors.border,
     marginBottom: spacing.xxxl,
-    ...shadows.card,
+    ...shadows.elevated,
   },
   syncRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
   },
-  syncLabel: { ...typography.body, color: colors.textSecondary },
+  syncLabelContainer: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  syncLabel: { ...typography.body, color: colors.textSecondary, fontWeight: '500' },
   syncValue: { ...typography.bodySmall, color: colors.textPrimary, fontWeight: '600' },
-  syncDivider: { height: 1, backgroundColor: colors.border },
+  syncDivider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
   syncBadge: { borderRadius: borderRadius.full, paddingHorizontal: spacing.md, paddingVertical: spacing.xs },
   syncBadgeText: { fontSize: moderateScale(13), fontWeight: '700' },
-  actionsRow: { flexDirection: 'row', gap: spacing.md },
+  actionsRow: { flexDirection: 'row', gap: spacing.lg },
   actionButton: {
-    backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
+    backgroundColor: colors.bgCard, borderRadius: borderRadius.xl,
     padding: spacing.xl, alignItems: 'center', borderWidth: 1, borderColor: colors.border,
-    ...shadows.card,
+    ...shadows.elevated,
   },
   actionIconContainer: {
-    width: moderateScale(56), height: moderateScale(56), borderRadius: moderateScale(28), backgroundColor: colors.bgInput,
+    width: moderateScale(60), height: moderateScale(60), borderRadius: moderateScale(30), backgroundColor: colors.primaryBg,
     justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md,
   },
-  actionIcon: { fontSize: iconSizes.md },
   actionText: { ...typography.label, color: colors.textPrimary },
 });

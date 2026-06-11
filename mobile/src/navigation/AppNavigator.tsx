@@ -15,9 +15,8 @@ import SearchScreen from '../screens/search/SearchScreen';
 import StakeholderListScreen from '../screens/stakeholder/StakeholderListScreen';
 import StakeholderDetailScreen from '../screens/stakeholder/StakeholderDetailScreen';
 import SurveyFormScreen from '../screens/survey/SurveyFormScreen';
-import PhotoCaptureScreen from '../screens/survey/PhotoCaptureScreen';
-import VideoCaptureScreen from '../screens/survey/VideoCaptureScreen';
 import SyncStatusScreen from '../screens/sync/SyncStatusScreen';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -59,10 +58,10 @@ const TabBarButton = ({ children, onPress, accessibilityState }: any) => {
 
 // Icons map
 const TAB_ICONS: Record<string, string> = {
-  Dashboard: '🏠',
-  Search: '🔍',
-  Stakeholders: '📋',
-  SyncTab: '🔄',
+  Dashboard: 'home',
+  Search: 'magnify',
+  Stakeholders: 'clipboard-list-outline',
+  SyncTab: 'sync',
 };
 
 function MainTabs() {
@@ -83,9 +82,7 @@ function MainTabs() {
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: { fontSize: moderateScale(11), fontWeight: '700', marginTop: verticalScale(4) },
         tabBarIcon: ({ focused }) => (
-          <Text style={{ fontSize: moderateScale(22), opacity: focused ? 1 : 0.6 }}>
-            {TAB_ICONS[route.name]}
-          </Text>
+          <Icon name={TAB_ICONS[route.name]} size={moderateScale(24)} color={focused ? colors.primary : colors.textMuted} />
         ),
         tabBarButton: (props) => <TabBarButton {...props} />,
       })}
@@ -134,10 +131,6 @@ export function AppNavigator() {
             options={{ title: 'Details' }} />
           <Stack.Screen name="SurveyForm" component={SurveyFormScreen}
             options={{ title: 'Survey Form' }} />
-          <Stack.Screen name="PhotoCapture" component={PhotoCaptureScreen}
-            options={{ title: 'Capture Photos' }} />
-          <Stack.Screen name="VideoCapture" component={VideoCaptureScreen}
-            options={{ title: 'Record Video' }} />
         </>
       )}
     </Stack.Navigator>

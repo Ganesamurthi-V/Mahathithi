@@ -88,10 +88,8 @@ model Session {
 // ============================================================================
 
 enum StakeholderStatus {
-  PENDING
-  IN_PROGRESS
-  IN_REVIEW
-  COMPLETED
+  OPEN
+  CLOSED
 }
 
 model Stakeholder {
@@ -131,7 +129,7 @@ model Stakeholder {
   sourceLineageNotes       String?           @map("source_lineage_notes")
 
   // Application-level fields
-  status                   StakeholderStatus @default(PENDING) @map("status")
+  status                   StakeholderStatus @default(OPEN) @map("status")
   lockedById               String?           @map("locked_by_id")
   lockedAt                 DateTime?         @map("locked_at")
   createdAt                DateTime          @default(now()) @map("created_at")

@@ -6,18 +6,12 @@ export class DashboardService {
       ? {}
       : { district: { in: districts, mode: 'insensitive' as const } };
 
-    const [completed, pending, inProgress, inReview, total] = await Promise.all([
+    const [completed, open, total] = await Promise.all([
       prisma.stakeholder.count({
-        where: { ...districtFilter, status: 'COMPLETED', lockedById: enumeratorId },
+        where: { ...districtFilter, status: 'CLOSED' as any, lockedById: enumeratorId },
       }),
       prisma.stakeholder.count({
-        where: { ...districtFilter, status: 'PENDING' },
-      }),
-      prisma.stakeholder.count({
-        where: { ...districtFilter, status: 'IN_PROGRESS' },
-      }),
-      prisma.stakeholder.count({
-        where: { ...districtFilter, status: 'IN_REVIEW' },
+        where: { ...districtFilter, status: 'OPEN' as any },
       }),
       prisma.stakeholder.count({
         where: districtFilter,
@@ -38,9 +32,7 @@ export class DashboardService {
     return {
       stakeholders: {
         completed,
-        pending,
-        inProgress,
-        inReview,
+        open,
         total,
       },
       sync: {

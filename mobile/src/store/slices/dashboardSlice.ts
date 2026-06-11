@@ -3,16 +3,14 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 interface DashboardState {
   stats: {
     completed: number;
-    pending: number;
-    inProgress: number;
-    inReview: number;
+    open: number;
     total: number;
   };
   isLoading: boolean;
 }
 
 const initialState: DashboardState = {
-  stats: { completed: 0, pending: 0, inProgress: 0, inReview: 0, total: 0 },
+  stats: { completed: 0, open: 0, total: 0 },
   isLoading: false,
 };
 

@@ -399,8 +399,8 @@ function DashboardPage({ analytics, enumerators }: { analytics: any; enumerators
         </div>
         <div className="stat-card green">
           <div className="stat-icon">✅</div>
-          <div className="stat-value">{(statusMap.COMPLETED || 0).toLocaleString()}</div>
-          <div className="stat-label">Completed</div>
+          <div className="stat-value">{(statusMap.CLOSED || 0).toLocaleString()}</div>
+          <div className="stat-label">Closed</div>
         </div>
         <div className="stat-card blue">
           <div className="stat-icon">⏳</div>
@@ -836,7 +836,7 @@ function StakeholdersPage() {
       PENDING: 'badge-pending',
       IN_PROGRESS: 'badge-active',
       IN_REVIEW: 'badge-admin',
-      COMPLETED: 'badge-active',
+      CLOSED: 'badge-active',
     };
     return map[status] || 'badge-pending';
   };
@@ -889,7 +889,7 @@ function StakeholdersPage() {
               <option value="PENDING">Pending</option>
               <option value="IN_PROGRESS">In Progress</option>
               <option value="IN_REVIEW">In Review</option>
-              <option value="COMPLETED">Completed</option>
+              <option value="CLOSED">Closed</option>
             </select>
           </div>
           <button type="submit" className="btn btn-primary" style={{ height: '42px' }} disabled={loading}>
@@ -1026,7 +1026,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: { stakeholder: any; 
           <div>
             <h3 style={{ margin: 0 }}>{stakeholder.companyNameStandardized || stakeholder.companyNameOriginal}</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
-              {stakeholder.district} • {stakeholder.pinCode} • <span className={`badge ${stakeholder.status === 'COMPLETED' ? 'badge-active' : 'badge-pending'}`}>{(stakeholder.status || 'PENDING').replace('_', ' ')}</span>
+              {stakeholder.district} • {stakeholder.pinCode} • <span className={`badge ${stakeholder.status === 'CLOSED' ? 'badge-active' : 'badge-pending'}`}>{(stakeholder.status || 'OPEN').replace('_', ' ')}</span>
             </p>
           </div>
           <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
