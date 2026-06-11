@@ -133,12 +133,7 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
             >
               <Text style={styles.actionSecondaryText}>🎥 Video</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.actionSecondary}
-              onPress={() => navigation.navigate('PhoneVerification', { stakeholderId, phone: survey?.mobileNumber })}
-            >
-              <Text style={styles.actionSecondaryText}>📞 Call</Text>
-            </TouchableOpacity>
+
           </View>
         </View>
         );
