@@ -2,7 +2,7 @@ import axios from 'axios';
 import EncryptedStorage from 'react-native-encrypted-storage';
 
 // Change this to your backend URL
-const API_BASE = 'https://mahaatithi-test.up.railway.app/api';
+const API_BASE = 'https://mahathithi-test.up.railway.app/api';
 
 const api = axios.create({
   baseURL: API_BASE,

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, FlatList,
-  StyleSheet, ActivityIndicator, Modal, Animated, Easing, Keyboard
+  View, Text, TouchableOpacity, FlatList,
+  StyleSheet, ActivityIndicator, Modal, Animated, Easing
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
@@ -9,7 +9,7 @@ import { setSearchResults, appendSearchResults, setSearching } from '../../store
 import { stakeholderService } from '../../services/api';
 import { stakeholderDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
-import { colors, spacing, borderRadius, typography, shadows, animations, iconSizes } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, animations } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -58,11 +58,17 @@ const StakeholderCard = React.memo(({ item, onPress }: { item: any, onPress: () 
 export default function SearchScreen({ navigation }: any) {
   const dispatch = useDispatch<AppDispatch>();
   const { searchResults, searchPagination, isSearching } = useSelector((state: RootState) => state.stakeholder);
-  const [query, setQuery] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
-  const [filters, setFilters] = useState<Record<string, string>>({});
-  const [isSearchFocused, setIsSearchFocused] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  
+  // Cascaded Search State
+  const [availableDistricts, setAvailableDistricts] = useState<string[]>([]);
+  const [availableCities, setAvailableCities] = useState<string[]>([]);
+  const [availablePins, setAvailablePins] = useState<string[]>([]);
+  
+  const [selectedDistrict, setSelectedDistrict] = useState<string>('');
+  const [selectedCity, setSelectedCity] = useState<string>('');
+  const [selectedPin, setSelectedPin] = useState<string>('');
+  
+  const [pickerType, setPickerType] = useState<'district' | 'city' | 'pin' | null>(null);
 
   // Animations
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -78,14 +84,53 @@ export default function SearchScreen({ navigation }: any) {
   }, []);
 
   useEffect(() => {
-    if (showFilters) {
+    if (pickerType) {
       Animated.spring(filterSlideAnim, { toValue: 0, useNativeDriver: true, ...animations.spring.bouncy }).start();
     } else {
       Animated.timing(filterSlideAnim, { toValue: 500, duration: 250, useNativeDriver: true }).start();
     }
-  }, [showFilters]);
+  }, [pickerType]);
 
-  const search = useCallback(async (searchQuery: string, activeFilters: Record<string, string>, page = 1) => {
+  // Load initial districts
+  useEffect(() => {
+    stakeholderDao.getUniqueDistricts().then(setAvailableDistricts);
+  }, []);
+
+  // Cascade logic
+  useEffect(() => {
+    if (selectedDistrict) {
+      stakeholderDao.getUniqueCities(selectedDistrict).then(setAvailableCities);
+      setSelectedCity('');
+      setSelectedPin('');
+      setAvailablePins([]);
+    } else {
+      setAvailableCities([]);
+      setSelectedCity('');
+      setAvailablePins([]);
+      setSelectedPin('');
+    }
+  }, [selectedDistrict]);
+
+  useEffect(() => {
+    if (selectedCity) {
+      stakeholderDao.getUniquePins(selectedCity).then(setAvailablePins);
+      setSelectedPin('');
+    } else {
+      setAvailablePins([]);
+      setSelectedPin('');
+    }
+  }, [selectedCity]);
+
+  // Execute search when filters change
+  useEffect(() => {
+    if (selectedDistrict || selectedCity || selectedPin) {
+      search({ district: selectedDistrict, city: selectedCity, pinCode: selectedPin });
+    } else {
+      dispatch(setSearchResults({ stakeholders: [], pagination: { page: 1, total: 0, hasMore: false } }));
+    }
+  }, [selectedDistrict, selectedCity, selectedPin]);
+
+  const search = useCallback(async (activeFilters: Record<string, string>, page = 1) => {
     dispatch(setSearching(true));
 
     try {
@@ -94,7 +139,6 @@ export default function SearchScreen({ navigation }: any) {
 
       if (isOnline) {
         const params: Record<string, any> = { page, limit: 20 };
-        if (searchQuery) params.name = searchQuery;
         Object.entries(activeFilters).forEach(([k, v]) => { if (v) params[k] = v; });
 
         const res = await stakeholderService.search(params);
@@ -106,10 +150,7 @@ export default function SearchScreen({ navigation }: any) {
           dispatch(appendSearchResults({ stakeholders, pagination }));
         }
       } else {
-        const offlineFilters: Record<string, string> = { ...activeFilters };
-        if (searchQuery) offlineFilters.name = searchQuery;
-
-        const results = await stakeholderDao.search(offlineFilters, page);
+        const results = await stakeholderDao.search(activeFilters, page);
         const fakePageInfo = { page, total: results.length, hasMore: results.length === 20 };
 
         if (page === 1) {
@@ -125,22 +166,9 @@ export default function SearchScreen({ navigation }: any) {
     }
   }, [dispatch]);
 
-  const handleSearch = (text: string) => {
-    setQuery(text);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      search(text, filters);
-    }, 400); // Increased debounce for better performance
-  };
-
-  const applyFilters = () => {
-    setShowFilters(false);
-    search(query, filters);
-  };
-
   const loadMore = () => {
     if (searchPagination.hasMore && !isSearching) {
-      search(query, filters, searchPagination.page + 1);
+      search({ district: selectedDistrict, city: selectedCity, pinCode: selectedPin }, searchPagination.page + 1);
     }
   };
 
@@ -153,32 +181,37 @@ export default function SearchScreen({ navigation }: any) {
 
   return (
     <View style={styles.container}>
-      {/* Search Bar */}
-      <View style={styles.searchSection}>
-        <View style={[styles.searchBar, isSearchFocused && styles.searchBarFocused]}>
-          <Text style={styles.searchIcon}>🔍</Text>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search stakeholders..."
-            placeholderTextColor={colors.textMuted}
-            value={query}
-            onChangeText={handleSearch}
-            returnKeyType="search"
-            onFocus={() => setIsSearchFocused(true)}
-            onBlur={() => setIsSearchFocused(false)}
-          />
-          {query.length > 0 && (
-            <TouchableOpacity onPress={() => { setQuery(''); search('', filters); }}>
-              <Text style={styles.clearIcon}>✕</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-        <TouchableOpacity
-          style={[styles.filterButton, Object.values(filters).some(v => v) && styles.filterButtonActive]}
-          onPress={() => setShowFilters(true)}
-        >
-          <Text style={styles.filterIcon}>⚙</Text>
+      {/* Cascaded Selection Area */}
+      <View style={styles.cascadeSection}>
+        <TouchableOpacity style={styles.cascadeButton} onPress={() => setPickerType('district')}>
+          <Text style={styles.cascadeLabel}>District</Text>
+          <Text style={styles.cascadeValue}>{selectedDistrict || 'Select District ▼'}</Text>
         </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.cascadeButton, !selectedDistrict && styles.cascadeDisabled]} 
+          disabled={!selectedDistrict}
+          onPress={() => setPickerType('city')}>
+          <Text style={styles.cascadeLabel}>City / Village</Text>
+          <Text style={styles.cascadeValue}>{selectedCity || 'Select City ▼'}</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.cascadeButton, !selectedCity && styles.cascadeDisabled]} 
+          disabled={!selectedCity}
+          onPress={() => setPickerType('pin')}>
+          <Text style={styles.cascadeLabel}>PIN Code</Text>
+          <Text style={styles.cascadeValue}>{selectedPin || 'Select PIN ▼'}</Text>
+        </TouchableOpacity>
+        
+        {(selectedDistrict || selectedCity || selectedPin) ? (
+          <TouchableOpacity style={styles.resetButton} onPress={() => {
+            setSelectedDistrict('');
+            dispatch(setSearchResults({ stakeholders: [], pagination: { page: 1, total: 0, hasMore: false } }));
+          }}>
+            <Text style={styles.resetButtonText}>Reset Search</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Results count */}
@@ -200,14 +233,14 @@ export default function SearchScreen({ navigation }: any) {
         maxToRenderPerBatch={10}
         windowSize={5}
         getItemLayout={(data, index) => (
-          {length: moderateScale(120), offset: moderateScale(120) * index, index} // Estimate item height
+          {length: moderateScale(120), offset: moderateScale(120) * index, index}
         )}
         ListEmptyComponent={
           !isSearching ? (
             <View style={styles.emptyState}>
               <Animated.Text style={[styles.emptyIcon, { transform: [{ scale: pulseAnim }] }]}>🔍</Animated.Text>
-              <Text style={styles.emptyTitle}>Search Stakeholders</Text>
-              <Text style={styles.emptyText}>Enter a name, organization, or use filters to find stakeholders</Text>
+              <Text style={styles.emptyTitle}>Find Stakeholders</Text>
+              <Text style={styles.emptyText}>Select a District, City, and PIN to locate stakeholders in your assigned area.</Text>
             </View>
           ) : null
         }
@@ -216,44 +249,41 @@ export default function SearchScreen({ navigation }: any) {
         }
       />
 
-      {/* Filter Modal */}
-      <Modal visible={showFilters} animationType="fade" transparent>
-        <TouchableOpacity style={styles.filterOverlay} activeOpacity={1} onPress={() => setShowFilters(false)}>
+      {/* Picker Modal */}
+      <Modal visible={!!pickerType} animationType="fade" transparent>
+        <TouchableOpacity style={styles.filterOverlay} activeOpacity={1} onPress={() => setPickerType(null)}>
           <Animated.View style={[styles.filterModal, { transform: [{ translateY: filterSlideAnim }] }]}>
-            <TouchableOpacity activeOpacity={1}>
-              <Text style={styles.filterTitle}>Search Filters</Text>
-
-              {[
-                { key: 'district', label: 'District', placeholder: 'e.g., PUNE' },
-                { key: 'taluka', label: 'Taluka', placeholder: 'e.g., Haveli' },
-                { key: 'city', label: 'Village / City', placeholder: 'e.g., Lonavala' },
-                { key: 'state', label: 'State', placeholder: 'e.g., Maharashtra' },
-                { key: 'pinCode', label: 'PIN Code', placeholder: 'e.g., 411001' },
-                { key: 'category', label: 'Category', placeholder: 'e.g., Hotels & Resorts' },
-                { key: 'nicCode', label: 'NIC Code', placeholder: 'e.g., 55101' },
-                { key: 'gst', label: 'GST Number', placeholder: 'GST Number' },
-              ].map((f) => (
-                <View key={f.key} style={styles.filterGroup}>
-                  <Text style={styles.filterLabel}>{f.label}</Text>
-                  <TextInput
-                    style={styles.filterInput}
-                    placeholder={f.placeholder}
-                    placeholderTextColor={colors.textMuted}
-                    value={filters[f.key] || ''}
-                    onChangeText={(v) => setFilters({ ...filters, [f.key]: v })}
-                  />
-                </View>
-              ))}
-
-              <View style={styles.filterActions}>
-                <TouchableOpacity style={styles.clearButton} onPress={() => { setFilters({}); setShowFilters(false); search(query, {}); }}>
-                  <Text style={styles.clearButtonText}>Clear All</Text>
+            <View style={styles.pickerHeader}>
+              <Text style={styles.filterTitle}>
+                Select {pickerType === 'district' ? 'District' : pickerType === 'city' ? 'City' : 'PIN'}
+              </Text>
+              <TouchableOpacity onPress={() => setPickerType(null)}>
+                <Text style={styles.closePickerIcon}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <FlatList
+              data={
+                pickerType === 'district' ? availableDistricts :
+                pickerType === 'city' ? availableCities :
+                pickerType === 'pin' ? availablePins : []
+              }
+              keyExtractor={(i) => i}
+              style={{ maxHeight: moderateScale(300) }}
+              renderItem={({item}) => (
+                <TouchableOpacity style={styles.pickerItem} onPress={() => {
+                  if (pickerType === 'district') setSelectedDistrict(item);
+                  if (pickerType === 'city') setSelectedCity(item);
+                  if (pickerType === 'pin') setSelectedPin(item);
+                  setPickerType(null);
+                }}>
+                  <Text style={styles.pickerItemText}>{item}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.applyButton} onPress={applyFilters}>
-                  <Text style={styles.applyButtonText}>Apply Filters</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <Text style={styles.emptyPickerText}>No options available</Text>
+              }
+            />
           </Animated.View>
         </TouchableOpacity>
       </Modal>
@@ -263,27 +293,18 @@ export default function SearchScreen({ navigation }: any) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgPrimary },
-  searchSection: { flexDirection: 'row', padding: spacing.lg, gap: spacing.sm },
-  searchBar: {
-    flex: 1, flexDirection: 'row', alignItems: 'center',
+  cascadeSection: { padding: spacing.lg },
+  cascadeButton: {
     backgroundColor: colors.bgInput, borderRadius: borderRadius.md,
-    paddingHorizontal: spacing.lg, borderWidth: 1, borderColor: colors.border,
+    padding: spacing.md, borderWidth: 1, borderColor: colors.border,
+    marginBottom: spacing.sm, ...shadows.card
   },
-  searchBarFocused: {
-    borderColor: colors.primary,
-    backgroundColor: colors.bgCard,
-    ...shadows.glow,
-  },
-  searchIcon: { fontSize: iconSizes.sm, marginRight: spacing.sm },
-  searchInput: { flex: 1, color: colors.textPrimary, fontSize: moderateScale(16), paddingVertical: moderateScale(14) },
-  clearIcon: { color: colors.textMuted, fontSize: iconSizes.sm, padding: spacing.sm },
-  filterButton: {
-    width: moderateScale(52), height: moderateScale(52), borderRadius: borderRadius.md,
-    backgroundColor: colors.bgCard, justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1, borderColor: colors.border,
-  },
-  filterButtonActive: { borderColor: colors.primary, backgroundColor: colors.primaryBg, ...shadows.glow },
-  filterIcon: { fontSize: moderateScale(20) },
+  cascadeDisabled: { opacity: 0.5 },
+  cascadeLabel: { ...typography.caption, color: colors.textMuted },
+  cascadeValue: { ...typography.body, color: colors.textPrimary, fontWeight: '600', marginTop: 2 },
+  resetButton: { marginTop: spacing.xs, alignItems: 'center', padding: spacing.sm },
+  resetButtonText: { color: colors.error, fontWeight: '600', fontSize: moderateScale(14) },
+  
   resultCount: { ...typography.caption, color: colors.textMuted, paddingHorizontal: spacing.lg, marginBottom: spacing.sm },
   listContent: { paddingHorizontal: spacing.lg, paddingBottom: moderateScale(100) },
   resultCard: {
@@ -299,26 +320,22 @@ const styles = StyleSheet.create({
   resultMeta: { flexDirection: 'row', gap: spacing.lg, marginBottom: spacing.xs },
   metaText: { ...typography.bodySmall, color: colors.textSecondary },
   categoryText: { ...typography.bodySmall, color: colors.textMuted, marginTop: spacing.xs },
+  
   emptyState: { alignItems: 'center', paddingVertical: spacing.huge, marginTop: moderateScale(40) },
   emptyIcon: { fontSize: moderateScale(56), marginBottom: spacing.lg },
   emptyTitle: { ...typography.h2, color: colors.textPrimary, marginBottom: spacing.sm },
   emptyText: { ...typography.bodySmall, color: colors.textMuted, textAlign: 'center', paddingHorizontal: spacing.xxxl, lineHeight: moderateScale(20) },
+  
   filterOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
   filterModal: {
     backgroundColor: colors.bgCard, borderTopLeftRadius: borderRadius.xl, borderTopRightRadius: borderRadius.xl,
-    padding: spacing.xxl, maxHeight: '85%',
+    padding: spacing.xl, paddingBottom: spacing.xxxl,
     ...shadows.elevated,
   },
-  filterTitle: { ...typography.h2, color: colors.textPrimary, marginBottom: spacing.xxl },
-  filterGroup: { marginBottom: spacing.lg },
-  filterLabel: { ...typography.label, color: colors.textSecondary, marginBottom: spacing.xs },
-  filterInput: {
-    backgroundColor: colors.bgInput, borderWidth: 1, borderColor: colors.border,
-    borderRadius: borderRadius.sm, padding: spacing.md, color: colors.textPrimary, fontSize: moderateScale(15),
-  },
-  filterActions: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.xl },
-  clearButton: { flex: 1, padding: spacing.lg, borderRadius: borderRadius.md, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
-  clearButtonText: { color: colors.textSecondary, fontWeight: '600', fontSize: moderateScale(16) },
-  applyButton: { flex: 1, padding: spacing.lg, borderRadius: borderRadius.md, backgroundColor: colors.primary, alignItems: 'center', ...shadows.elevated },
-  applyButtonText: { color: '#FFF', fontWeight: '700', fontSize: moderateScale(16) },
+  pickerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg },
+  filterTitle: { ...typography.h2, color: colors.textPrimary },
+  closePickerIcon: { fontSize: moderateScale(24), color: colors.textMuted, padding: spacing.xs },
+  pickerItem: { paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  pickerItemText: { ...typography.body, color: colors.textPrimary, fontSize: moderateScale(16) },
+  emptyPickerText: { ...typography.body, color: colors.textMuted, textAlign: 'center', padding: spacing.xl },
 });
