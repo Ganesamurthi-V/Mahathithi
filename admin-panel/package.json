@@ -1,7 +1,7 @@
 {
-  "name": "mahaathithi-admin",
+  "name": "mahaatithi-admin",
   "version": "1.0.0",
-  "description": "MahaAthithi Admin Panel - Enumerator & District Management",
+  "description": "MahaAtithi Admin Panel - Enumerator & District Management",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

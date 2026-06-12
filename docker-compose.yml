@@ -3,19 +3,19 @@ version: '3.8'
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: mahaathithi_db
+    container_name: mahaatithi_db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: mahaathithi
-      POSTGRES_USER: mahaathithi_admin
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-MahaAthithi@2024Secure}
+      POSTGRES_DB: mahaatithi
+      POSTGRES_USER: mahaatithi_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-MahaAtithi@2024Secure}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mahaathithi_admin -d mahaathithi"]
+      test: ["CMD-SHELL", "pg_isready -U mahaatithi_admin -d mahaatithi"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -29,7 +29,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: mahaathithi_redis
+    container_name: mahaatithi_redis
     restart: unless-stopped
     ports:
       - "6379:6379"

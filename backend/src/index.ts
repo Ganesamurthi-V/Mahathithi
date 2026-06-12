@@ -29,7 +29,7 @@ app.use(helmet({
 }));
 app.use(cors({
   origin: config.env === 'production'
-    ? ['https://mahaathithi.gov.in', 'http://localhost:5173']
+    ? ['https://mahaatithi.gov.in', 'http://localhost:5173']
     : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'],
   credentials: true,
 }));
@@ -46,7 +46,7 @@ app.use(generalLimiter);
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'MahaAthithi API',
+    service: 'MahaAtithi API',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
     environment: config.env,
@@ -90,7 +90,7 @@ async function startServer() {
     const server = app.listen(config.port, () => {
       logger.info(`
 ╔══════════════════════════════════════════════════╗
-║           MahaAthithi API Server                 ║
+║           MahaAtithi API Server                 ║
 ║══════════════════════════════════════════════════║
 ║  🚀 Server:    http://localhost:${config.port}          ║
 ║  🏗️  Env:       ${config.env.padEnd(30)}║

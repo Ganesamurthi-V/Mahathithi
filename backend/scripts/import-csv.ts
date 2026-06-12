@@ -1,5 +1,5 @@
 /**
- * MahaAthithi CSV Import Pipeline — Improved
+ * MahaAtithi CSV Import Pipeline — Improved
  *
  * Pipeline: CSV → Stream → Validate → Deduplicate → Batch(2000) → PostgreSQL → Indexes
  *
@@ -473,7 +473,7 @@ async function importCSV(config: ImportConfig): Promise<void> {
   }
 
   const fileSize = fs.statSync(filePath).size;
-  console.log(`\n🚀 MahaAthithi CSV Import Pipeline`);
+  console.log(`\n🚀 MahaAtithi CSV Import Pipeline`);
   console.log('='.repeat(60));
   console.log(`📁 File:        ${filePath}`);
   console.log(`📏 Size:        ${(fileSize / 1024 / 1024).toFixed(2)} MB`);

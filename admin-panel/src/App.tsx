@@ -112,7 +112,7 @@ function LoginPage({ onLogin }: { onLogin: (user: User) => void }) {
       <div className="login-card">
         <div className="logo-section">
           <div className="icon">🏛</div>
-          <h1>MahaAthithi</h1>
+          <h1>MahaAtithi</h1>
           <p>Admin Control Panel</p>
         </div>
 
@@ -262,7 +262,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           <div className="sidebar-logo">
             <div className="logo-icon">M</div>
             <div>
-              <h1>MahaAthithi</h1>
+              <h1>MahaAtithi</h1>
               <p>Admin Panel</p>
             </div>
           </div>
@@ -388,7 +388,7 @@ function DashboardPage({ analytics, enumerators }: { analytics: any; enumerators
     <>
       <div className="page-header">
         <h2>Dashboard</h2>
-        <p>Overview of MahaAthithi stakeholder verification system</p>
+        <p>Overview of MahaAtithi stakeholder verification system</p>
       </div>
 
       <div className="stat-grid">

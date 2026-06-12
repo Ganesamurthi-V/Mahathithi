@@ -97,7 +97,7 @@ export default function LoginScreen() {
               <Text style={styles.logoEmoji}>🏛</Text>
             </View>
           </Animated.View>
-          <Text style={styles.title}>MahaAthithi</Text>
+          <Text style={styles.title}>MahaAtithi</Text>
           <Text style={styles.subtitle}>Maharashtra Tourism Department</Text>
           <Text style={styles.tagline}>Stakeholder Verification Portal</Text>
         </View>

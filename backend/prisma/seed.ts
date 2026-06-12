@@ -41,7 +41,7 @@ async function main() {
       passwordHash: adminPassword,
       name: 'System Administrator',
       phone: '9999999999',
-      email: 'admin@mahaathithi.gov.in',
+      email: 'admin@mahaatithi.gov.in',
       isAdmin: true,
       isActive: true,
     },
