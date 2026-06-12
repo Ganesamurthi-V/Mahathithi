@@ -1,4 +1,4 @@
-# MahaAthithi — Maharashtra Tourism Stakeholder Verification Platform
+# MahaAtithi — Maharashtra Tourism Stakeholder Verification Platform
 
 Production-grade Android-first React Native application with Node.js + PostgreSQL backend for Maharashtra Tourism Department field enumerators.
 
@@ -35,9 +35,9 @@ docker-compose up -d
 ```
 
 PostgreSQL will be available at `localhost:5432`
-- Database: `mahaathithi`
-- User: `mahaathithi_admin`
-- Password: `MahaAthithi@2024Secure`
+- Database: `mahaatithi`
+- User: `mahaatithi_admin`
+- Password: `MahaAtithi@2024Secure`
 
 ### 3. Setup Backend
 
@@ -55,7 +55,7 @@ npx prisma db push
 npm run db:seed
 
 # Import stakeholder CSV (313,604 records)
-npm run import:csv -- --file="../MahaAthithi_Master_Database_v3 (1).csv"
+npm run import:csv -- --file="../MahaAtithi_Master_Database_v3 (1).csv"
 npm run db:seed
 
 #delete all the values for database 
@@ -158,7 +158,7 @@ CSV File (125MB, 313,604 records)
 ```bash
 cd backend
 npm run build
-pm2 start dist/index.js --name mahaathithi-api -i max
+pm2 start dist/index.js --name mahaatithi-api -i max
 ```
 
 ### Admin Panel

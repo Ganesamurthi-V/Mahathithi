@@ -8,7 +8,7 @@ export async function initDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (db) return db;
 
   db = await SQLite.openDatabase({
-    name: 'mahaathithi.db',
+    name: 'mahaatithi.db',
     location: 'default',
   });
 

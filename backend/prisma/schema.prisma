@@ -1,4 +1,4 @@
-// MahaAthithi - Maharashtra Tourism Stakeholder Verification Platform
+// MahaAtithi - Maharashtra Tourism Stakeholder Verification Platform
 // Prisma Schema - PostgreSQL
 
 generator client {

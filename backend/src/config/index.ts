@@ -19,7 +19,7 @@ export const config = {
     region: process.env.AWS_REGION || 'ap-south-1',
     accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
-    s3Bucket: process.env.S3_BUCKET_NAME || 'mahaathithi-media',
+    s3Bucket: process.env.S3_BUCKET_NAME || 'mahaatithi-media',
     s3Endpoint: process.env.S3_ENDPOINT || undefined,
   },
 

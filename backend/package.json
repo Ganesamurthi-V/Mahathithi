@@ -1,7 +1,7 @@
 {
-  "name": "mahaathithi-backend",
+  "name": "mahaatithi-backend",
   "version": "1.0.0",
-  "description": "MahaAthithi - Maharashtra Tourism Stakeholder Verification Backend",
+  "description": "MahaAtithi - Maharashtra Tourism Stakeholder Verification Backend",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",

@@ -1,6 +1,6 @@
 import { moderateScale } from './responsive';
 
-// MahaAthithi Theme — Maharashtra Tourism Color Palette
+// MahaAtithi Theme — Maharashtra Tourism Color Palette
 export const colors = {
   // Primary palette — Saffron/Orange (Maharashtra flag)
   primary: '#FF6B35',
