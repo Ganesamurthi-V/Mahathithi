@@ -111,7 +111,7 @@ function LoginPage({ onLogin }: { onLogin: (user: User) => void }) {
     <div className="login-container">
       <div className="login-card">
         <div className="logo-section">
-          <div className="icon">🏛</div>
+          <img src="/logo.png" className="icon" alt="MahaAtithi Logo" />
           <h1>MahaAtithi</h1>
           <p>Admin Control Panel</p>
         </div>
@@ -260,7 +260,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="sidebar-logo">
-            <div className="logo-icon">M</div>
+            <img src="/logo.png" className="logo-icon" alt="MahaAtithi Logo" />
             <div>
               <h1>MahaAtithi</h1>
               <p>Admin Panel</p>
