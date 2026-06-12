@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ActivityIndicator,
-  Animated, Easing
+  Animated, Easing, Image
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
@@ -93,9 +93,7 @@ export default function LoginScreen() {
         {/* Logo Section */}
         <View style={styles.logoSection}>
           <Animated.View style={[styles.logoIconContainer, { transform: [{ scale: pulseAnim }] }]}>
-            <View style={styles.logoIcon}>
-              <Text style={styles.logoEmoji}>🏛</Text>
-            </View>
+            <Image source={require('../../../assets/logo.png')} style={styles.logoIcon} resizeMode="contain" />
           </Animated.View>
           <Text style={styles.title}>MahaAtithi</Text>
           <Text style={styles.subtitle}>Maharashtra Tourism Department</Text>
@@ -201,12 +199,6 @@ const styles = StyleSheet.create({
   logoIcon: {
     width: 88,
     height: 88,
-    borderRadius: borderRadius.xl,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.primaryLight,
   },
   logoEmoji: {
     fontSize: 40,
