@@ -37,7 +37,7 @@ docker-compose up -d
 PostgreSQL will be available at `localhost:5432`
 - Database: `mahaatithi`
 - User: `mahaatithi_admin`
-- Password: `MahaAtithi@2024Secure`
+- Password: `MahaAtithi2024Secure`
 
 ### 3. Setup Backend
 

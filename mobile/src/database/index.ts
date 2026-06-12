@@ -278,6 +278,36 @@ export const stakeholderDao = {
     const [results] = await database.executeSql('SELECT COUNT(*) as count FROM stakeholders');
     return results.rows.item(0).count;
   },
+
+  async getUniqueDistricts(): Promise<string[]> {
+    const database = await getDB();
+    const [results] = await database.executeSql('SELECT DISTINCT district FROM stakeholders WHERE district IS NOT NULL AND district != \'\' ORDER BY district ASC');
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i).district);
+    }
+    return rows;
+  },
+
+  async getUniqueCities(district: string): Promise<string[]> {
+    const database = await getDB();
+    const [results] = await database.executeSql('SELECT DISTINCT city FROM stakeholders WHERE district = ? COLLATE NOCASE AND city IS NOT NULL AND city != \'\' ORDER BY city ASC', [district]);
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i).city);
+    }
+    return rows;
+  },
+
+  async getUniquePins(city: string): Promise<string[]> {
+    const database = await getDB();
+    const [results] = await database.executeSql('SELECT DISTINCT pin_code FROM stakeholders WHERE city = ? COLLATE NOCASE AND pin_code IS NOT NULL AND pin_code != \'\' ORDER BY pin_code ASC', [city]);
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i).pin_code);
+    }
+    return rows;
+  },
 };
 
 // ============================================================================
