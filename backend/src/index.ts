@@ -20,6 +20,9 @@ import adminRoutes from './modules/admin/admin.routes';
 
 const app = express();
 
+// Trust Railway's reverse proxy for express-rate-limit
+app.set('trust proxy', 1);
+
 // ============================================================================
 // MIDDLEWARE
 // ============================================================================
