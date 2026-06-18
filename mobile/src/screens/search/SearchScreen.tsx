@@ -15,6 +15,7 @@ import { moderateScale } from '../../theme/responsive';
 
 const STATUS_COLORS: Record<string, string> = {
   OPEN: colors.statusPending,
+  PARTIAL_COMPLETED: colors.warning,
   CLOSED: colors.statusCompleted,
 };
 

@@ -104,6 +104,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const [saving, setSaving] = useState(false);
   const [uploadText, setUploadText] = useState('');
   const [completionPercent, setCompletionPercent] = useState(0);
+  const [currentStep, setCurrentStep] = useState(1);
 
   // Media State
   const [photos, setPhotos] = useState<Record<string, any>>({});
@@ -338,6 +339,21 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   };
 
   const onSubmit = async (data: SurveyFormData) => {
+    // === STRICT VALIDATION ===
+    if (!gps) {
+      Alert.alert('Incomplete Survey', 'GPS Location is required to submit the survey.');
+      return;
+    }
+    const missingPhotos = PHOTO_CATEGORIES.filter(c => c.required && !photos[c.key]);
+    if (missingPhotos.length > 0) {
+      Alert.alert('Incomplete Survey', `Please capture the following required photos: ${missingPhotos.map(m => m.label).join(', ')}`);
+      return;
+    }
+    if (!video) {
+      Alert.alert('Incomplete Survey', 'Walkthrough Verification Video is required to submit the survey.');
+      return;
+    }
+
     setSaving(true);
     setUploadText('Saving survey data...');
     const surveyId = existingSurvey?.id || `draft_${stakeholderId}`;
@@ -447,159 +463,233 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         <View style={[styles.progressBar, { width: `${completionPercent}%`, backgroundColor: completionPercent === 100 ? colors.success : colors.primary }]} />
       </View>
 
+      {/* Breadcrumbs */}
+      <View style={styles.breadcrumbsContainer}>
+        {[1, 2, 3].map((step) => (
+          <React.Fragment key={step}>
+            <TouchableOpacity 
+              style={[styles.stepIndicator, currentStep >= step ? styles.stepActive : styles.stepInactive]}
+              onPress={() => setCurrentStep(step)}
+            >
+              <Text style={[styles.stepText, currentStep >= step ? styles.stepTextActive : styles.stepTextInactive]}>
+                {step === 1 ? '1. Details' : step === 2 ? '2. Media' : '3. Review'}
+              </Text>
+            </TouchableOpacity>
+            {step < 3 && <Icon name="chevron-right" size={16} color={colors.textMuted} style={{ marginHorizontal: spacing.xs }} />}
+          </React.Fragment>
+        ))}
+      </View>
+
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.stakeholderInfo}>
           <Text style={styles.stakeholderName}>{stakeholder?.companyNameStandardized}</Text>
           <Text style={styles.stakeholderMeta}>{stakeholder?.district} • {stakeholder?.pinCode}</Text>
         </View>
 
-        {/* GPS Section */}
-        <View style={styles.gpsCard}>
-          <View style={styles.gpsHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Icon name="map-marker-radius" size={24} color={gps ? colors.success : colors.warning} />
-              <Text style={styles.gpsTitle}>GPS Location</Text>
+        {currentStep === 1 && (
+          <View>
+            {/* GPS Section */}
+            <View style={styles.gpsCard}>
+              <View style={styles.gpsHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Icon name="map-marker-radius" size={24} color={gps ? colors.success : colors.warning} />
+                  <Text style={styles.gpsTitle}>GPS Location</Text>
+                </View>
+                {gpsLoading ? (
+                  <Animated.View style={{ transform: [{ scale: gpsPulseAnim }] }}>
+                    <Icon name="crosshairs-gps" size={24} color={colors.primary} />
+                  </Animated.View>
+                ) : gps ? (
+                  <Icon name="check-circle" size={24} color={colors.success} />
+                ) : (
+                  <TouchableOpacity onPress={captureGPS} style={styles.gpsRetryBtn}>
+                    <Icon name="refresh" size={16} color={colors.textSecondary} />
+                    <Text style={styles.gpsRetryText}>Retry</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {gps ? (
+                <Text style={styles.gpsData}>
+                  {gps.latitude.toFixed(6)}, {gps.longitude.toFixed(6)} (±{Math.round(gps.accuracy)}m)
+                </Text>
+              ) : (
+                <Text style={styles.gpsWaiting}>
+                  {gpsLoading ? 'Acquiring high accuracy location...' : 'Location required'}
+                </Text>
+              )}
             </View>
-            {gpsLoading ? (
-              <Animated.View style={{ transform: [{ scale: gpsPulseAnim }] }}>
-                <Icon name="crosshairs-gps" size={24} color={colors.primary} />
-              </Animated.View>
-            ) : gps ? (
-              <Icon name="check-circle" size={24} color={colors.success} />
-            ) : (
-              <TouchableOpacity onPress={captureGPS} style={styles.gpsRetryBtn}>
-                <Icon name="refresh" size={16} color={colors.textSecondary} />
-                <Text style={styles.gpsRetryText}>Retry</Text>
-              </TouchableOpacity>
-            )}
+
+            {/* Form Fields */}
+            <View style={styles.formSection}>
+              <Text style={styles.sectionHeader}>Contact Information</Text>
+              {fields.slice(0, 4).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
+              
+              <Text style={styles.sectionHeader}>Organization Details</Text>
+              {fields.slice(4).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
+            </View>
           </View>
-          {gps ? (
-            <Text style={styles.gpsData}>
-              {gps.latitude.toFixed(6)}, {gps.longitude.toFixed(6)} (±{Math.round(gps.accuracy)}m)
-            </Text>
-          ) : (
-            <Text style={styles.gpsWaiting}>
-              {gpsLoading ? 'Acquiring high accuracy location...' : 'Location required'}
-            </Text>
-          )}
-        </View>
+        )}
 
-        {/* Form Fields */}
-        <View style={styles.formSection}>
-          <Text style={styles.sectionHeader}>Contact Information</Text>
-          {fields.slice(0, 4).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
-          
-          <Text style={styles.sectionHeader}>Organization Details</Text>
-          {fields.slice(4).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
-        </View>
+        {currentStep === 2 && (
+          <View>
+            {/* Media Capture Section */}
+            <View style={styles.formSection}>
+              <Text style={styles.sectionHeader}>Photos</Text>
+              {PHOTO_CATEGORIES.map((cat) => {
+                const photo = photos[cat.key];
+                return (
+                  <View key={cat.key} style={styles.photoSlot}>
+                    <View style={styles.slotHeader}>
+                      <Icon name={cat.icon} size={28} color={photo ? colors.success : colors.primary} />
+                      <View style={{ flex: 1, marginLeft: spacing.md }}>
+                        <Text style={styles.slotLabel}>{cat.label}</Text>
+                        <Text style={styles.slotReq}>{cat.required ? 'Required' : 'Optional'}</Text>
+                      </View>
+                      {photo && <Icon name="check-circle" size={24} color={colors.success} />}
+                    </View>
 
-        {/* Media Capture Section */}
-        <View style={styles.formSection}>
-          <Text style={styles.sectionHeader}>Photos</Text>
-          {PHOTO_CATEGORIES.map((cat) => {
-            const photo = photos[cat.key];
-            return (
-              <View key={cat.key} style={styles.photoSlot}>
-                <View style={styles.slotHeader}>
-                  <Icon name={cat.icon} size={28} color={photo ? colors.success : colors.primary} />
-                  <View style={{ flex: 1, marginLeft: spacing.md }}>
-                    <Text style={styles.slotLabel}>{cat.label}</Text>
-                    <Text style={styles.slotReq}>{cat.required ? 'Required' : 'Optional'}</Text>
+                    {photo ? (
+                      <View>
+                        <Image source={{ uri: photo.uri }} style={styles.photoPreview} />
+                        <View style={styles.photoActions}>
+                          <TouchableOpacity style={styles.retakeBtn} onPress={() => capturePhoto(cat.key)}>
+                            <Icon name="camera-retake" size={16} color={colors.textSecondary} />
+                            <Text style={styles.retakeBtnText}>Retake</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.removeBtn} onPress={() => {
+                            setPhotos(p => { const np = {...p}; delete np[cat.key]; return np; });
+                          }}>
+                            <Icon name="delete" size={16} color={colors.error} />
+                            <Text style={styles.removeBtnText}>Remove</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : (
+                      <TouchableOpacity style={styles.captureBtn} onPress={() => capturePhoto(cat.key)}>
+                        <Icon name="camera" size={24} color={colors.textSecondary} />
+                        <Text style={styles.captureBtnText}>Capture {cat.label}</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
-                  {photo && <Icon name="check-circle" size={24} color={colors.success} />}
+                );
+              })}
+
+              <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Verification Video</Text>
+              <View style={styles.photoSlot}>
+                <View style={styles.slotHeader}>
+                  <Icon name="video" size={28} color={video ? colors.success : colors.primary} />
+                  <View style={{ flex: 1, marginLeft: spacing.md }}>
+                    <Text style={styles.slotLabel}>Walkthrough Video</Text>
+                    <Text style={styles.slotReq}>Required (Max 60s)</Text>
+                  </View>
+                  {video && <Icon name="check-circle" size={24} color={colors.success} />}
                 </View>
 
-                {photo ? (
+                {video ? (
                   <View>
-                    <Image source={{ uri: photo.uri }} style={styles.photoPreview} />
+                    <View style={{ width: '100%', height: 200, borderRadius: borderRadius.lg, overflow: 'hidden', marginBottom: spacing.md, backgroundColor: '#000' }}>
+                      <Video
+                        source={{ uri: video.uri }}
+                        style={{ width: '100%', height: '100%' }}
+                        resizeMode="contain"
+                        controls={true}
+                        paused={true}
+                      />
+                    </View>
                     <View style={styles.photoActions}>
-                      <TouchableOpacity style={styles.retakeBtn} onPress={() => capturePhoto(cat.key)}>
+                      <TouchableOpacity style={styles.retakeBtn} onPress={captureVideo}>
                         <Icon name="camera-retake" size={16} color={colors.textSecondary} />
                         <Text style={styles.retakeBtnText}>Retake</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.removeBtn} onPress={() => {
-                        setPhotos(p => { const np = {...p}; delete np[cat.key]; return np; });
-                      }}>
+                      <TouchableOpacity style={styles.removeBtn} onPress={() => setVideo(null)}>
                         <Icon name="delete" size={16} color={colors.error} />
                         <Text style={styles.removeBtnText}>Remove</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                 ) : (
-                  <TouchableOpacity style={styles.captureBtn} onPress={() => capturePhoto(cat.key)}>
-                    <Icon name="camera" size={24} color={colors.textSecondary} />
-                    <Text style={styles.captureBtnText}>Capture {cat.label}</Text>
+                  <TouchableOpacity style={styles.captureBtn} onPress={captureVideo} disabled={recording || compressing}>
+                    <Icon name={compressing ? "movie-roll" : "video"} size={24} color={colors.textSecondary} />
+                    <Text style={styles.captureBtnText}>
+                      {compressing ? 'Compressing Video...' : recording ? 'Opening Camera...' : 'Record Video'}
+                    </Text>
                   </TouchableOpacity>
                 )}
               </View>
-            );
-          })}
+            </View>
+          </View>
+        )}
 
-          <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Verification Video</Text>
-          <View style={styles.photoSlot}>
-            <View style={styles.slotHeader}>
-              <Icon name="video" size={28} color={video ? colors.success : colors.primary} />
-              <View style={{ flex: 1, marginLeft: spacing.md }}>
-                <Text style={styles.slotLabel}>Walkthrough Video</Text>
-                <Text style={styles.slotReq}>Required (Max 60s)</Text>
-              </View>
-              {video && <Icon name="check-circle" size={24} color={colors.success} />}
+        {currentStep === 3 && (
+          <View style={styles.formSection}>
+            <Text style={styles.sectionHeader}>Review & Submit</Text>
+            <View style={styles.reviewCard}>
+              <Text style={styles.reviewTitle}>Overall Completion: {completionPercent}%</Text>
+              
+              {!gps && <Text style={styles.reviewError}>• GPS Location is missing.</Text>}
+              
+              {fields.filter(f => f.required && (!watchAllFields[f.name] || String(watchAllFields[f.name]).trim() === '')).map(f => (
+                <Text key={f.name} style={styles.reviewError}>• Missing Required Info: {f.label.replace(' *', '')}</Text>
+              ))}
+
+              {PHOTO_CATEGORIES.filter(c => c.required && !photos[c.key]).map(c => (
+                <Text key={c.key} style={styles.reviewError}>• Missing Required Photo: {c.label}</Text>
+              ))}
+
+              {!video && <Text style={styles.reviewError}>• Walkthrough Video is missing.</Text>}
+
+              <Text style={styles.reviewNote}>
+                Please ensure all required information is captured before saving. Offline surveys will be synced when internet is available.
+              </Text>
             </View>
 
-            {video ? (
-              <View>
-                <View style={{ width: '100%', height: 200, borderRadius: borderRadius.lg, overflow: 'hidden', marginBottom: spacing.md, backgroundColor: '#000' }}>
-                  <Video
-                    source={{ uri: video.uri }}
-                    style={{ width: '100%', height: '100%' }}
-                    resizeMode="contain"
-                    controls={true}
-                    paused={true}
-                  />
-                </View>
-                <View style={styles.photoActions}>
-                  <TouchableOpacity style={styles.retakeBtn} onPress={captureVideo}>
-                    <Icon name="camera-retake" size={16} color={colors.textSecondary} />
-                    <Text style={styles.retakeBtnText}>Retake</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.removeBtn} onPress={() => setVideo(null)}>
-                    <Icon name="delete" size={16} color={colors.error} />
-                    <Text style={styles.removeBtnText}>Remove</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <TouchableOpacity style={styles.captureBtn} onPress={captureVideo} disabled={recording || compressing}>
-                <Icon name={compressing ? "movie-roll" : "video"} size={24} color={colors.textSecondary} />
-                <Text style={styles.captureBtnText}>
-                  {compressing ? 'Compressing Video...' : recording ? 'Opening Camera...' : 'Record Video'}
-                </Text>
+            {/* Submit Button */}
+            <Animated.View style={{ transform: [{ scale: buttonScaleAnim }], marginTop: spacing.xxl }}>
+              <TouchableOpacity
+                style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
+                onPress={handleSubmit(onSubmit)}
+                disabled={saving}
+              >
+                {saving ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ActivityIndicator color="#FFF" />
+                    {uploadText ? <Text style={[styles.submitText, { marginLeft: spacing.md }]}>{uploadText}</Text> : null}
+                  </View>
+                ) : (
+                  <>
+                    <Icon name="content-save-outline" size={20} color="#FFF" />
+                    <Text style={styles.submitText}>Save Survey</Text>
+                  </>
+                )}
               </TouchableOpacity>
-            )}
+            </Animated.View>
           </View>
-        </View>
-
-        {/* Submit Button */}
-        <Animated.View style={{ transform: [{ scale: buttonScaleAnim }], marginTop: spacing.xxl }}>
-          <TouchableOpacity
-            style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
-            onPress={handleSubmit(onSubmit)}
-            disabled={saving}
-          >
-            {saving ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <ActivityIndicator color="#FFF" />
-                {uploadText ? <Text style={[styles.submitText, { marginLeft: spacing.md }]}>{uploadText}</Text> : null}
-              </View>
-            ) : (
-              <>
-                <Icon name="content-save-outline" size={20} color="#FFF" />
-                <Text style={styles.submitText}>Save Survey</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </Animated.View>
+        )}
       </ScrollView>
+
+      {/* Bottom Action Bar for Next/Prev */}
+      <View style={styles.bottomActionBar}>
+        <TouchableOpacity 
+          style={[styles.navButton, currentStep === 1 && { opacity: 0 }]} 
+          onPress={() => currentStep > 1 && setCurrentStep(currentStep - 1)}
+          disabled={currentStep === 1}
+        >
+          <Icon name="chevron-left" size={24} color={colors.primary} />
+          <Text style={styles.navButtonText}>Back</Text>
+        </TouchableOpacity>
+
+        {currentStep < 3 ? (
+          <TouchableOpacity 
+            style={[styles.navButton, styles.navButtonNext]} 
+            onPress={() => setCurrentStep(currentStep + 1)}
+          >
+            <Text style={styles.navButtonNextText}>Next</Text>
+            <Icon name="chevron-right" size={24} color="#FFF" />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ flex: 1 }} />
+        )}
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -669,4 +759,59 @@ const styles = StyleSheet.create({
   },
   submitBtnDisabled: { opacity: 0.7 },
   submitText: { ...typography.button, color: '#FFF', fontSize: 18 },
+
+  breadcrumbsContainer: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: spacing.md, backgroundColor: colors.bgCard,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  stepIndicator: {
+    paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: borderRadius.full,
+  },
+  stepActive: {
+    backgroundColor: colors.primaryBg,
+  },
+  stepInactive: {
+    backgroundColor: 'transparent',
+  },
+  stepText: {
+    ...typography.label, fontSize: 12, fontWeight: '700',
+  },
+  stepTextActive: {
+    color: colors.primary,
+  },
+  stepTextInactive: {
+    color: colors.textMuted,
+  },
+  bottomActionBar: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    padding: spacing.lg, backgroundColor: colors.bgCard, borderTopWidth: 1, borderTopColor: colors.border,
+    paddingBottom: Platform.OS === 'ios' ? 34 : spacing.lg,
+  },
+  navButton: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    padding: spacing.md, borderRadius: borderRadius.md,
+  },
+  navButtonText: {
+    ...typography.button, color: colors.primary, fontSize: 16,
+  },
+  navButtonNext: {
+    backgroundColor: colors.primary, paddingHorizontal: spacing.xl, borderRadius: borderRadius.full, ...shadows.elevated
+  },
+  navButtonNextText: {
+    ...typography.button, color: '#FFF', fontSize: 16,
+  },
+  reviewCard: {
+    backgroundColor: colors.bgCard, padding: spacing.xl, borderRadius: borderRadius.xl,
+    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg,
+  },
+  reviewTitle: {
+    ...typography.h3, color: colors.textPrimary, marginBottom: spacing.md,
+  },
+  reviewError: {
+    ...typography.bodySmall, color: colors.error, marginBottom: spacing.xs,
+  },
+  reviewNote: {
+    ...typography.caption, color: colors.textSecondary, marginTop: spacing.lg, fontStyle: 'italic',
+  },
 });
