@@ -409,7 +409,11 @@ export const mediaDao = {
   async getUnsynced(): Promise<any[]> {
     const db = await getDB();
     const [results] = await db.executeSql(`SELECT * FROM media WHERE is_synced = 0`);
-    return results.rows.raw();
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i));
+    }
+    return rows;
   },
   async markSynced(id: string): Promise<void> {
     const db = await getDB();
@@ -424,12 +428,20 @@ export const facilityDao = {
   async upsertMany(facilities: any[]): Promise<void> {
     const db = await getDB();
     await db.transaction(async (tx) => {
-      for (const f of facilities) {
-        await tx.executeSql(
-          `INSERT OR REPLACE INTO facilities (id, name, type, district, state, latitude, longitude)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [f.id, f.name, f.type, f.district, f.state, f.latitude, f.longitude]
-        );
+      // Execute in batches to prevent UI blocking or query size limits
+      const batchSize = 100;
+      for (let i = 0; i < facilities.length; i += batchSize) {
+        const batch = facilities.slice(i, i + batchSize);
+        let query = 'INSERT OR REPLACE INTO facilities (id, name, type, district, state, latitude, longitude) VALUES ';
+        const params: any[] = [];
+        
+        batch.forEach((f, idx) => {
+          query += '(?, ?, ?, ?, ?, ?, ?)';
+          if (idx < batch.length - 1) query += ', ';
+          params.push(f.id, f.name, f.type, f.district, f.state, f.latitude, f.longitude);
+        });
+        
+        await tx.executeSql(query, params);
       }
     });
   },
@@ -445,7 +457,11 @@ export const facilityDao = {
        LIMIT 10`,
       [lat, lat, lng, lng, type]
     );
-    return results.rows.raw();
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i));
+    }
+    return rows;
   }
 };
 
