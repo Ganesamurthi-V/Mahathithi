@@ -76,18 +76,23 @@ const AnimatedInput = ({ field, control, errors, onFocus, onBlur }: any) => {
           name={field.name}
           rules={field.required ? { required: `${field.label.replace(' *', '')} is required` } : undefined}
           render={({ field: { onChange, value } }) => (
-            <TextInput
-              style={styles.input}
-              placeholder={field.placeholder}
-              placeholderTextColor={colors.textMuted}
-              value={value}
-              onChangeText={onChange}
-              keyboardType={field.keyboardType || 'default'}
-              multiline={field.name === 'remarks'}
-              numberOfLines={field.name === 'remarks' ? 4 : 1}
-              onFocus={() => { setIsFocused(true); onFocus(); }}
-              onBlur={() => { setIsFocused(false); onBlur(); }}
-            />
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                placeholder={field.placeholder}
+                placeholderTextColor={colors.textMuted}
+                value={value}
+                onChangeText={onChange}
+                keyboardType={field.keyboardType || 'default'}
+                multiline={field.name === 'remarks'}
+                numberOfLines={field.name === 'remarks' ? 4 : 1}
+                onFocus={() => { setIsFocused(true); onFocus(); }}
+                onBlur={() => { setIsFocused(false); onBlur(); }}
+              />
+              {field.isLoading && (
+                <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: spacing.md }} />
+              )}
+            </View>
           )}
         />
       </Animated.View>
@@ -461,13 +466,13 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     setUploadText('');
   };
 
-  const fields: { name: keyof SurveyFormData; label: string; placeholder: string; required?: boolean; keyboardType?: any }[] = [
+  const fields: { name: keyof SurveyFormData; label: string; placeholder: string; required?: boolean; keyboardType?: any; isLoading?: boolean }[] = [
     { name: 'contactPerson', label: 'Contact Person Name *', placeholder: 'Full name of contact person', required: true },
     { name: 'designation', label: 'Designation', placeholder: 'e.g., Manager, Owner' },
     { name: 'mobileNumber', label: 'Mobile Number *', placeholder: '10-digit mobile number', required: true, keyboardType: 'phone-pad' },
     { name: 'email', label: 'Email', placeholder: 'email@example.com', keyboardType: 'email-address' },
-    { name: 'nearestPoliceStation', label: 'Nearest Police Station', placeholder: 'Auto-filled based on GPS' },
-    { name: 'nearestHealthcareCenter', label: 'Nearest Healthcare Center', placeholder: 'Auto-filled based on GPS' },
+    { name: 'nearestPoliceStation', label: 'Nearest Police Station', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading },
+    { name: 'nearestHealthcareCenter', label: 'Nearest Healthcare Center', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading },
     { name: 'gstNumber', label: 'GST Number', placeholder: 'GST Number' },
     { name: 'organizationType', label: 'Organization Type', placeholder: 'e.g., LLC, Pvt Ltd' },
     { name: 'website', label: 'Website', placeholder: 'https://example.com' },

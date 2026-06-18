@@ -8,20 +8,9 @@ export const syncOfflineFacilities = async (req: AuthenticatedRequest, res: Resp
     const enumeratorId = req.enumerator?.id;
     if (!enumeratorId) throw new UnauthorizedError('Unauthorized');
 
-    // Ideally, we fetch facilities ONLY for the districts assigned to this enumerator.
-    // Since stakeholders hold the districts, let's find unique districts for their assigned stakeholders.
-    const assignedDistricts = await prisma.stakeholder.findMany({
-      where: { lockedById: enumeratorId },
-      select: { district: true },
-      distinct: ['district']
-    });
-
-    const districts = assignedDistricts.map(d => d.district).filter(Boolean) as string[];
-
-    // Fetch facilities for those districts
-    const facilities = await prisma.facility.findMany({
-      where: districts.length > 0 ? { district: { in: districts } } : undefined,
-    });
+    // Fetch all facilities so the math distance algorithm on the mobile device
+    // can find the nearest facility universally, regardless of where the enumerator is.
+    const facilities = await prisma.facility.findMany();
 
     res.json({
       status: 'success',
