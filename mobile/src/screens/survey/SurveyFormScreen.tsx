@@ -194,13 +194,27 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
         // Auto-fill nearest facilities
         try {
+          const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+            const p = 0.017453292519943295; // Math.PI / 180
+            const c = Math.cos;
+            const a = 0.5 - c((lat2 - lat1) * p)/2 + c(lat1 * p) * c(lat2 * p) * (1 - c((lon2 - lon1) * p))/2;
+            return 12742 * Math.asin(Math.sqrt(a)); // 2 * R; R = 6371 km
+          };
+
           const policeStations = await facilityDao.getNearest(lat, lng, 'POLICE_STATION');
           if (policeStations.length > 0 && !watchAllFields.nearestPoliceStation) {
-             setValue('nearestPoliceStation', policeStations[0].name);
+             const dist = getDistance(lat, lng, policeStations[0].latitude, policeStations[0].longitude);
+             setValue('nearestPoliceStation', `${policeStations[0].name} (${dist.toFixed(1)} km)`);
+          } else if (policeStations.length === 0 && !watchAllFields.nearestPoliceStation) {
+             setValue('nearestPoliceStation', 'Offline database empty. Please sync first.');
           }
+
           const healthCenters = await facilityDao.getNearest(lat, lng, 'HEALTHCARE');
           if (healthCenters.length > 0 && !watchAllFields.nearestHealthcareCenter) {
-             setValue('nearestHealthcareCenter', healthCenters[0].name);
+             const dist = getDistance(lat, lng, healthCenters[0].latitude, healthCenters[0].longitude);
+             setValue('nearestHealthcareCenter', `${healthCenters[0].name} (${dist.toFixed(1)} km)`);
+          } else if (healthCenters.length === 0 && !watchAllFields.nearestHealthcareCenter) {
+             setValue('nearestHealthcareCenter', 'Offline database empty. Please sync first.');
           }
         } catch (e) {}
 
