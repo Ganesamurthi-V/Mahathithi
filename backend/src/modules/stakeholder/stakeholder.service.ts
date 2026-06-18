@@ -309,4 +309,59 @@ export class StakeholderService {
       data: { status: status as any },
     });
   }
+
+  /**
+   * Update stakeholder details (restricted to specific fields)
+   */
+  async updateStakeholder(stakeholderId: string, data: any, enumeratorId: string) {
+    const stakeholder = await prisma.stakeholder.findUnique({
+      where: { id: stakeholderId },
+    });
+
+    if (!stakeholder) {
+      throw new NotFoundError('Stakeholder');
+    }
+
+    // Don't allow edits if locked by someone else
+    if (stakeholder.lockedById && stakeholder.lockedById !== enumeratorId) {
+      throw new ConflictError('This stakeholder is locked by another enumerator');
+    }
+
+    // Filter to only allow safe fields to be updated
+    const allowedFields = [
+      'companyNameStandardized', 'addressLine1', 'addressLine2', 
+      'city', 'taluka', 'village', 'district', 'state', 'pinCode', 'category'
+    ];
+    
+    const updateData: any = {};
+    for (const field of allowedFields) {
+      if (data[field] !== undefined) {
+        updateData[field] = data[field];
+      }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return stakeholder; // Nothing to update
+    }
+
+    const updated = await prisma.stakeholder.update({
+      where: { id: stakeholderId },
+      data: updateData,
+    });
+
+    // Audit log
+    await prisma.auditLog.create({
+      data: {
+        action: 'stakeholder_updated',
+        entityType: 'stakeholder',
+        entityId: stakeholderId,
+        enumeratorId,
+        details: {
+          updatedFields: Object.keys(updateData)
+        },
+      },
+    });
+
+    return updated;
+  }
 }

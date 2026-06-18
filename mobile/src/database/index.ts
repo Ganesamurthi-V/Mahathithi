@@ -266,6 +266,23 @@ export const stakeholderDao = {
     return results.rows.length > 0 ? results.rows.item(0) : null;
   },
 
+  async update(id: string, updates: Record<string, any>): Promise<void> {
+    const database = await getDB();
+    const keys = Object.keys(updates);
+    if (keys.length === 0) return;
+
+    // Convert JS keys to database column names (camelCase to snake_case)
+    const toSnakeCase = (str: string) => str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+    
+    const setClause = keys.map(k => `${toSnakeCase(k)} = ?`).join(', ');
+    const values = keys.map(k => updates[k]);
+
+    await database.executeSql(
+      `UPDATE stakeholders SET ${setClause}, updated_at = datetime('now') WHERE id = ?`,
+      [...values, id]
+    );
+  },
+
   async removeLockedStakeholders(lockedIds: string[]): Promise<void> {
     if (lockedIds.length === 0) return;
     const database = await getDB();

@@ -6,7 +6,7 @@ import {
   startSync, syncComplete, syncFailed, updateSyncProgress,
   setPendingCount, setFailedCount
 } from './syncSlice';
-import { syncService, mediaService, surveyService } from '../../services/api';
+import { syncService, mediaService, surveyService, stakeholderService } from '../../services/api';
 import { surveyDao, syncQueueDao, stakeholderDao, appStateDao, mediaDao } from '../../database';
 
 export const runAutoSync = createAsyncThunk(
@@ -34,6 +34,21 @@ export const runAutoSync = createAsyncThunk(
 
       let processedCount = 0;
       const total = surveyIdsToProcess.size;
+
+      // === Generic Sync Queue Pipeline ===
+      const pendingSyncItems = await syncQueueDao.getPending();
+      for (const item of pendingSyncItems) {
+        try {
+          if (item.entity_type === 'stakeholder' && item.action === 'UPDATE') {
+            const payload = JSON.parse(item.payload);
+            await stakeholderService.updateStakeholder(item.entity_id, payload);
+          }
+          await syncQueueDao.markCompleted(item.id);
+        } catch (err: any) {
+          console.error(`Sync Queue Item Failed [${item.id}]:`, err.message);
+          await syncQueueDao.markFailed(item.id, err.message);
+        }
+      }
 
       // === 1-by-1 Pipeline ===
       for (const localSurveyId of surveyIdsToProcess) {

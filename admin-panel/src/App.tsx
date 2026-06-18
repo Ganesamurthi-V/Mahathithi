@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { login as apiLogin, getProfile, getEnumerators, createEnumerator, updateEnumerator, deleteEnumerator, assignDistricts, getDistricts, getAnalytics, getAuditLogs, searchStakeholders, getSurveyByStakeholder, getMediaBySurvey } from './api';
+import { login as apiLogin, getProfile, getEnumerators, createEnumerator, updateEnumerator, deleteEnumerator, assignDistricts, getDistricts, getAnalytics, getAuditLogs, searchStakeholders, updateStakeholder, getSurveyByStakeholder, getMediaBySurvey } from './api';
 
 // ============================================================================
 // TYPES
@@ -972,6 +972,11 @@ function StakeholdersPage() {
         <VerificationGalleryModal
           stakeholder={selectedStakeholder}
           onClose={() => setSelectedStakeholder(null)}
+          onStakeholderUpdated={(updated) => {
+            const newList = stakeholders.map((s: any) => s.id === updated.id ? { ...s, ...updated } : s);
+            setStakeholders(newList);
+            setSelectedStakeholder(updated);
+          }}
         />
       )}
     </>
@@ -982,11 +987,50 @@ function StakeholdersPage() {
 // VERIFICATION GALLERY MODAL
 // ============================================================================
 
-function VerificationGalleryModal({ stakeholder, onClose }: { stakeholder: any; onClose: () => void }) {
+function VerificationGalleryModal({ 
+  stakeholder, onClose, onStakeholderUpdated 
+}: { 
+  stakeholder: any; onClose: () => void; onStakeholderUpdated?: (s: any) => void 
+}) {
   const [survey, setSurvey] = useState<any>(null);
   const [media, setMedia] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  
+  // Edit State
+  const [editMode, setEditMode] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editData, setEditData] = useState<any>({});
+
+  useEffect(() => {
+    setEditData({
+      companyNameStandardized: stakeholder.companyNameStandardized || '',
+      addressLine1: stakeholder.addressLine1 || '',
+      addressLine2: stakeholder.addressLine2 || '',
+      city: stakeholder.city || '',
+      taluka: stakeholder.taluka || '',
+      village: stakeholder.village || '',
+      district: stakeholder.district || '',
+      state: stakeholder.state || '',
+      pinCode: stakeholder.pinCode || '',
+      category: stakeholder.category || '',
+    });
+  }, [stakeholder]);
+
+  const handleSaveEdit = async () => {
+    setSaving(true);
+    try {
+      const res = await updateStakeholder(stakeholder.id, editData);
+      setEditMode(false);
+      if (onStakeholderUpdated) {
+        onStakeholderUpdated(res.data.data);
+      }
+    } catch (err: any) {
+      console.error('Failed to update stakeholder:', err);
+      alert(err.response?.data?.error?.message || 'Failed to update stakeholder');
+    }
+    setSaving(false);
+  };
 
   useEffect(() => {
     loadVerificationData();
@@ -1044,24 +1088,95 @@ function VerificationGalleryModal({ stakeholder, onClose }: { stakeholder: any; 
           <div className="gallery-body">
             {/* Stakeholder Info */}
             <div className="gallery-section">
-              <h4 className="gallery-section-title">📋 Stakeholder Details</h4>
-              <div className="gallery-info-grid">
-                {[
-                  { label: 'Address', value: stakeholder.fullAddressRaw },
-                  { label: 'City', value: stakeholder.city },
-                  { label: 'Taluka', value: stakeholder.taluka },
-                  { label: 'Village', value: stakeholder.village },
-                  { label: 'Category', value: stakeholder.category },
-                  { label: 'GST', value: stakeholder.gstNumber },
-                  { label: 'NIC Code', value: stakeholder.nicCode },
-                  { label: 'NIC Description', value: stakeholder.nicDescription },
-                ].filter(r => r.value).map((row, i) => (
-                  <div key={i} className="gallery-info-item">
-                    <span className="gallery-info-label">{row.label}</span>
-                    <span className="gallery-info-value">{row.value}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h4 className="gallery-section-title" style={{ margin: 0 }}>📋 Stakeholder Details</h4>
+                {editMode ? (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button className="btn btn-secondary btn-sm" onClick={() => setEditMode(false)} disabled={saving}>Cancel</button>
+                    <button className="btn btn-primary btn-sm" onClick={handleSaveEdit} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
                   </div>
-                ))}
+                ) : (
+                  <button className="btn btn-secondary btn-sm" onClick={() => setEditMode(true)}>✏️ Edit</button>
+                )}
               </div>
+
+              {editMode ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Organization Name</label>
+                    <input className="form-input" value={editData.companyNameStandardized} onChange={(e) => setEditData({...editData, companyNameStandardized: e.target.value})} />
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Address Line 1</label>
+                      <input className="form-input" value={editData.addressLine1} onChange={(e) => setEditData({...editData, addressLine1: e.target.value})} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Address Line 2</label>
+                      <input className="form-input" value={editData.addressLine2} onChange={(e) => setEditData({...editData, addressLine2: e.target.value})} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>City</label>
+                      <input className="form-input" value={editData.city} onChange={(e) => setEditData({...editData, city: e.target.value})} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Taluka</label>
+                      <input className="form-input" value={editData.taluka} onChange={(e) => setEditData({...editData, taluka: e.target.value})} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Village</label>
+                      <input className="form-input" value={editData.village} onChange={(e) => setEditData({...editData, village: e.target.value})} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>District</label>
+                      <input className="form-input" value={editData.district} onChange={(e) => setEditData({...editData, district: e.target.value})} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>State</label>
+                      <input className="form-input" value={editData.state} onChange={(e) => setEditData({...editData, state: e.target.value})} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>PIN Code</label>
+                      <input className="form-input" value={editData.pinCode} onChange={(e) => setEditData({...editData, pinCode: e.target.value})} />
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Category</label>
+                    <input className="form-input" value={editData.category} onChange={(e) => setEditData({...editData, category: e.target.value})} />
+                  </div>
+                  {/* Locked Fields */}
+                  <div style={{ marginTop: '12px', padding: '12px', backgroundColor: 'var(--bg-input)', borderRadius: '8px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>Locked Identifiers</div>
+                    <div className="gallery-info-grid">
+                      <div className="gallery-info-item"><span className="gallery-info-label">GST</span><span className="gallery-info-value">{stakeholder.gstNumber || '—'}</span></div>
+                      <div className="gallery-info-item"><span className="gallery-info-label">NIC Code</span><span className="gallery-info-value">{stakeholder.nicCode || '—'}</span></div>
+                      <div className="gallery-info-item"><span className="gallery-info-label">Original Name</span><span className="gallery-info-value">{stakeholder.companyNameOriginal || '—'}</span></div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="gallery-info-grid">
+                  {[
+                    { label: 'Address', value: stakeholder.addressLine1 || stakeholder.fullAddressRaw },
+                    { label: 'City', value: stakeholder.city },
+                    { label: 'Taluka', value: stakeholder.taluka },
+                    { label: 'Village', value: stakeholder.village },
+                    { label: 'Category', value: stakeholder.category },
+                    { label: 'GST', value: stakeholder.gstNumber },
+                    { label: 'NIC Code', value: stakeholder.nicCode },
+                    { label: 'NIC Description', value: stakeholder.nicDescription },
+                  ].filter(r => r.value).map((row, i) => (
+                    <div key={i} className="gallery-info-item">
+                      <span className="gallery-info-label">{row.label}</span>
+                      <span className="gallery-info-value">{row.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Survey Data */}

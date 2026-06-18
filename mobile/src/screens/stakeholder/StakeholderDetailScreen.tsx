@@ -1,6 +1,10 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Animated, LayoutAnimation, UIManager, Platform } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Animated, LayoutAnimation, UIManager, Platform, Modal, TextInput } from 'react-native';
 import { stakeholderService, surveyService } from '../../services/api';
+import { stakeholderDao, syncQueueDao } from '../../database';
+import { useDispatch } from 'react-redux';
+import { runAutoSync } from '../../store/slices/syncThunks';
+import { AppDispatch } from '../../store';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { moderateScale } from '../../theme/responsive';
@@ -96,7 +100,10 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
   const [stakeholder, setStakeholder] = useState<any>(null);
   const [survey, setSurvey] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editData, setEditData] = useState<any>({});
   const insets = useSafeAreaInsets();
+  const dispatch = useDispatch<AppDispatch>();
 
   useEffect(() => {
     loadData();
@@ -104,16 +111,57 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
 
   const loadData = async () => {
     try {
+      // First try local DB
+      let shLocal = await stakeholderDao.getById(stakeholderId);
+      
+      // Then fetch from network to get latest (if online)
       const [shRes, svRes] = await Promise.all([
-        stakeholderService.getById(stakeholderId),
+        stakeholderService.getById(stakeholderId).catch(() => ({ data: { data: shLocal } })),
         surveyService.getByStakeholder(stakeholderId).catch(() => ({ data: { data: null } })),
       ]);
-      setStakeholder(shRes.data.data);
-      setSurvey(svRes.data.data);
+      
+      const loadedStakeholder = shRes.data?.data || shLocal;
+      setStakeholder(loadedStakeholder);
+      setSurvey(svRes.data?.data);
+      
+      if (loadedStakeholder) {
+        setEditData({
+          companyNameStandardized: loadedStakeholder.companyNameStandardized || '',
+          addressLine1: loadedStakeholder.addressLine1 || '',
+          addressLine2: loadedStakeholder.addressLine2 || '',
+          city: loadedStakeholder.city || '',
+          taluka: loadedStakeholder.taluka || '',
+          village: loadedStakeholder.village || '',
+          district: loadedStakeholder.district || '',
+          state: loadedStakeholder.state || '',
+          pinCode: loadedStakeholder.pinCode || '',
+          category: loadedStakeholder.category || '',
+        });
+      }
     } catch (e: any) {
       Alert.alert('Error', e.response?.data?.error?.message || 'Failed to load stakeholder');
     }
     setLoading(false);
+  };
+
+  const handleSaveEdit = async () => {
+    try {
+      // 1. Update local DB so UI updates instantly offline
+      await stakeholderDao.update(stakeholderId, editData);
+      
+      // 2. Queue for background sync
+      await syncQueueDao.add('stakeholder', stakeholderId, 'UPDATE', editData);
+      
+      // 3. Trigger sync pipeline
+      dispatch(runAutoSync());
+      
+      // 4. Update local state to reflect changes
+      setStakeholder({ ...stakeholder, ...editData });
+      setEditModalVisible(false);
+      Alert.alert('Success', 'Stakeholder details updated successfully. They will be synced to the server.');
+    } catch (err) {
+      Alert.alert('Error', 'Failed to save changes.');
+    }
   };
 
   if (loading || !stakeholder) {
@@ -219,18 +267,87 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
       {/* Fixed Bottom Action Bar */}
       {!isCompleted && (
         <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-          {(() => {
-            return (
-              <ActionButton 
-                primary
-                icon="pencil-outline"
-                text="Start / Edit Survey"
-                onPress={() => navigation.navigate('SurveyForm', { stakeholderId, stakeholder: s, survey })}
-              />
-            );
-          })()}
+          <View style={styles.actionRow}>
+            <ActionButton 
+              icon="pencil-outline"
+              text="Edit Details"
+              onPress={() => setEditModalVisible(true)}
+            />
+            <ActionButton 
+              primary
+              icon="clipboard-text-outline"
+              text="Survey"
+              onPress={() => navigation.navigate('SurveyForm', { stakeholderId, stakeholder: s, survey })}
+            />
+          </View>
         </View>
       )}
+
+      {/* Edit Modal */}
+      <Modal visible={editModalVisible} animationType="slide" presentationStyle="pageSheet">
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Edit Stakeholder</Text>
+            <TouchableOpacity onPress={() => setEditModalVisible(false)} style={styles.modalCloseButton}>
+              <Icon name="close" size={24} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.modalBody}>
+            <View style={styles.formGroup}>
+              <Text style={styles.inputLabel}>Organization Name</Text>
+              <TextInput style={styles.input} value={editData.companyNameStandardized} onChangeText={t => setEditData({...editData, companyNameStandardized: t})} />
+            </View>
+            <View style={styles.formGroup}>
+              <Text style={styles.inputLabel}>Address Line 1</Text>
+              <TextInput style={styles.input} value={editData.addressLine1} onChangeText={t => setEditData({...editData, addressLine1: t})} />
+            </View>
+            <View style={styles.formGroup}>
+              <Text style={styles.inputLabel}>Address Line 2</Text>
+              <TextInput style={styles.input} value={editData.addressLine2} onChangeText={t => setEditData({...editData, addressLine2: t})} />
+            </View>
+            <View style={styles.rowGroup}>
+              <View style={[styles.formGroup, { flex: 1 }]}>
+                <Text style={styles.inputLabel}>City</Text>
+                <TextInput style={styles.input} value={editData.city} onChangeText={t => setEditData({...editData, city: t})} />
+              </View>
+              <View style={[styles.formGroup, { flex: 1 }]}>
+                <Text style={styles.inputLabel}>Taluka</Text>
+                <TextInput style={styles.input} value={editData.taluka} onChangeText={t => setEditData({...editData, taluka: t})} />
+              </View>
+            </View>
+            <View style={styles.rowGroup}>
+              <View style={[styles.formGroup, { flex: 1 }]}>
+                <Text style={styles.inputLabel}>Village</Text>
+                <TextInput style={styles.input} value={editData.village} onChangeText={t => setEditData({...editData, village: t})} />
+              </View>
+              <View style={[styles.formGroup, { flex: 1 }]}>
+                <Text style={styles.inputLabel}>District</Text>
+                <TextInput style={styles.input} value={editData.district} onChangeText={t => setEditData({...editData, district: t})} />
+              </View>
+            </View>
+            <View style={styles.rowGroup}>
+              <View style={[styles.formGroup, { flex: 1 }]}>
+                <Text style={styles.inputLabel}>State</Text>
+                <TextInput style={styles.input} value={editData.state} onChangeText={t => setEditData({...editData, state: t})} />
+              </View>
+              <View style={[styles.formGroup, { flex: 1 }]}>
+                <Text style={styles.inputLabel}>PIN Code</Text>
+                <TextInput keyboardType="number-pad" style={styles.input} value={editData.pinCode} onChangeText={t => setEditData({...editData, pinCode: t})} />
+              </View>
+            </View>
+            <View style={styles.formGroup}>
+              <Text style={styles.inputLabel}>Category</Text>
+              <TextInput style={styles.input} value={editData.category} onChangeText={t => setEditData({...editData, category: t})} />
+            </View>
+            <View style={{ height: 100 }} />
+          </ScrollView>
+          <View style={styles.modalFooter}>
+            <TouchableOpacity style={styles.saveButton} onPress={handleSaveEdit}>
+              <Text style={styles.saveButtonText}>Save Changes</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -308,4 +425,20 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   actionSecondaryText: { ...typography.label, color: colors.primary, fontSize: moderateScale(14) },
+  
+  modalContainer: { flex: 1, backgroundColor: colors.bgPrimary },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.xl, borderBottomWidth: 1, borderBottomColor: colors.border },
+  modalTitle: { ...typography.h2, color: colors.textPrimary },
+  modalCloseButton: { padding: spacing.sm },
+  modalBody: { flex: 1, padding: spacing.xl },
+  formGroup: { marginBottom: spacing.lg },
+  rowGroup: { flexDirection: 'row', gap: spacing.md },
+  inputLabel: { ...typography.label, color: colors.textMuted, marginBottom: spacing.xs },
+  input: { 
+    backgroundColor: colors.bgInput, borderWidth: 1, borderColor: colors.border,
+    borderRadius: borderRadius.lg, padding: spacing.md, ...typography.body, color: colors.textPrimary 
+  },
+  modalFooter: { padding: spacing.xl, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.bgPrimary },
+  saveButton: { backgroundColor: colors.primary, borderRadius: borderRadius.full, padding: spacing.lg, alignItems: 'center', ...shadows.elevated },
+  saveButtonText: { ...typography.button, color: '#FFF' },
 });

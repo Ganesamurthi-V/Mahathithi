@@ -57,6 +57,7 @@ export const getDashboardStats = () => api.get('/dashboard/stats');
 // Stakeholders
 export const searchStakeholders = (params: any) => api.get('/stakeholders/search', { params });
 export const getStakeholderById = (id: string) => api.get(`/stakeholders/${id}`);
+export const updateStakeholder = (id: string, data: any) => api.patch(`/stakeholders/${id}`, data);
 
 // Surveys
 export const getSurveyByStakeholder = (stakeholderId: string) =>

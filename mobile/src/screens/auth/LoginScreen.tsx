@@ -4,6 +4,7 @@ import {
   KeyboardAvoidingView, Platform, ActivityIndicator,
   Animated, Easing, Image
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { login, clearError } from '../../store/slices/authSlice';
@@ -80,10 +81,11 @@ export default function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
       <Animated.View
         style={[
           styles.content,
@@ -175,6 +177,7 @@ export default function LoginScreen() {
         </Text>
       </Animated.View>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

@@ -95,4 +95,18 @@ export class StakeholderController {
       next(error);
     }
   }
+
+  async updateStakeholder(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await stakeholderService.updateStakeholder(
+        (req.params.id as string),
+        req.body,
+        req.enumerator!.id
+      );
+
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
