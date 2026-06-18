@@ -9,6 +9,7 @@ import { colors, spacing, borderRadius, typography, shadows } from '../../theme'
 
 const STATUS_COLORS: Record<string, string> = {
   OPEN: colors.statusPending,
+  PARTIAL_COMPLETED: colors.warning,
   CLOSED: colors.statusCompleted,
 };
 

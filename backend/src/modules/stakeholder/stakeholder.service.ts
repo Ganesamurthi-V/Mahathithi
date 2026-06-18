@@ -150,6 +150,9 @@ export class StakeholderService {
           companyStatus: true,
           status: true,
           lockedById: true,
+          _count: {
+            select: { surveys: true }
+          }
         },
         skip,
         take: limit,
@@ -162,7 +165,10 @@ export class StakeholderService {
     ]);
 
     return {
-      stakeholders,
+      stakeholders: stakeholders.map(s => ({
+        ...s,
+        status: s.status === 'OPEN' && s._count?.surveys > 0 ? 'PARTIAL_COMPLETED' : s.status,
+      })),
       pagination: {
         page,
         limit,
@@ -235,10 +241,18 @@ export class StakeholderService {
 
     const stakeholders = await prisma.stakeholder.findMany({
       where,
+      include: {
+        _count: {
+          select: { surveys: true }
+        }
+      },
       orderBy: { primaryKeyId: 'asc' },
     });
 
-    return stakeholders;
+    return stakeholders.map(s => ({
+      ...s,
+      status: s.status === 'OPEN' && s._count?.surveys > 0 ? 'PARTIAL_COMPLETED' : s.status,
+    }));
   }
 
   /**
