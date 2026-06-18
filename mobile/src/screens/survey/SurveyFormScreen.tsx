@@ -8,7 +8,7 @@ import Geolocation from 'react-native-geolocation-service';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { surveyService, mediaService } from '../../services/api';
-import { surveyDao, syncQueueDao, mediaDao } from '../../database';
+import { surveyDao, syncQueueDao, mediaDao, facilityDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows, iconSizes } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
@@ -27,6 +27,8 @@ interface SurveyFormData {
   organizationType: string;
   website: string;
   remarks: string;
+  nearestPoliceStation: string;
+  nearestHealthcareCenter: string;
 }
 
 const PHOTO_CATEGORIES = [
@@ -112,7 +114,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const [recording, setRecording] = useState(false);
   const [compressing, setCompressing] = useState(false);
 
-  const { control, handleSubmit, formState: { errors }, watch } = useForm<SurveyFormData>({
+  const { control, handleSubmit, formState: { errors }, watch, setValue } = useForm<SurveyFormData>({
     defaultValues: {
       contactPerson: existingSurvey?.contactPerson || '',
       designation: existingSurvey?.designation || '',
@@ -122,6 +124,8 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       organizationType: existingSurvey?.organizationType || '',
       website: existingSurvey?.website || '',
       remarks: existingSurvey?.remarks || '',
+      nearestPoliceStation: existingSurvey?.nearestPoliceStation || existingSurvey?.nearest_police_station || '',
+      nearestHealthcareCenter: existingSurvey?.nearestHealthcareCenter || existingSurvey?.nearest_healthcare_center || '',
     },
   });
 
@@ -174,12 +178,27 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     }
 
     Geolocation.getCurrentPosition(
-      (position) => {
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
         setGps({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
+          latitude: lat,
+          longitude: lng,
           accuracy: position.coords.accuracy,
         });
+
+        // Auto-fill nearest facilities
+        try {
+          const policeStations = await facilityDao.getNearest(lat, lng, 'POLICE_STATION');
+          if (policeStations.length > 0 && !watchAllFields.nearestPoliceStation) {
+             setValue('nearestPoliceStation', policeStations[0].name);
+          }
+          const healthCenters = await facilityDao.getNearest(lat, lng, 'HEALTHCARE');
+          if (healthCenters.length > 0 && !watchAllFields.nearestHealthcareCenter) {
+             setValue('nearestHealthcareCenter', healthCenters[0].name);
+          }
+        } catch (e) {}
+
         setGpsLoading(false);
       },
       (error) => {
@@ -447,10 +466,12 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     { name: 'designation', label: 'Designation', placeholder: 'e.g., Manager, Owner' },
     { name: 'mobileNumber', label: 'Mobile Number *', placeholder: '10-digit mobile number', required: true, keyboardType: 'phone-pad' },
     { name: 'email', label: 'Email', placeholder: 'email@example.com', keyboardType: 'email-address' },
+    { name: 'nearestPoliceStation', label: 'Nearest Police Station', placeholder: 'Auto-filled based on GPS' },
+    { name: 'nearestHealthcareCenter', label: 'Nearest Healthcare Center', placeholder: 'Auto-filled based on GPS' },
     { name: 'gstNumber', label: 'GST Number', placeholder: 'GST Number' },
-    { name: 'organizationType', label: 'Organization Type', placeholder: 'e.g., Private Ltd, Partnership' },
-    { name: 'website', label: 'Website', placeholder: 'www.example.com', keyboardType: 'url' },
-    { name: 'remarks', label: 'Remarks', placeholder: 'Additional notes...' },
+    { name: 'organizationType', label: 'Organization Type', placeholder: 'e.g., LLC, Pvt Ltd' },
+    { name: 'website', label: 'Website', placeholder: 'https://example.com' },
+    { name: 'remarks', label: 'Remarks', placeholder: 'Any additional notes' },
   ];
 
   return (
