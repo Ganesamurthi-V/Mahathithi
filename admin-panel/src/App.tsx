@@ -816,7 +816,7 @@ function StakeholdersPage() {
 
       const res = await searchStakeholders(params);
       setStakeholders(res.data.data.stakeholders || res.data.data || []);
-      setTotal(res.data.data.total || res.data.data?.length || 0);
+      setTotal(res.data.data.pagination?.total || res.data.data.total || res.data.data?.length || 0);
       setPage(pageNum);
     } catch (err) {
       console.error('Search failed:', err);

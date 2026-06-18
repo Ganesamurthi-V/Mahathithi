@@ -75,7 +75,7 @@ export class StakeholderService {
 
     // District filter (within assigned districts)
     if (district) {
-      conditions.push({ district: { equals: district, mode: 'insensitive' } });
+      conditions.push({ district: { contains: district, mode: 'insensitive' } });
     }
 
     // PIN Code filter (exact or prefix)

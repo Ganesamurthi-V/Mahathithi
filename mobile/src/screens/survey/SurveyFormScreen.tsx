@@ -257,7 +257,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       async (position) => {
         const result = await launchCamera({
           mediaType: 'video',
-          videoQuality: 'high',
+          videoQuality: 'low',
           durationLimit: 60,
           saveToPhotos: true,
         });
@@ -269,8 +269,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           try {
             if (asset.uri) {
               finalUri = await VideoCompressor.compress(asset.uri, {
-                compressionMethod: 'manual',
-                bitrate: 1500000,
+                compressionMethod: 'auto',
               });
             }
           } catch (e) {

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  View, Text, TouchableOpacity, FlatList,
+  View, Text, TouchableOpacity, FlatList, TextInput,
   StyleSheet, ActivityIndicator, Modal, Animated, Easing
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
@@ -58,6 +58,7 @@ const StakeholderCard = React.memo(({ item, onPress }: { item: any, onPress: () 
 export default function SearchScreen({ navigation }: any) {
   const dispatch = useDispatch<AppDispatch>();
   const { searchResults, searchPagination, isSearching } = useSelector((state: RootState) => state.stakeholder);
+  const { user } = useSelector((state: RootState) => state.auth);
   
   // Cascaded Search State
   const [availableDistricts, setAvailableDistricts] = useState<string[]>([]);
@@ -91,10 +92,12 @@ export default function SearchScreen({ navigation }: any) {
     }
   }, [pickerType]);
 
-  // Load initial districts
+  // Load assigned districts from user profile
   useEffect(() => {
-    stakeholderDao.getUniqueDistricts().then(setAvailableDistricts);
-  }, []);
+    if (user && user.districts) {
+      setAvailableDistricts(user.districts.map((d: any) => d.name));
+    }
+  }, [user]);
 
   // Cascade logic
   useEffect(() => {
@@ -121,14 +124,6 @@ export default function SearchScreen({ navigation }: any) {
     }
   }, [selectedCity]);
 
-  // Execute search when filters change
-  useEffect(() => {
-    if (selectedDistrict || selectedCity || selectedPin) {
-      search({ district: selectedDistrict, city: selectedCity, pinCode: selectedPin });
-    } else {
-      dispatch(setSearchResults({ stakeholders: [], pagination: { page: 1, total: 0, hasMore: false } }));
-    }
-  }, [selectedDistrict, selectedCity, selectedPin]);
 
   const search = useCallback(async (activeFilters: Record<string, string>, page = 1) => {
     dispatch(setSearching(true));
@@ -166,6 +161,19 @@ export default function SearchScreen({ navigation }: any) {
     }
   }, [dispatch]);
 
+  // Execute search when filters change (debounced for TextInputs)
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (selectedDistrict || selectedCity || selectedPin) {
+        search({ district: selectedDistrict, city: selectedCity, pinCode: selectedPin });
+      } else {
+        dispatch(setSearchResults({ stakeholders: [], pagination: { page: 1, total: 0, hasMore: false } }));
+      }
+    }, 500);
+
+    return () => clearTimeout(handler);
+  }, [selectedDistrict, selectedCity, selectedPin, search, dispatch]);
+
   const loadMore = () => {
     if (searchPagination.hasMore && !isSearching) {
       search({ district: selectedDistrict, city: selectedCity, pinCode: selectedPin }, searchPagination.page + 1);
@@ -188,21 +196,31 @@ export default function SearchScreen({ navigation }: any) {
           <Text style={styles.cascadeValue}>{selectedDistrict || 'Select District ▼'}</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity 
-          style={[styles.cascadeButton, !selectedDistrict && styles.cascadeDisabled]} 
-          disabled={!selectedDistrict}
-          onPress={() => setPickerType('city')}>
+        <View style={[styles.cascadeButton, !selectedDistrict && styles.cascadeDisabled]}>
           <Text style={styles.cascadeLabel}>City / Village</Text>
-          <Text style={styles.cascadeValue}>{selectedCity || 'Select City ▼'}</Text>
-        </TouchableOpacity>
+          <TextInput 
+            style={styles.cascadeInput}
+            value={selectedCity}
+            onChangeText={setSelectedCity}
+            placeholder="Enter City or Village"
+            placeholderTextColor={colors.textMuted}
+            editable={!!selectedDistrict}
+          />
+        </View>
         
-        <TouchableOpacity 
-          style={[styles.cascadeButton, !selectedCity && styles.cascadeDisabled]} 
-          disabled={!selectedCity}
-          onPress={() => setPickerType('pin')}>
+        <View style={[styles.cascadeButton, !selectedCity && styles.cascadeDisabled]}>
           <Text style={styles.cascadeLabel}>PIN Code</Text>
-          <Text style={styles.cascadeValue}>{selectedPin || 'Select PIN ▼'}</Text>
-        </TouchableOpacity>
+          <TextInput 
+            style={styles.cascadeInput}
+            value={selectedPin}
+            onChangeText={setSelectedPin}
+            placeholder="Enter PIN Code"
+            placeholderTextColor={colors.textMuted}
+            keyboardType="number-pad"
+            editable={!!selectedCity}
+            maxLength={6}
+          />
+        </View>
         
         {(selectedDistrict || selectedCity || selectedPin) ? (
           <TouchableOpacity style={styles.resetButton} onPress={() => {
@@ -302,6 +320,7 @@ const styles = StyleSheet.create({
   cascadeDisabled: { opacity: 0.5 },
   cascadeLabel: { ...typography.caption, color: colors.textMuted },
   cascadeValue: { ...typography.body, color: colors.textPrimary, fontWeight: '600', marginTop: 2 },
+  cascadeInput: { ...typography.body, color: colors.textPrimary, fontWeight: '600', marginTop: 2, padding: 0 },
   resetButton: { marginTop: spacing.xs, alignItems: 'center', padding: spacing.sm },
   resetButtonText: { color: colors.error, fontWeight: '600', fontSize: moderateScale(14) },
   
