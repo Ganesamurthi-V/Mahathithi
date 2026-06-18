@@ -191,6 +191,9 @@ model Survey {
   longitude       Float?   @map("longitude")
   gpsAccuracy     Float?   @map("gps_accuracy")
 
+  nearestPoliceStation    String?  @map("nearest_police_station")
+  nearestHealthcareCenter String?  @map("nearest_healthcare_center")
+
   // Status & Sync
   isDraft         Boolean  @default(true) @map("is_draft")
   isCompleted     Boolean  @default(false) @map("is_completed")
@@ -360,4 +363,22 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// ============================================================================
+// FACILITY (For offline sync)
+// ============================================================================
+
+model Facility {
+  id        String   @id @default(uuid())
+  name      String
+  type      String   // 'POLICE_STATION' | 'HEALTHCARE'
+  district  String?
+  state     String?
+  latitude  Float
+  longitude Float
+  
+  @@index([type])
+  @@index([district])
+  @@map("facilities")
 }

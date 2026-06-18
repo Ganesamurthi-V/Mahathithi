@@ -87,6 +87,8 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
       latitude REAL,
       longitude REAL,
       gps_accuracy REAL,
+      nearest_police_station TEXT,
+      nearest_healthcare_center TEXT,
       is_draft INTEGER DEFAULT 1,
       is_completed INTEGER DEFAULT 0,
       is_synced INTEGER DEFAULT 0,
@@ -156,6 +158,18 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
     );
   `);
 
+  await database.executeSql(`
+    CREATE TABLE IF NOT EXISTS facilities (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      district TEXT,
+      state TEXT,
+      latitude REAL NOT NULL,
+      longitude REAL NOT NULL
+    );
+  `);
+
   // Create indexes for offline search
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_name ON stakeholders(company_name_standardized COLLATE NOCASE);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_district ON stakeholders(district COLLATE NOCASE);`);
@@ -164,6 +178,7 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_status ON stakeholders(status);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_survey_stakeholder ON surveys(stakeholder_id);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sync_status ON sync_queue(status);`);
+  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_facilities_type ON facilities(type);`);
 }
 
 export async function getDB(): Promise<SQLite.SQLiteDatabase> {
@@ -338,14 +353,15 @@ export const surveyDao = {
     await database.executeSql(
       `INSERT OR REPLACE INTO surveys (id, stakeholder_id, enumerator_id, contact_person,
         designation, mobile_number, email, website, business_category, notes, gst_number,
-        organization_type, remarks, latitude, longitude, gps_accuracy, is_draft, is_completed,
-        is_synced, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+        organization_type, remarks, latitude, longitude, gps_accuracy, nearest_police_station, 
+        nearest_healthcare_center, is_draft, is_completed, is_synced, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [id, survey.stakeholderId, survey.enumeratorId, survey.contactPerson,
        survey.designation, survey.mobileNumber, survey.email, survey.website,
        survey.businessCategory, survey.notes, survey.gstNumber,
        survey.organizationType, survey.remarks, survey.latitude, survey.longitude,
-       survey.gpsAccuracy, survey.isDraft ? 1 : 0, survey.isCompleted ? 1 : 0,
+       survey.gpsAccuracy, survey.nearestPoliceStation, survey.nearestHealthcareCenter,
+       survey.isDraft ? 1 : 0, survey.isCompleted ? 1 : 0,
        survey.isSynced ? 1 : 0]
     );
   },
@@ -391,19 +407,46 @@ export const mediaDao = {
   },
 
   async getUnsynced(): Promise<any[]> {
-    const database = await getDB();
-    const [results] = await database.executeSql('SELECT * FROM media WHERE is_synced = 0');
-    const rows = [];
-    for (let i = 0; i < results.rows.length; i++) {
-      rows.push(results.rows.item(i));
-    }
-    return rows;
+    const db = await getDB();
+    const [results] = await db.executeSql(`SELECT * FROM media WHERE is_synced = 0`);
+    return results.rows.raw();
   },
-
   async markSynced(id: string): Promise<void> {
-    const database = await getDB();
-    await database.executeSql('UPDATE media SET is_synced = 1 WHERE id = ?', [id]);
+    const db = await getDB();
+    await db.executeSql(`UPDATE media SET is_synced = 1 WHERE id = ?`, [id]);
+  }
+};
+
+// ============================================================================
+// FACILITY DAO
+// ============================================================================
+export const facilityDao = {
+  async upsertMany(facilities: any[]): Promise<void> {
+    const db = await getDB();
+    await db.transaction(async (tx) => {
+      for (const f of facilities) {
+        await tx.executeSql(
+          `INSERT OR REPLACE INTO facilities (id, name, type, district, state, latitude, longitude)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [f.id, f.name, f.type, f.district, f.state, f.latitude, f.longitude]
+        );
+      }
+    });
   },
+  async getNearest(lat: number, lng: number, type: string): Promise<any> {
+    const db = await getDB();
+    // Simplified Pythagorean distance for local offline querying (sufficient for small scale)
+    const [results] = await db.executeSql(
+      `SELECT *, 
+        ((latitude - ?) * (latitude - ?) + (longitude - ?) * (longitude - ?)) as distanceSq
+       FROM facilities 
+       WHERE type = ?
+       ORDER BY distanceSq ASC 
+       LIMIT 10`,
+      [lat, lat, lng, lng, type]
+    );
+    return results.rows.raw();
+  }
 };
 
 // ============================================================================

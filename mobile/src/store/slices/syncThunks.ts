@@ -6,8 +6,8 @@ import {
   startSync, syncComplete, syncFailed, updateSyncProgress,
   setPendingCount, setFailedCount
 } from './syncSlice';
-import { syncService, mediaService, surveyService, stakeholderService } from '../../services/api';
-import { surveyDao, syncQueueDao, stakeholderDao, appStateDao, mediaDao } from '../../database';
+import { syncService, mediaService, surveyService, stakeholderService, facilityService } from '../../services/api';
+import { surveyDao, syncQueueDao, stakeholderDao, appStateDao, mediaDao, facilityDao } from '../../database';
 
 export const runAutoSync = createAsyncThunk(
   'sync/runAutoSync',
@@ -77,6 +77,8 @@ export const runAutoSync = createAsyncThunk(
               latitude: surveyLocal.latitude,
               longitude: surveyLocal.longitude,
               gpsAccuracy: surveyLocal.gps_accuracy,
+              nearestPoliceStation: surveyLocal.nearest_police_station,
+              nearestHealthcareCenter: surveyLocal.nearest_healthcare_center,
               localId: surveyLocal.id,
             };
 
@@ -145,6 +147,16 @@ export const runAutoSync = createAsyncThunk(
       // Step 3: Remove locked stakeholders from local DB
       if (changes.data.data.lockedStakeholderIds?.length > 0) {
         await stakeholderDao.removeLockedStakeholders(changes.data.data.lockedStakeholderIds);
+      }
+
+      // Step 3.5: Sync Facilities
+      try {
+        const facilityRes = await facilityService.syncOffline();
+        if (facilityRes.data?.data && facilityRes.data.data.length > 0) {
+          await facilityDao.upsertMany(facilityRes.data.data);
+        }
+      } catch (err) {
+        console.warn('Failed to sync facilities:', err);
       }
 
       dispatch(updateSyncProgress(100));

@@ -110,6 +110,10 @@ export const syncService = {
     api.get('/sync/changes', { params: { since } }),
 };
 
+export const facilityService = {
+  syncOffline: () => api.get('/facilities/sync-offline'),
+};
+
 export const dashboardService = {
   getStats: () => api.get('/dashboard/stats'),
 };
