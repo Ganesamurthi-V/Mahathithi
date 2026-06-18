@@ -427,23 +427,40 @@ export const mediaDao = {
 export const facilityDao = {
   async upsertMany(facilities: any[]): Promise<void> {
     const db = await getDB();
-    await db.transaction(async (tx) => {
-      // Execute in batches to prevent UI blocking or query size limits
-      const batchSize = 100;
-      for (let i = 0; i < facilities.length; i += batchSize) {
-        const batch = facilities.slice(i, i + batchSize);
-        let query = 'INSERT OR REPLACE INTO facilities (id, name, type, district, state, latitude, longitude) VALUES ';
-        const params: any[] = [];
-        
-        batch.forEach((f, idx) => {
-          query += '(?, ?, ?, ?, ?, ?, ?)';
-          if (idx < batch.length - 1) query += ', ';
-          params.push(f.id, f.name, f.type, f.district, f.state, f.latitude, f.longitude);
-        });
-        
-        await tx.executeSql(query, params);
-      }
-    });
+    const batchSize = 100;
+    const queries: any[] = [];
+    
+    for (let i = 0; i < facilities.length; i += batchSize) {
+      const batch = facilities.slice(i, i + batchSize);
+      let query = 'INSERT OR REPLACE INTO facilities (id, name, type, district, state, latitude, longitude) VALUES ';
+      const params: any[] = [];
+      
+      batch.forEach((f, idx) => {
+        query += '(?, ?, ?, ?, ?, ?, ?)';
+        if (idx < batch.length - 1) query += ', ';
+        params.push(f.id, f.name, f.type, f.district, f.state, f.latitude, f.longitude);
+      });
+      
+      queries.push([query, params]);
+    }
+    
+    // Execute all queries in a single atomic transaction safely using callbacks
+    if (queries.length > 0) {
+      await new Promise<void>((resolve, reject) => {
+        db.transaction(
+          (tx) => {
+            for (let i = 0; i < queries.length; i++) {
+              tx.executeSql(queries[i][0], queries[i][1]);
+            }
+          },
+          (error) => {
+            console.error('Batch insert failed:', error);
+            reject(error);
+          },
+          () => resolve()
+        );
+      });
+    }
   },
   async getNearest(lat: number, lng: number, type: string): Promise<any> {
     const db = await getDB();
