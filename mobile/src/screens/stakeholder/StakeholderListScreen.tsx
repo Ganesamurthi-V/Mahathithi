@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Animated, Easing } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
@@ -83,9 +84,9 @@ const StakeholderCard = React.memo(({ item, index, onPress }: { item: any, index
           </View>
         </View>
         <View style={styles.metaRow}>
-          <Text style={styles.meta}>📍 {item.district || '—'}</Text>
-          <Text style={styles.meta}>🏙 {item.city || '—'}</Text>
-          <Text style={styles.meta}>📮 {item.pinCode || '—'}</Text>
+          <Text style={styles.meta}><Icon name="map-marker" size={14} color={colors.textMuted} /> {item.district || '—'}</Text>
+          <Text style={styles.meta}><Icon name="city" size={14} color={colors.textMuted} /> {item.city || '—'}</Text>
+          <Text style={styles.meta}><Icon name="mailbox" size={14} color={colors.textMuted} /> {item.pinCode || '—'}</Text>
         </View>
       </TouchableOpacity>
     </Animated.View>

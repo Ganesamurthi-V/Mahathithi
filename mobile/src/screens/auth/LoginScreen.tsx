@@ -4,6 +4,7 @@ import {
   KeyboardAvoidingView, Platform, ActivityIndicator,
   Animated, Easing, Image
 } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
@@ -102,10 +103,10 @@ export default function LoginScreen() {
           <Text style={styles.tagline}>Stakeholder Verification Portal</Text>
         </View>
 
-        {/* Error */}
         {error && (
           <View style={styles.errorBox}>
-            <Text style={styles.errorText}>⚠️ {error}</Text>
+            <Icon name="alert-circle-outline" size={16} color={colors.error} style={{ marginRight: 6 }} />
+            <Text style={styles.errorText}>{error}</Text>
           </View>
         )}
 
@@ -149,7 +150,11 @@ export default function LoginScreen() {
                 style={styles.eyeIconContainer}
                 onPress={() => setShowPassword(!showPassword)}
               >
-                <Text style={styles.eyeIcon}>{showPassword ? '👁️' : '🙈'}</Text>
+                <Icon 
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'} 
+                  size={20} 
+                  color={colors.textSecondary} 
+                />
               </TouchableOpacity>
             </View>
           </View>

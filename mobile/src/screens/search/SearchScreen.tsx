@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, FlatList, TextInput,
   StyleSheet, ActivityIndicator, Modal, Animated, Easing
 } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
@@ -43,9 +44,9 @@ const StakeholderCard = React.memo(({ item, onPress }: { item: any, onPress: () 
           </View>
         </View>
         <View style={styles.resultMeta}>
-          <Text style={styles.metaText}>📍 {item.district || item.city || '—'}</Text>
-          <Text style={styles.metaText}>🏙 {item.city || '—'}</Text>
-          <Text style={styles.metaText}>📮 {item.pinCode || item.pin_code || '—'}</Text>
+          <Text style={styles.metaText}><Icon name="map-marker" size={14} color={colors.textMuted} /> {item.district || item.city || '—'}</Text>
+          <Text style={styles.metaText}><Icon name="city" size={14} color={colors.textMuted} /> {item.city || '—'}</Text>
+          <Text style={styles.metaText}><Icon name="mailbox" size={14} color={colors.textMuted} /> {item.pinCode || item.pin_code || '—'}</Text>
         </View>
         {(item.category || item.nicDescription || item.nic_description) && (
           <Text style={styles.categoryText}>
@@ -259,7 +260,9 @@ export default function SearchScreen({ navigation }: any) {
           ListEmptyComponent={
             !isSearching ? (
               <View style={styles.emptyState}>
-                <Animated.Text style={[styles.emptyIcon, { transform: [{ scale: pulseAnim }] }]}>🔍</Animated.Text>
+                <Animated.View style={[{ marginBottom: spacing.md, transform: [{ scale: pulseAnim }] }]}>
+                  <Icon name="account-search" size={60} color={colors.textMuted} />
+                </Animated.View>
                 <Text style={styles.emptyTitle}>Find Stakeholders</Text>
                 <Text style={styles.emptyText}>Select a District, City, and PIN to locate stakeholders in your assigned area.</Text>
               </View>
@@ -279,7 +282,7 @@ export default function SearchScreen({ navigation }: any) {
                   Select {pickerType === 'district' ? 'District' : pickerType === 'city' ? 'City' : 'PIN'}
                 </Text>
                 <TouchableOpacity onPress={() => setPickerType(null)}>
-                  <Text style={styles.closePickerIcon}>✕</Text>
+                  <Icon name="close" size={24} color={colors.textSecondary} style={styles.closePickerIcon} />
                 </TouchableOpacity>
               </View>
               
