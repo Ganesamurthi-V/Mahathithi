@@ -71,6 +71,8 @@ export const stakeholderService = {
     api.get(`/stakeholders/${id}`),
   getAssigned: (since?: string) =>
     api.get('/stakeholders/assigned', { params: { since } }),
+  updateStakeholder: (id: string, data: any) =>
+    api.patch(`/stakeholders/${id}`, data),
 };
 
 export const surveyService = {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Animated, Easing } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
@@ -134,35 +135,37 @@ export default function StakeholderListScreen({ navigation }: any) {
   ), [navigation]);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Stakeholders</Text>
-        {!initialLoading && (
-          <View style={styles.countBadge}>
-            <Text style={styles.countText}>{stakeholders.length} items</Text>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Stakeholders</Text>
+          {!initialLoading && (
+            <View style={styles.countBadge}>
+              <Text style={styles.countText}>{stakeholders.length} items</Text>
+            </View>
+          )}
+        </View>
+
+        {initialLoading ? (
+          <View style={styles.list}>
+            {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
           </View>
+        ) : (
+          <FlatList
+            data={stakeholders}
+            renderItem={renderItem}
+            keyExtractor={item => item.id}
+            contentContainerStyle={styles.list}
+            refreshControl={<RefreshControl refreshing={loading && page === 1} onRefresh={() => loadStakeholders(1)} tintColor={colors.primary} />}
+            onEndReached={() => hasMore && !loading && loadStakeholders(page + 1)}
+            onEndReachedThreshold={0.3}
+            removeClippedSubviews={true}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+          />
         )}
       </View>
-
-      {initialLoading ? (
-        <View style={styles.list}>
-          {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
-        </View>
-      ) : (
-        <FlatList
-          data={stakeholders}
-          renderItem={renderItem}
-          keyExtractor={item => item.id}
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={loading && page === 1} onRefresh={() => loadStakeholders(1)} tintColor={colors.primary} />}
-          onEndReached={() => hasMore && !loading && loadStakeholders(page + 1)}
-          onEndReachedThreshold={0.3}
-          removeClippedSubviews={true}
-          maxToRenderPerBatch={10}
-          windowSize={5}
-        />
-      )}
-    </View>
+    </SafeAreaView>
   );
 }
 

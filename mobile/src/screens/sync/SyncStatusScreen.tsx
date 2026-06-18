@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator, Animated, Easing } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import {
@@ -85,90 +86,92 @@ export default function SyncStatusScreen() {
   }, [dispatch, isSyncing]);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Animated.View style={{ opacity: fadeAnim }}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Sync Center</Text>
-          <View style={[styles.onlineBadge, { backgroundColor: isOnline ? colors.successBg : colors.errorBg }]}>
-            <View style={[styles.onlineDot, { backgroundColor: isOnline ? colors.success : colors.error }]} />
-            <Text style={[styles.onlineText, { color: isOnline ? colors.success : colors.error }]}>
-              {isOnline ? 'Online' : 'Offline'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Last Sync */}
-        <View style={styles.syncTimeCard}>
-          <Text style={styles.syncTimeLabel}>Last Successful Sync</Text>
-          <Text style={styles.syncTimeValue}>
-            {lastSyncTime ? new Date(lastSyncTime).toLocaleString() : 'Never synced'}
-          </Text>
-        </View>
-
-        {/* Sync Status Cards */}
-        <View style={styles.statusGrid}>
-          <View style={[styles.statusCard, { borderLeftColor: colors.warning }]}>
-            <Text style={styles.statusIcon}>📤</Text>
-            <Text style={styles.statusValue}>{pendingCount}</Text>
-            <Text style={styles.statusLabel}>Pending Uploads</Text>
-          </View>
-          <View style={[styles.statusCard, { borderLeftColor: colors.error }]}>
-            <Text style={styles.statusIcon}>⚠️</Text>
-            <Text style={styles.statusValue}>{failedCount}</Text>
-            <Text style={styles.statusLabel}>Failed Uploads</Text>
-          </View>
-        </View>
-
-        {/* Progress Bar */}
-        {isSyncing && (
-          <View style={styles.progressCard}>
-            <View style={styles.progressHeader}>
-              <Text style={styles.progressTitle}>Syncing...</Text>
-              <Text style={styles.progressPercent}>{syncProgress}%</Text>
-            </View>
-            <View style={styles.progressBar}>
-              <Animated.View style={[
-                styles.progressFill, 
-                { width: progressAnim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] }) }
-              ]} />
-            </View>
-          </View>
-        )}
-
-        {/* Sync Button */}
-        <TouchableOpacity
-          style={[styles.syncButton, (isSyncing || !isOnline) && styles.syncButtonDisabled]}
-          onPress={performSync}
-          disabled={isSyncing || !isOnline}
-          activeOpacity={0.9}
-        >
-          {isSyncing ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Animated.Text style={{ fontSize: 20, marginRight: 8, transform: [{ rotate: spin }] }}>
-                🔄
-              </Animated.Text>
-              <Text style={styles.syncButtonText}>Syncing Data...</Text>
-            </View>
-          ) : (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={{ fontSize: 20, marginRight: 8 }}>{isOnline ? '🔄' : '📵'}</Text>
-              <Text style={styles.syncButtonText}>
-                {isOnline ? 'Sync Now' : 'No Connection'}
+    <SafeAreaView style={styles.container}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <Animated.View style={{ opacity: fadeAnim }}>
+          <View style={styles.header}>
+            <Text style={styles.title}>Sync Center</Text>
+            <View style={[styles.onlineBadge, { backgroundColor: isOnline ? colors.successBg : colors.errorBg }]}>
+              <View style={[styles.onlineDot, { backgroundColor: isOnline ? colors.success : colors.error }]} />
+              <Text style={[styles.onlineText, { color: isOnline ? colors.success : colors.error }]}>
+                {isOnline ? 'Online' : 'Offline'}
               </Text>
             </View>
-          )}
-        </TouchableOpacity>
+          </View>
 
-        {/* Info */}
-        <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>ℹ️ How Sync Works</Text>
-          <Text style={styles.infoText}>• Surveys are saved locally when offline</Text>
-          <Text style={styles.infoText}>• Auto-sync triggers when internet is available</Text>
-          <Text style={styles.infoText}>• Failed uploads are retried automatically</Text>
-          <Text style={styles.infoText}>• Completed stakeholders are removed from your list</Text>
-        </View>
-      </Animated.View>
-    </ScrollView>
+          {/* Last Sync */}
+          <View style={styles.syncTimeCard}>
+            <Text style={styles.syncTimeLabel}>Last Successful Sync</Text>
+            <Text style={styles.syncTimeValue}>
+              {lastSyncTime ? new Date(lastSyncTime).toLocaleString() : 'Never synced'}
+            </Text>
+          </View>
+
+          {/* Sync Status Cards */}
+          <View style={styles.statusGrid}>
+            <View style={[styles.statusCard, { borderLeftColor: colors.warning }]}>
+              <Text style={styles.statusIcon}>📤</Text>
+              <Text style={styles.statusValue}>{pendingCount}</Text>
+              <Text style={styles.statusLabel}>Pending Uploads</Text>
+            </View>
+            <View style={[styles.statusCard, { borderLeftColor: colors.error }]}>
+              <Text style={styles.statusIcon}>⚠️</Text>
+              <Text style={styles.statusValue}>{failedCount}</Text>
+              <Text style={styles.statusLabel}>Failed Uploads</Text>
+            </View>
+          </View>
+
+          {/* Progress Bar */}
+          {isSyncing && (
+            <View style={styles.progressCard}>
+              <View style={styles.progressHeader}>
+                <Text style={styles.progressTitle}>Syncing...</Text>
+                <Text style={styles.progressPercent}>{syncProgress}%</Text>
+              </View>
+              <View style={styles.progressBar}>
+                <Animated.View style={[
+                  styles.progressFill, 
+                  { width: progressAnim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] }) }
+                ]} />
+              </View>
+            </View>
+          )}
+
+          {/* Sync Button */}
+          <TouchableOpacity
+            style={[styles.syncButton, (isSyncing || !isOnline) && styles.syncButtonDisabled]}
+            onPress={performSync}
+            disabled={isSyncing || !isOnline}
+            activeOpacity={0.9}
+          >
+            {isSyncing ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Animated.Text style={{ fontSize: 20, marginRight: 8, transform: [{ rotate: spin }] }}>
+                  🔄
+                </Animated.Text>
+                <Text style={styles.syncButtonText}>Syncing Data...</Text>
+              </View>
+            ) : (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ fontSize: 20, marginRight: 8 }}>{isOnline ? '🔄' : '📵'}</Text>
+                <Text style={styles.syncButtonText}>
+                  {isOnline ? 'Sync Now' : 'No Connection'}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          {/* Info */}
+          <View style={styles.infoCard}>
+            <Text style={styles.infoTitle}>ℹ️ How Sync Works</Text>
+            <Text style={styles.infoText}>• Surveys are saved locally when offline</Text>
+            <Text style={styles.infoText}>• Auto-sync triggers when internet is available</Text>
+            <Text style={styles.infoText}>• Failed uploads are retried automatically</Text>
+            <Text style={styles.infoText}>• Completed stakeholders are removed from your list</Text>
+          </View>
+        </Animated.View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 

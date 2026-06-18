@@ -14,5 +14,6 @@ router.get('/assigned', controller.getAssigned);
 router.get('/:id', districtGuard, controller.getById);
 router.patch('/:id/lock', districtGuard, controller.lock);
 router.patch('/:id/status', districtGuard, controller.updateStatus);
+router.patch('/:id', districtGuard, controller.updateStakeholder);
 
 export default router;

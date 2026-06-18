@@ -1,5 +1,6 @@
 import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert, Animated } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
@@ -123,11 +124,12 @@ export default function DashboardScreen({ navigation }: any) {
   ], [stats]);
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={isLoading} onRefresh={loadStats} tintColor={colors.primary} />}
-    >
+    <SafeAreaView style={styles.container}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={loadStats} tintColor={colors.primary} />}
+      >
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTextContainer}>
@@ -214,6 +216,7 @@ export default function DashboardScreen({ navigation }: any) {
         <ActionButton icon="sync" text="Sync Now" onPress={() => navigation.navigate('SyncTab')} />
       </View>
     </ScrollView>
+    </SafeAreaView>
   );
 }
 

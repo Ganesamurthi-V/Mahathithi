@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, FlatList, TextInput,
   StyleSheet, ActivityIndicator, Modal, Animated, Easing
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { setSearchResults, appendSearchResults, setSearching } from '../../store/slices/stakeholderSlice';
@@ -188,124 +189,126 @@ export default function SearchScreen({ navigation }: any) {
   ), [navigation]);
 
   return (
-    <View style={styles.container}>
-      {/* Cascaded Selection Area */}
-      <View style={styles.cascadeSection}>
-        <TouchableOpacity style={styles.cascadeButton} onPress={() => setPickerType('district')}>
-          <Text style={styles.cascadeLabel}>District</Text>
-          <Text style={styles.cascadeValue}>{selectedDistrict || 'Select District ▼'}</Text>
-        </TouchableOpacity>
-        
-        <View style={[styles.cascadeButton, !selectedDistrict && styles.cascadeDisabled]}>
-          <Text style={styles.cascadeLabel}>City / Village</Text>
-          <TextInput 
-            style={styles.cascadeInput}
-            value={selectedCity}
-            onChangeText={setSelectedCity}
-            placeholder="Enter City or Village"
-            placeholderTextColor={colors.textMuted}
-            editable={!!selectedDistrict}
-          />
-        </View>
-        
-        <View style={[styles.cascadeButton, !selectedCity && styles.cascadeDisabled]}>
-          <Text style={styles.cascadeLabel}>PIN Code</Text>
-          <TextInput 
-            style={styles.cascadeInput}
-            value={selectedPin}
-            onChangeText={setSelectedPin}
-            placeholder="Enter PIN Code"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="number-pad"
-            editable={!!selectedCity}
-            maxLength={6}
-          />
-        </View>
-        
-        {(selectedDistrict || selectedCity || selectedPin) ? (
-          <TouchableOpacity style={styles.resetButton} onPress={() => {
-            setSelectedDistrict('');
-            dispatch(setSearchResults({ stakeholders: [], pagination: { page: 1, total: 0, hasMore: false } }));
-          }}>
-            <Text style={styles.resetButtonText}>Reset Search</Text>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
+        {/* Cascaded Selection Area */}
+        <View style={styles.cascadeSection}>
+          <TouchableOpacity style={styles.cascadeButton} onPress={() => setPickerType('district')}>
+            <Text style={styles.cascadeLabel}>District</Text>
+            <Text style={styles.cascadeValue}>{selectedDistrict || 'Select District ▼'}</Text>
           </TouchableOpacity>
-        ) : null}
-      </View>
-
-      {/* Results count */}
-      {searchResults.length > 0 && (
-        <Text style={styles.resultCount}>
-          {searchPagination.total?.toLocaleString() || searchResults.length} results found
-        </Text>
-      )}
-
-      {/* Results */}
-      <FlatList
-        data={searchResults}
-        renderItem={renderStakeholder}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        onEndReached={loadMore}
-        onEndReachedThreshold={0.5}
-        removeClippedSubviews={true}
-        maxToRenderPerBatch={10}
-        windowSize={5}
-        getItemLayout={(data, index) => (
-          {length: moderateScale(120), offset: moderateScale(120) * index, index}
-        )}
-        ListEmptyComponent={
-          !isSearching ? (
-            <View style={styles.emptyState}>
-              <Animated.Text style={[styles.emptyIcon, { transform: [{ scale: pulseAnim }] }]}>🔍</Animated.Text>
-              <Text style={styles.emptyTitle}>Find Stakeholders</Text>
-              <Text style={styles.emptyText}>Select a District, City, and PIN to locate stakeholders in your assigned area.</Text>
-            </View>
-          ) : null
-        }
-        ListFooterComponent={
-          isSearching ? <ActivityIndicator color={colors.primary} style={{ padding: spacing.xl }} /> : null
-        }
-      />
-
-      {/* Picker Modal */}
-      <Modal visible={!!pickerType} animationType="fade" transparent>
-        <TouchableOpacity style={styles.filterOverlay} activeOpacity={1} onPress={() => setPickerType(null)}>
-          <Animated.View style={[styles.filterModal, { transform: [{ translateY: filterSlideAnim }] }]}>
-            <View style={styles.pickerHeader}>
-              <Text style={styles.filterTitle}>
-                Select {pickerType === 'district' ? 'District' : pickerType === 'city' ? 'City' : 'PIN'}
-              </Text>
-              <TouchableOpacity onPress={() => setPickerType(null)}>
-                <Text style={styles.closePickerIcon}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <FlatList
-              data={
-                pickerType === 'district' ? availableDistricts :
-                pickerType === 'city' ? availableCities :
-                pickerType === 'pin' ? availablePins : []
-              }
-              keyExtractor={(i) => i}
-              style={{ maxHeight: moderateScale(300) }}
-              renderItem={({item}) => (
-                <TouchableOpacity style={styles.pickerItem} onPress={() => {
-                  if (pickerType === 'district') setSelectedDistrict(item);
-                  if (pickerType === 'city') setSelectedCity(item);
-                  if (pickerType === 'pin') setSelectedPin(item);
-                  setPickerType(null);
-                }}>
-                  <Text style={styles.pickerItemText}>{item}</Text>
-                </TouchableOpacity>
-              )}
-              ListEmptyComponent={
-                <Text style={styles.emptyPickerText}>No options available</Text>
-              }
+          
+          <View style={[styles.cascadeButton, !selectedDistrict && styles.cascadeDisabled]}>
+            <Text style={styles.cascadeLabel}>City / Village</Text>
+            <TextInput 
+              style={styles.cascadeInput}
+              value={selectedCity}
+              onChangeText={setSelectedCity}
+              placeholder="Enter City or Village"
+              placeholderTextColor={colors.textMuted}
+              editable={!!selectedDistrict}
             />
-          </Animated.View>
-        </TouchableOpacity>
-      </Modal>
-    </View>
+          </View>
+          
+          <View style={[styles.cascadeButton, !selectedCity && styles.cascadeDisabled]}>
+            <Text style={styles.cascadeLabel}>PIN Code</Text>
+            <TextInput 
+              style={styles.cascadeInput}
+              value={selectedPin}
+              onChangeText={setSelectedPin}
+              placeholder="Enter PIN Code"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="number-pad"
+              editable={!!selectedCity}
+              maxLength={6}
+            />
+          </View>
+          
+          {(selectedDistrict || selectedCity || selectedPin) ? (
+            <TouchableOpacity style={styles.resetButton} onPress={() => {
+              setSelectedDistrict('');
+              dispatch(setSearchResults({ stakeholders: [], pagination: { page: 1, total: 0, hasMore: false } }));
+            }}>
+              <Text style={styles.resetButtonText}>Reset Search</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {/* Results count */}
+        {searchResults.length > 0 && (
+          <Text style={styles.resultCount}>
+            {searchPagination.total?.toLocaleString() || searchResults.length} results found
+          </Text>
+        )}
+
+        {/* Results */}
+        <FlatList
+          data={searchResults}
+          renderItem={renderStakeholder}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          getItemLayout={(data, index) => (
+            {length: moderateScale(120), offset: moderateScale(120) * index, index}
+          )}
+          ListEmptyComponent={
+            !isSearching ? (
+              <View style={styles.emptyState}>
+                <Animated.Text style={[styles.emptyIcon, { transform: [{ scale: pulseAnim }] }]}>🔍</Animated.Text>
+                <Text style={styles.emptyTitle}>Find Stakeholders</Text>
+                <Text style={styles.emptyText}>Select a District, City, and PIN to locate stakeholders in your assigned area.</Text>
+              </View>
+            ) : null
+          }
+          ListFooterComponent={
+            isSearching ? <ActivityIndicator color={colors.primary} style={{ padding: spacing.xl }} /> : null
+          }
+        />
+
+        {/* Picker Modal */}
+        <Modal visible={!!pickerType} animationType="fade" transparent>
+          <TouchableOpacity style={styles.filterOverlay} activeOpacity={1} onPress={() => setPickerType(null)}>
+            <Animated.View style={[styles.filterModal, { transform: [{ translateY: filterSlideAnim }] }]}>
+              <View style={styles.pickerHeader}>
+                <Text style={styles.filterTitle}>
+                  Select {pickerType === 'district' ? 'District' : pickerType === 'city' ? 'City' : 'PIN'}
+                </Text>
+                <TouchableOpacity onPress={() => setPickerType(null)}>
+                  <Text style={styles.closePickerIcon}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              
+              <FlatList
+                data={
+                  pickerType === 'district' ? availableDistricts :
+                  pickerType === 'city' ? availableCities :
+                  pickerType === 'pin' ? availablePins : []
+                }
+                keyExtractor={(i) => i}
+                style={{ maxHeight: moderateScale(300) }}
+                renderItem={({item}) => (
+                  <TouchableOpacity style={styles.pickerItem} onPress={() => {
+                    if (pickerType === 'district') setSelectedDistrict(item);
+                    if (pickerType === 'city') setSelectedCity(item);
+                    if (pickerType === 'pin') setSelectedPin(item);
+                    setPickerType(null);
+                  }}>
+                    <Text style={styles.pickerItemText}>{item}</Text>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <Text style={styles.emptyPickerText}>No options available</Text>
+                }
+              />
+            </Animated.View>
+          </TouchableOpacity>
+        </Modal>
+      </View>
+    </SafeAreaView>
   );
 }
 
