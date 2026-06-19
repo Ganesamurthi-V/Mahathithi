@@ -179,6 +179,8 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_survey_stakeholder ON surveys(stakeholder_id);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sync_status ON sync_queue(status);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_facilities_type ON facilities(type);`);
+  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_facilities_name ON facilities(name COLLATE NOCASE);`);
+  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_facilities_district ON facilities(district COLLATE NOCASE);`);
 }
 
 export async function getDB(): Promise<SQLite.SQLiteDatabase> {
@@ -464,7 +466,9 @@ export const facilityDao = {
   },
   async getNearest(lat: number, lng: number, type: string): Promise<any> {
     const db = await getDB();
-    // Simplified Pythagorean distance for local offline querying (sufficient for small scale)
+    // Use bounding box approximation for fast sqlite filtering if needed, 
+    // but since we only sync enumerator districts, the table is small.
+    // Using simple Pythagorean distance for initial sort, will refine in JS if needed.
     const [results] = await db.executeSql(
       `SELECT *, 
         ((latitude - ?) * (latitude - ?) + (longitude - ?) * (longitude - ?)) as distanceSq
@@ -473,6 +477,21 @@ export const facilityDao = {
        ORDER BY distanceSq ASC 
        LIMIT 10`,
       [lat, lat, lng, lng, type]
+    );
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i));
+    }
+    return rows;
+  },
+  async search(query: string, type: string, limit: number = 20): Promise<any[]> {
+    const db = await getDB();
+    const [results] = await db.executeSql(
+      `SELECT * FROM facilities 
+       WHERE type = ? AND (name LIKE ? COLLATE NOCASE OR district LIKE ? COLLATE NOCASE) 
+       ORDER BY name ASC 
+       LIMIT ?`,
+      [type, `%${query}%`, `%${query}%`, limit]
     );
     const rows = [];
     for (let i = 0; i < results.rows.length; i++) {

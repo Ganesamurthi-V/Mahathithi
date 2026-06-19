@@ -103,6 +103,95 @@ const AnimatedInput = ({ field, control, errors, onFocus, onBlur }: any) => {
   );
 };
 
+const AutocompleteInput = ({ field, control, errors, onFocus, onBlur, setValue }: any) => {
+  const [isFocused, setIsFocused] = useState(false);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const borderAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(borderAnim, {
+      toValue: isFocused ? 1 : 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  }, [isFocused]);
+
+  const borderColor = borderAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [colors.border, colors.primary]
+  });
+
+  const backgroundColor = borderAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [colors.bgInput, colors.bgCard]
+  });
+
+  const handleSearch = async (text: string) => {
+    if (text.length > 2) {
+       const res = await facilityDao.search(text, field.facilityType, 20);
+       setSuggestions(res);
+    } else {
+       setSuggestions([]);
+    }
+  };
+
+  return (
+    <View style={[styles.inputGroup, { zIndex: isFocused ? 10 : 1 }]}>
+      <Text style={[styles.label, isFocused && styles.labelFocused, errors[field.name] && styles.labelError]}>
+        {field.label}
+      </Text>
+      <Animated.View style={[
+        styles.inputWrapper, 
+        { borderColor: errors[field.name] ? colors.error : borderColor, backgroundColor },
+        isFocused && !errors[field.name] && shadows.glow
+      ]}>
+        <Controller
+          control={control}
+          name={field.name}
+          rules={field.required ? { required: `${field.label.replace(' *', '')} is required` } : undefined}
+          render={({ field: { onChange, value } }) => (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                placeholder={field.placeholder}
+                placeholderTextColor={colors.textMuted}
+                value={value}
+                onChangeText={(text) => {
+                  onChange(text);
+                  handleSearch(text);
+                }}
+                onFocus={() => { setIsFocused(true); onFocus(); }}
+                onBlur={() => { setTimeout(() => setIsFocused(false), 200); onBlur(); }}
+              />
+              {field.isLoading && (
+                <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: spacing.md }} />
+              )}
+            </View>
+          )}
+        />
+      </Animated.View>
+      {errors[field.name] && (
+        <Text style={styles.errorText}><Icon name="alert-circle-outline" size={14} /> {errors[field.name]?.message}</Text>
+      )}
+      {isFocused && suggestions.length > 0 && (
+        <View style={styles.suggestionsContainer}>
+          <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 200 }}>
+            {suggestions.map((s, i) => (
+              <TouchableOpacity key={i} style={styles.suggestionItem} onPress={() => {
+                setValue(field.name, `${s.name} (${s.district})`);
+                setSuggestions([]);
+                setIsFocused(false);
+              }}>
+                <Text style={styles.suggestionText}>{s.name} ({s.district})</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+};
+
 export default function SurveyFormScreen({ route, navigation }: any) {
   const { stakeholderId, stakeholder, survey: existingSurvey } = route.params;
   const { user } = useSelector((state: RootState) => state.auth);
@@ -480,13 +569,13 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     setUploadText('');
   };
 
-  const fields: { name: keyof SurveyFormData; label: string; placeholder: string; required?: boolean; keyboardType?: any; isLoading?: boolean }[] = [
+  const fields: { name: keyof SurveyFormData; label: string; placeholder: string; required?: boolean; keyboardType?: any; isLoading?: boolean; isAutocomplete?: boolean; facilityType?: string }[] = [
     { name: 'contactPerson', label: 'Contact Person Name *', placeholder: 'Full name of contact person', required: true },
     { name: 'designation', label: 'Designation', placeholder: 'e.g., Manager, Owner' },
     { name: 'mobileNumber', label: 'Mobile Number *', placeholder: '10-digit mobile number', required: true, keyboardType: 'phone-pad' },
     { name: 'email', label: 'Email', placeholder: 'email@example.com', keyboardType: 'email-address' },
-    { name: 'nearestPoliceStation', label: 'Nearest Police Station', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading },
-    { name: 'nearestHealthcareCenter', label: 'Nearest Healthcare Center', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading },
+    { name: 'nearestPoliceStation', label: 'Nearest Police Station', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading, isAutocomplete: true, facilityType: 'POLICE_STATION' },
+    { name: 'nearestHealthcareCenter', label: 'Nearest Healthcare Center', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading, isAutocomplete: true, facilityType: 'HEALTHCARE' },
     { name: 'gstNumber', label: 'GST Number', placeholder: 'GST Number' },
     { name: 'organizationType', label: 'Organization Type', placeholder: 'e.g., LLC, Pvt Ltd' },
     { name: 'website', label: 'Website', placeholder: 'https://example.com' },
@@ -565,7 +654,11 @@ export default function SurveyFormScreen({ route, navigation }: any) {
               {fields.slice(0, 4).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
               
               <Text style={styles.sectionHeader}>Organization Details</Text>
-              {fields.slice(4).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
+              {fields.slice(4).map(f => f.isAutocomplete ? (
+                <AutocompleteInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} setValue={setValue} />
+              ) : (
+                <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              ))}
             </View>
           </View>
         )}
@@ -769,6 +862,27 @@ const styles = StyleSheet.create({
     paddingVertical: Platform.OS === 'ios' ? spacing.lg : spacing.md,
   },
   errorText: { ...typography.caption, color: colors.error, marginTop: spacing.xs },
+  suggestionsContainer: {
+    position: 'absolute',
+    top: 75,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.bgCard,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    ...shadows.elevated,
+    zIndex: 20
+  },
+  suggestionItem: {
+    padding: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border
+  },
+  suggestionText: {
+    ...typography.body,
+    color: colors.textPrimary
+  },
   
   photoSlot: {
     backgroundColor: colors.bgCard, borderRadius: borderRadius.xl,
