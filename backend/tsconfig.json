@@ -25,5 +25,8 @@
     }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "prisma", "scripts"]
+  "exclude": ["node_modules", "dist", "prisma", "scripts"],
+  "references": [
+    { "path": "./tsconfig.scripts.json" }
+  ]
 }

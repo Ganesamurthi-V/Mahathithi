@@ -380,5 +380,7 @@ model Facility {
   
   @@index([type])
   @@index([district])
+  @@index([state])
+  @@index([name])
   @@map("facilities")
 }
