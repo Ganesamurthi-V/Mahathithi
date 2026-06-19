@@ -80,18 +80,21 @@ async function main(): Promise<void> {
       const lat: unknown = attrs.lat;
       const lon: unknown = attrs.lon;
 
-      if (!facilityName || typeof lat !== 'number' || typeof lon !== 'number') {
+      if (!facilityName) {
         totalFailed++;
         return;
       }
+
+      const finalLat = typeof lat === 'number' ? lat : 0;
+      const finalLon = typeof lon === 'number' ? lon : 0;
 
       batch.push({
         name: facilityName,
         type: facilityType,
         district,
         state,
-        latitude: lat,
-        longitude: lon,
+        latitude: finalLat,
+        longitude: finalLon,
       });
 
       if (batch.length >= BATCH_SIZE) {
