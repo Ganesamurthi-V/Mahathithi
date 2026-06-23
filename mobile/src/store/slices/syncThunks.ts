@@ -31,32 +31,41 @@ export const runInitialSync = createAsyncThunk(
       }
 
       // Step 1: Download Stakeholders
+      console.log('🔄 [Initial Sync] Fetching stakeholders from backend...');
       dispatch(updateInitialSyncProgress({ progress: 10, message: 'Downloading Stakeholders...' }));
       const stakeholdersRes = await stakeholderService.getAssigned();
-      const stakeholders = stakeholdersRes.data?.data || stakeholdersRes.data || [];
+      const stakeholders = stakeholdersRes.data?.data?.stakeholders || stakeholdersRes.data?.stakeholders || [];
       
+      console.log(`✅ [Initial Sync] Received ${stakeholders.length} stakeholders from backend.`);
       dispatch(updateInitialSyncProgress({ progress: 40, message: 'Saving Stakeholders to database...' }));
       if (Array.isArray(stakeholders) && stakeholders.length > 0) {
+        console.log(`💾 [Initial Sync] Saving ${stakeholders.length} stakeholders into SQLite database...`);
         await stakeholderDao.upsertMany(stakeholders);
+        console.log('✅ [Initial Sync] Stakeholders saved to SQLite successfully.');
       }
 
       // Step 2: Download Facilities (Police Stations, Healthcare Centers)
+      console.log('🔄 [Initial Sync] Fetching facilities from backend...');
       dispatch(updateInitialSyncProgress({ progress: 60, message: 'Downloading Facilities...' }));
       const facilitiesRes = await facilityService.syncOffline();
       const facilities = facilitiesRes.data?.data || facilitiesRes.data || [];
       
+      console.log(`✅ [Initial Sync] Received ${facilities.length} facilities from backend.`);
       dispatch(updateInitialSyncProgress({ progress: 80, message: 'Saving Facilities to database...' }));
       if (Array.isArray(facilities) && facilities.length > 0) {
+        console.log(`💾 [Initial Sync] Saving ${facilities.length} facilities into SQLite database...`);
         await facilityDao.upsertMany(facilities);
+        console.log('✅ [Initial Sync] Facilities saved to SQLite successfully.');
       }
 
       // Step 3: Complete
+      console.log('🎉 [Initial Sync] All data downloaded and saved to SQLite! Sync complete.');
       dispatch(updateInitialSyncProgress({ progress: 100, message: 'Finalizing setup...' }));
       await appStateDao.set('initial_sync_done', 'true');
       dispatch(initialSyncComplete());
 
     } catch (error: any) {
-      console.error('Initial Sync Failed:', error);
+      console.error('❌ [Initial Sync] Failed:', error);
       dispatch(initialSyncFailed(error.message || 'Failed to download necessary data. Please try again.'));
     }
   }

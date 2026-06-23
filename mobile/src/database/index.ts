@@ -195,6 +195,8 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
 export const stakeholderDao = {
   async upsertMany(stakeholders: any[]): Promise<void> {
     const database = await getDB();
+    const total = stakeholders.length;
+    let count = 0;
     for (const s of stakeholders) {
       await database.executeSql(
         `INSERT OR REPLACE INTO stakeholders (id, primary_key_id, uin, data_source, cin_number,
@@ -204,7 +206,7 @@ export const stakeholderDao = {
           company_category, authorized_capital, paidup_capital, listing_status, registration_date,
           fuzzy_similarity_score, cross_source_match, human_review_required, dedup_match_status,
           source_lineage_notes, status, locked_by_id, locked_at, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [s.id, s.primaryKeyId, s.uin, s.dataSource, s.cinNumber,
          s.gstNumber, s.tinNumber, s.companyNameStandardized, s.companyNameOriginal,
          s.fullAddressRaw, s.addressLine1, s.addressLine2, s.city, s.taluka, s.village, s.district, s.state, s.pinCode,
@@ -213,6 +215,12 @@ export const stakeholderDao = {
          s.fuzzySimilarityScore, s.crossSourceMatch, s.humanReviewRequired, s.dedupMatchStatus,
          s.sourceLineageNotes, s.status, s.lockedById, s.lockedAt, s.updatedAt]
       );
+      count++;
+      // Log progress every 50 records or on the very last record
+      if (count % 50 === 0 || count === total) {
+        const percent = Math.round((count / total) * 100);
+        console.log(`⏳ [SQLite Stakeholders] Inserted ${count} / ${total} (${percent}%)`);
+      }
     }
   },
 
@@ -340,18 +348,22 @@ export const stakeholderDao = {
     for (let i = 0; i < results.rows.length; i++) {
       rows.push(results.rows.item(i).pin_code);
     }
-    return results;
+    return rows;
   },
 };
 
 export async function clearAllData(): Promise<void> {
   if (!db) return;
+  console.log('🚨 [Security] Commencing total database wipe...');
   await db.executeSql('DELETE FROM stakeholders');
+  console.log('🗑️ [Security] Deleted all stakeholders.');
   await db.executeSql('DELETE FROM surveys');
+  console.log('🗑️ [Security] Deleted all surveys.');
   await db.executeSql('DELETE FROM sync_queue');
   await db.executeSql('DELETE FROM app_state');
   await db.executeSql('DELETE FROM media');
   await db.executeSql('DELETE FROM facilities');
+  console.log('✅ [Security] All local data has been successfully purged from the device.');
 }
 
 // ============================================================================
