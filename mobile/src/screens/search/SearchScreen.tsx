@@ -132,30 +132,14 @@ export default function SearchScreen({ navigation }: any) {
     dispatch(setSearching(true));
 
     try {
-      const netState = await NetInfo.fetch();
-      const isOnline = netState.isConnected;
+      // Offline-First Architecture: Always read from SQLite
+      const results = await stakeholderDao.search(activeFilters, page);
+      const fakePageInfo = { page, total: results.length, hasMore: results.length === 20 };
 
-      if (isOnline) {
-        const params: Record<string, any> = { page, limit: 20 };
-        Object.entries(activeFilters).forEach(([k, v]) => { if (v) params[k] = v; });
-
-        const res = await stakeholderService.search(params);
-        const { stakeholders, pagination } = res.data.data;
-
-        if (page === 1) {
-          dispatch(setSearchResults({ stakeholders, pagination }));
-        } else {
-          dispatch(appendSearchResults({ stakeholders, pagination }));
-        }
+      if (page === 1) {
+        dispatch(setSearchResults({ stakeholders: results, pagination: fakePageInfo }));
       } else {
-        const results = await stakeholderDao.search(activeFilters, page);
-        const fakePageInfo = { page, total: results.length, hasMore: results.length === 20 };
-
-        if (page === 1) {
-          dispatch(setSearchResults({ stakeholders: results, pagination: fakePageInfo }));
-        } else {
-          dispatch(appendSearchResults({ stakeholders: results, pagination: fakePageInfo }));
-        }
+        dispatch(appendSearchResults({ stakeholders: results, pagination: fakePageInfo }));
       }
     } catch (e) {
       console.error('Search error:', e);
@@ -254,6 +238,7 @@ export default function SearchScreen({ navigation }: any) {
           removeClippedSubviews={true}
           maxToRenderPerBatch={10}
           windowSize={5}
+          initialNumToRender={10}
           getItemLayout={(data, index) => (
             {length: moderateScale(120), offset: moderateScale(120) * index, index}
           )}
