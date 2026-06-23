@@ -340,9 +340,19 @@ export const stakeholderDao = {
     for (let i = 0; i < results.rows.length; i++) {
       rows.push(results.rows.item(i).pin_code);
     }
-    return rows;
+    return results;
   },
 };
+
+export async function clearAllData(): Promise<void> {
+  if (!db) return;
+  await db.executeSql('DELETE FROM stakeholders');
+  await db.executeSql('DELETE FROM surveys');
+  await db.executeSql('DELETE FROM sync_queue');
+  await db.executeSql('DELETE FROM app_state');
+  await db.executeSql('DELETE FROM media');
+  await db.executeSql('DELETE FROM facilities');
+}
 
 // ============================================================================
 // SURVEY DAO

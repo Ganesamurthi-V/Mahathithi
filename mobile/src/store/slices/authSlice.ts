@@ -60,6 +60,10 @@ export const logout = createAsyncThunk('auth/logout', async () => {
   await EncryptedStorage.removeItem('access_token');
   await EncryptedStorage.removeItem('refresh_token');
   await EncryptedStorage.removeItem('user_data');
+  
+  // Wipe all local SQLite data on logout
+  const { clearAllData } = require('../../database');
+  await clearAllData();
 });
 
 const authSlice = createSlice({

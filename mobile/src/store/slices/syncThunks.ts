@@ -4,10 +4,63 @@ import { Alert } from 'react-native';
 import { RootState } from '../index';
 import {
   startSync, syncComplete, syncFailed, updateSyncProgress,
-  setPendingCount, setFailedCount
+  setPendingCount, setFailedCount,
+  startInitialSync, updateInitialSyncProgress, initialSyncComplete, initialSyncFailed
 } from './syncSlice';
 import { syncService, mediaService, surveyService, stakeholderService, facilityService } from '../../services/api';
 import { surveyDao, syncQueueDao, stakeholderDao, appStateDao, mediaDao, facilityDao } from '../../database';
+
+export const runInitialSync = createAsyncThunk(
+  'sync/runInitialSync',
+  async (_, { dispatch, getState }) => {
+    const state = getState() as RootState;
+    if (state.sync.isInitialSyncing) return;
+
+    // Check if initial sync is already done
+    const isDone = await appStateDao.get('initial_sync_done');
+    if (isDone === 'true') {
+      return;
+    }
+
+    try {
+      dispatch(startInitialSync());
+
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) {
+        throw new Error('No internet connection. Please connect to the internet to perform the initial setup.');
+      }
+
+      // Step 1: Download Stakeholders
+      dispatch(updateInitialSyncProgress({ progress: 10, message: 'Downloading Stakeholders...' }));
+      const stakeholdersRes = await stakeholderService.getAssigned();
+      const stakeholders = stakeholdersRes.data?.data || stakeholdersRes.data || [];
+      
+      dispatch(updateInitialSyncProgress({ progress: 40, message: 'Saving Stakeholders to database...' }));
+      if (Array.isArray(stakeholders) && stakeholders.length > 0) {
+        await stakeholderDao.upsertMany(stakeholders);
+      }
+
+      // Step 2: Download Facilities (Police Stations, Healthcare Centers)
+      dispatch(updateInitialSyncProgress({ progress: 60, message: 'Downloading Facilities...' }));
+      const facilitiesRes = await facilityService.syncOffline();
+      const facilities = facilitiesRes.data?.data || facilitiesRes.data || [];
+      
+      dispatch(updateInitialSyncProgress({ progress: 80, message: 'Saving Facilities to database...' }));
+      if (Array.isArray(facilities) && facilities.length > 0) {
+        await facilityDao.upsertMany(facilities);
+      }
+
+      // Step 3: Complete
+      dispatch(updateInitialSyncProgress({ progress: 100, message: 'Finalizing setup...' }));
+      await appStateDao.set('initial_sync_done', 'true');
+      dispatch(initialSyncComplete());
+
+    } catch (error: any) {
+      console.error('Initial Sync Failed:', error);
+      dispatch(initialSyncFailed(error.message || 'Failed to download necessary data. Please try again.'));
+    }
+  }
+);
 
 export const runAutoSync = createAsyncThunk(
   'sync/runAutoSync',
