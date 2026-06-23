@@ -471,8 +471,13 @@ export const facilityDao = {
     // Execute all queries sequentially using db.executeSql directly to avoid transaction promise bugs
     if (queries.length > 0) {
       try {
+        let inserted = 0;
         for (let i = 0; i < queries.length; i++) {
           await db.executeSql(queries[i][0], queries[i][1]);
+          // Calculate how many items were in this batch (7 parameters per facility)
+          inserted += (queries[i][1].length / 7);
+          const percent = Math.round((inserted / facilities.length) * 100);
+          console.log(`⏳ [SQLite Facilities] Inserted ${inserted} / ${facilities.length} (${percent}%)`);
         }
       } catch (error) {
         console.error('Batch insert failed:', error);

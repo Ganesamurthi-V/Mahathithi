@@ -111,31 +111,30 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
 
   const loadData = async () => {
     try {
-      // First try local DB
+      // Offline-First Architecture: Always read stakeholder from SQLite
       let shLocal = await stakeholderDao.getById(stakeholderId);
+      setStakeholder(shLocal);
       
-      // Then fetch from network to get latest (if online)
-      const [shRes, svRes] = await Promise.all([
-        stakeholderService.getById(stakeholderId).catch(() => ({ data: { data: shLocal } })),
-        surveyService.getByStakeholder(stakeholderId).catch(() => ({ data: { data: null } })),
-      ]);
+      // Still fetch Survey History from network if online
+      try {
+        const svRes = await surveyService.getByStakeholder(stakeholderId);
+        setSurvey(svRes.data?.data);
+      } catch (e) {
+        setSurvey(null); // Offline or no survey
+      }
       
-      const loadedStakeholder = shRes.data?.data || shLocal;
-      setStakeholder(loadedStakeholder);
-      setSurvey(svRes.data?.data);
-      
-      if (loadedStakeholder) {
+      if (shLocal) {
         setEditData({
-          companyNameStandardized: loadedStakeholder.companyNameStandardized || '',
-          addressLine1: loadedStakeholder.addressLine1 || '',
-          addressLine2: loadedStakeholder.addressLine2 || '',
-          city: loadedStakeholder.city || '',
-          taluka: loadedStakeholder.taluka || '',
-          village: loadedStakeholder.village || '',
-          district: loadedStakeholder.district || '',
-          state: loadedStakeholder.state || '',
-          pinCode: loadedStakeholder.pinCode || '',
-          category: loadedStakeholder.category || '',
+          companyNameStandardized: shLocal.companyNameStandardized || '',
+          addressLine1: shLocal.addressLine1 || '',
+          addressLine2: shLocal.addressLine2 || '',
+          city: shLocal.city || '',
+          taluka: shLocal.taluka || '',
+          village: shLocal.village || '',
+          district: shLocal.district || '',
+          state: shLocal.state || '',
+          pinCode: shLocal.pinCode || '',
+          category: shLocal.category || '',
         });
       }
     } catch (e: any) {

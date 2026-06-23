@@ -107,22 +107,7 @@ export default function StakeholderListScreen({ navigation }: any) {
     if (p === 1) setInitialLoading(true);
     setLoading(true);
     try {
-      const netState = await NetInfo.fetch();
-      
-      if (netState.isConnected) {
-        const res = await stakeholderService.search({ page: p, limit: 20 });
-        const data = res.data.data;
-        if (p === 1) {
-          setStakeholders(data.stakeholders);
-        } else {
-          setStakeholders(prev => [...prev, ...data.stakeholders]);
-        }
-        setHasMore(data.pagination.hasMore);
-      } else {
-        throw new Error('Offline'); // Trigger catch block to load from SQLite
-      }
-    } catch (e) {
-      // Fallback to local SQLite database when offline or API fails
+      // Offline-First Architecture: Always read from SQLite
       const localData = await stakeholderDao.search({}, p);
       if (p === 1) {
         setStakeholders(localData);
@@ -130,6 +115,8 @@ export default function StakeholderListScreen({ navigation }: any) {
         setStakeholders(prev => [...prev, ...localData]);
       }
       setHasMore(localData.length === 20);
+    } catch (e) {
+      console.error('Failed to load stakeholders from SQLite:', e);
     } finally {
       setPage(p);
       setLoading(false);
@@ -179,6 +166,10 @@ export default function StakeholderListScreen({ navigation }: any) {
             removeClippedSubviews={true}
             maxToRenderPerBatch={10}
             windowSize={5}
+            initialNumToRender={10}
+            getItemLayout={(data, index) => (
+              { length: 120, offset: 120 * index, index }
+            )}
           />
         )}
       </View>
