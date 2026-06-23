@@ -8,25 +8,11 @@ export const syncOfflineFacilities = async (req: AuthenticatedRequest, res: Resp
     const enumeratorId = req.enumerator?.id;
     if (!enumeratorId) throw new UnauthorizedError('Unauthorized');
 
-    // Fetch enumerator's assigned districts
-    const assignedDistricts = await prisma.enumeratorDistrict.findMany({
-      where: { enumeratorId },
-      include: { district: true }
-    });
-    const districtNames = assignedDistricts.map(ad => ad.district.name);
+    // We are no longer filtering facilities by assigned district.
+    // Fetch all facilities across the entire database for all users.
 
-    if (districtNames.length === 0) {
-      return res.json({ status: 'success', data: [] });
-    }
-
-    // Fetch only facilities for the assigned districts with specific fields
+    // Fetch all facilities across all districts as requested
     const facilities = await prisma.facility.findMany({
-      where: {
-        district: {
-          in: districtNames,
-          mode: 'insensitive'
-        }
-      },
       select: {
         id: true,
         name: true,
