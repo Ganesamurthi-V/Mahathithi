@@ -446,37 +446,30 @@ export const facilityDao = {
       queries.push([query, params]);
     }
     
-    // Execute all queries in a single atomic transaction safely using callbacks
+    // Execute all queries sequentially using db.executeSql directly to avoid transaction promise bugs
     if (queries.length > 0) {
-      await new Promise<void>((resolve, reject) => {
-        db.transaction(
-          (tx) => {
-            for (let i = 0; i < queries.length; i++) {
-              tx.executeSql(queries[i][0], queries[i][1]);
-            }
-          },
-          (error) => {
-            console.error('Batch insert failed:', error);
-            reject(error);
-          },
-          () => resolve()
-        );
-      });
+      try {
+        for (let i = 0; i < queries.length; i++) {
+          await db.executeSql(queries[i][0], queries[i][1]);
+        }
+      } catch (error) {
+        console.error('Batch insert failed:', error);
+        throw error;
+      }
     }
   },
   async getNearest(lat: number, lng: number, type: string): Promise<any> {
     const db = await getDB();
-    // Use bounding box approximation for fast sqlite filtering if needed, 
-    // but since we only sync enumerator districts, the table is small.
-    // Using simple Pythagorean distance for initial sort, will refine in JS if needed.
+    // Relax the type matching in case backend uses "Police Station" vs "POLICE_STATION"
+    const searchType = type.replace('_STATION', '').replace('_CENTER', '').trim();
     const [results] = await db.executeSql(
       `SELECT *, 
         ((latitude - ?) * (latitude - ?) + (longitude - ?) * (longitude - ?)) as distanceSq
        FROM facilities 
-       WHERE type = ?
+       WHERE type LIKE ? COLLATE NOCASE
        ORDER BY distanceSq ASC 
        LIMIT 10`,
-      [lat, lat, lng, lng, type]
+      [lat, lat, lng, lng, `%${searchType}%`]
     );
     const rows = [];
     for (let i = 0; i < results.rows.length; i++) {

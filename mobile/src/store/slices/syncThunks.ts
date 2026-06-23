@@ -140,20 +140,31 @@ export const runAutoSync = createAsyncThunk(
 
       // Step 2: Get changes from server
       const lastSync = await appStateDao.get('last_sync_time');
-      const changes = await syncService.getChanges(lastSync || undefined);
+      try {
+        const changes = await syncService.getChanges(lastSync || undefined);
 
-      dispatch(updateSyncProgress(85));
+        dispatch(updateSyncProgress(85));
 
-      // Step 3: Remove locked stakeholders from local DB
-      if (changes.data.data.lockedStakeholderIds?.length > 0) {
-        await stakeholderDao.removeLockedStakeholders(changes.data.data.lockedStakeholderIds);
+        // Step 3: Remove locked stakeholders from local DB
+        const lockedIds = changes.data?.data?.lockedStakeholderIds || changes.data?.lockedStakeholderIds || [];
+        if (Array.isArray(lockedIds) && lockedIds.length > 0) {
+          await stakeholderDao.removeLockedStakeholders(lockedIds);
+        }
+      } catch (err: any) {
+        console.warn('Failed to get changes from server (Step 2/3):', err.message);
       }
 
       // Step 3.5: Sync Facilities
       try {
         const facilityRes = await facilityService.syncOffline();
-        if (facilityRes.data?.data && facilityRes.data.data.length > 0) {
-          await facilityDao.upsertMany(facilityRes.data.data);
+        let facilitiesList = facilityRes.data?.data || facilityRes.data;
+        if (facilitiesList && typeof facilitiesList === 'object' && !Array.isArray(facilitiesList)) {
+           facilitiesList = facilitiesList.facilities || facilitiesList.list || facilitiesList.data || [];
+        }
+        if (Array.isArray(facilitiesList) && facilitiesList.length > 0) {
+          await facilityDao.upsertMany(facilitiesList);
+        } else {
+          console.warn('Facilities sync returned empty or unparseable data:', facilitiesList);
         }
       } catch (err) {
         console.warn('Failed to sync facilities:', err);
