@@ -6,6 +6,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { stakeholderService } from '../../services/api';
+import { stakeholderDao } from '../../database';
+import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -105,18 +107,31 @@ export default function StakeholderListScreen({ navigation }: any) {
     if (p === 1) setInitialLoading(true);
     setLoading(true);
     try {
-      const res = await stakeholderService.search({ page: p, limit: 20 });
-      const data = res.data.data;
-      if (p === 1) {
-        setStakeholders(data.stakeholders);
+      const netState = await NetInfo.fetch();
+      
+      if (netState.isConnected) {
+        const res = await stakeholderService.search({ page: p, limit: 20 });
+        const data = res.data.data;
+        if (p === 1) {
+          setStakeholders(data.stakeholders);
+        } else {
+          setStakeholders(prev => [...prev, ...data.stakeholders]);
+        }
+        setHasMore(data.pagination.hasMore);
       } else {
-        setStakeholders(prev => [...prev, ...data.stakeholders]);
+        throw new Error('Offline'); // Trigger catch block to load from SQLite
       }
-      setHasMore(data.pagination.hasMore);
-      setPage(p);
     } catch (e) {
-      console.error(e);
+      // Fallback to local SQLite database when offline or API fails
+      const localData = await stakeholderDao.search({}, p);
+      if (p === 1) {
+        setStakeholders(localData);
+      } else {
+        setStakeholders(prev => [...prev, ...localData]);
+      }
+      setHasMore(localData.length === 20);
     } finally {
+      setPage(p);
       setLoading(false);
       setInitialLoading(false);
     }

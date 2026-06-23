@@ -7,6 +7,12 @@ interface SyncState {
   failedCount: number;
   syncProgress: number;
   syncErrors: string[];
+  
+  // Initial Sync State
+  isInitialSyncing: boolean;
+  initialSyncProgress: number;
+  initialSyncMessage: string;
+  initialSyncError: string | null;
 }
 
 const initialState: SyncState = {
@@ -16,6 +22,11 @@ const initialState: SyncState = {
   failedCount: 0,
   syncProgress: 0,
   syncErrors: [],
+  
+  isInitialSyncing: false,
+  initialSyncProgress: 0,
+  initialSyncMessage: '',
+  initialSyncError: null,
 };
 
 const syncSlice = createSlice({
@@ -35,11 +46,33 @@ const syncSlice = createSlice({
     },
     setPendingCount: (state, action: PayloadAction<number>) => { state.pendingCount = action.payload; },
     setFailedCount: (state, action: PayloadAction<number>) => { state.failedCount = action.payload; },
+    
+    // Initial Sync Reducers
+    startInitialSync: (state) => {
+      state.isInitialSyncing = true;
+      state.initialSyncProgress = 0;
+      state.initialSyncMessage = 'Starting download...';
+      state.initialSyncError = null;
+    },
+    updateInitialSyncProgress: (state, action: PayloadAction<{ progress: number, message: string }>) => {
+      state.initialSyncProgress = action.payload.progress;
+      state.initialSyncMessage = action.payload.message;
+    },
+    initialSyncComplete: (state) => {
+      state.isInitialSyncing = false;
+      state.initialSyncProgress = 100;
+      state.initialSyncMessage = 'Complete!';
+    },
+    initialSyncFailed: (state, action: PayloadAction<string>) => {
+      // Intentionally NOT setting isInitialSyncing to false here so the modal stays open with the error and retry button
+      state.initialSyncError = action.payload;
+    },
   },
 });
 
 export const {
   startSync, updateSyncProgress, syncComplete, syncFailed,
   setPendingCount, setFailedCount,
+  startInitialSync, updateInitialSyncProgress, initialSyncComplete, initialSyncFailed
 } = syncSlice.actions;
 export default syncSlice.reducer;

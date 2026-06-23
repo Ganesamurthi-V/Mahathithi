@@ -97,6 +97,9 @@ function MainTabs() {
   );
 }
 
+import InitialSyncModal from '../screens/sync/InitialSyncModal';
+import { runInitialSync } from '../store/slices/syncThunks';
+
 export function AppNavigator() {
   const dispatch = useDispatch<AppDispatch>();
   const { isAuthenticated, isLoading } = useSelector((state: RootState) => state.auth);
@@ -105,10 +108,13 @@ export function AppNavigator() {
     dispatch(checkSession());
   }, [dispatch]);
 
-  // Global Auto-Sync Listener
+  // Global Auto-Sync Listener & Initial Sync Trigger
   useEffect(() => {
     if (!isAuthenticated) return;
     
+    // Trigger initial sync check upon login/auth
+    dispatch(runInitialSync() as any);
+
     const unsubscribe = NetInfo.addEventListener((state) => {
       if (state.isConnected) {
         dispatch(runAutoSync() as any);
@@ -149,6 +155,16 @@ export function AppNavigator() {
         </>
       )}
     </Stack.Navigator>
+  );
+}
+
+// Add the modal wrapper component to inject it globally
+export function RootNavigator() {
+  return (
+    <>
+      <AppNavigator />
+      <InitialSyncModal />
+    </>
   );
 }
 
