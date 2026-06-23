@@ -132,6 +132,20 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
       data: { isActive: false },
     });
 
+    // Delete all active sessions to force logout on their mobile app
+    await prisma.session.deleteMany({ where: { enumeratorId } });
+    
+    // Unlock any stakeholders they have locked so other enumerators can work on them
+    await prisma.stakeholder.updateMany({
+      where: { lockedById: enumeratorId },
+      data: { lockedById: null, lockedAt: null }
+    });
+
+    // Remove their assigned districts so they don't show up in metrics
+    await prisma.enumeratorDistrict.deleteMany({
+      where: { enumeratorId }
+    });
+
     await prisma.auditLog.create({
       data: {
         action: 'enumerator_deleted',

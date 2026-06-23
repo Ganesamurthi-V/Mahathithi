@@ -46,6 +46,10 @@ api.interceptors.response.use(
         await EncryptedStorage.removeItem('access_token');
         await EncryptedStorage.removeItem('refresh_token');
         await EncryptedStorage.removeItem('user_data');
+        
+        // Wipe all local SQLite data to lock them out completely
+        const { clearAllData } = require('../database');
+        await clearAllData();
       }
     }
     return Promise.reject(error);
