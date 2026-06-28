@@ -456,11 +456,24 @@ export const surveyDao = {
     const database = await getDB();
     await database.executeSql('UPDATE surveys SET is_synced = 1 WHERE id = ?', [id]);
   },
-};
 
-// ============================================================================
-// MEDIA DAO
-// ============================================================================
+  // Scenario E FIX: mark survey as locally completed after server complete() succeeds
+  async markCompleted(id: string): Promise<void> {
+    const database = await getDB();
+    await database.executeSql('UPDATE surveys SET is_completed = 1 WHERE id = ?', [id]);
+  },
+
+  // Scenario E FIX: find surveys fully synced but whose complete() never got through
+  async getPendingCompletion(): Promise<any[]> {
+    const database = await getDB();
+    const [results] = await database.executeSql(
+      'SELECT * FROM surveys WHERE is_synced = 1 AND is_completed = 0'
+    );
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) rows.push(results.rows.item(i));
+    return rows;
+  },
+};
 
 export const mediaDao = {
   async save(media: any): Promise<void> {

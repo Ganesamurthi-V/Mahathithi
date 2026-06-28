@@ -109,6 +109,35 @@ export const runAutoSync = createAsyncThunk(
       let processedCount = 0;
       const total = surveyIdsToProcess.size;
 
+      // === Scenario E FIX: Retry complete() for surveys whose connection dropped after all media was uploaded ===
+      // These are surveys where is_synced=1 AND is_completed=0 — everything made it to the server
+      // except the final complete() call. Without this, the stakeholder stays OPEN on the server forever.
+      const pendingCompletions = await surveyDao.getPendingCompletion();
+      if (pendingCompletions.length > 0) {
+        console.log(`🔄 [Sync] Found ${pendingCompletions.length} stranded completions (Scenario E). Retrying...`);
+      }
+      for (const survey of pendingCompletions) {
+        try {
+          // Resolve the real server survey ID from stakeholder
+          let serverSurveyId = survey.id;
+          if (survey.stakeholder_id) {
+            try {
+              const svRes = await surveyService.getByStakeholder(survey.stakeholder_id);
+              if (svRes.data?.data?.id) serverSurveyId = svRes.data.data.id;
+            } catch { /* use local id as fallback */ }
+          }
+          await surveyService.complete(serverSurveyId);
+          await surveyDao.markCompleted(survey.id);
+          if (survey.stakeholder_id) {
+            await stakeholderDao.removeLockedStakeholders([survey.stakeholder_id]);
+          }
+          console.log(`✅ [Sync] Retried complete() for stranded survey ${survey.id}`);
+        } catch (err: any) {
+          console.warn(`[Sync] Stranded complete() retry failed for ${survey.id}:`, err.message);
+          // Will retry on next sync run — survey remains is_completed=0
+        }
+      }
+
       // === Generic Sync Queue Pipeline ===
       const pendingSyncItems = await syncQueueDao.getPending();
       for (const item of pendingSyncItems) {
@@ -224,6 +253,8 @@ export const runAutoSync = createAsyncThunk(
           // Step D: Complete Survey
           console.log(`🏁 [Sync] Calling complete() on server for survey ${serverSurveyId}`);
           await surveyService.complete(serverSurveyId);
+          // Scenario E FIX: mark locally completed so a future sync doesn't lose this
+          await surveyDao.markCompleted(localSurveyId);
           console.log(`✅ Fully synced survey ${localSurveyId}`);
           
           // Remove from local database immediately after successful sync
