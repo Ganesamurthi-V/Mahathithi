@@ -189,11 +189,26 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
 }
 
 // ============================================================================
+// HELPER: Convert snake_case SQLite rows to camelCase for UI
+// ============================================================================
+function snakeToCamel(str: string): string {
+  return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+}
+
+function mapRowToCamel(row: any): any {
+  const mapped: any = {};
+  for (const key of Object.keys(row)) {
+    mapped[snakeToCamel(key)] = row[key];
+  }
+  return mapped;
+}
+
+// ============================================================================
 // STAKEHOLDER DAO
 // ============================================================================
 
 export const stakeholderDao = {
-  async upsertMany(stakeholders: any[]): Promise<void> {
+  async upsertMany(stakeholders: any[], onProgress?: (inserted: number, total: number, percent: number) => void): Promise<void> {
     const database = await getDB();
     const total = stakeholders.length;
     let count = 0;
@@ -207,19 +222,21 @@ export const stakeholderDao = {
           fuzzy_similarity_score, cross_source_match, human_review_required, dedup_match_status,
           source_lineage_notes, status, locked_by_id, locked_at, updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [s.id, s.primaryKeyId, s.uin, s.dataSource, s.cinNumber,
-         s.gstNumber, s.tinNumber, s.companyNameStandardized, s.companyNameOriginal,
-         s.fullAddressRaw, s.addressLine1, s.addressLine2, s.city, s.taluka, s.village, s.district, s.state, s.pinCode,
-         s.nicCode, s.nicDescription, s.category, s.priorityWeight, s.companyClass, s.companyStatus,
-         s.companyCategory, s.authorizedCapital, s.paidupCapital, s.listingStatus, s.registrationDate,
-         s.fuzzySimilarityScore, s.crossSourceMatch, s.humanReviewRequired, s.dedupMatchStatus,
-         s.sourceLineageNotes, s.status, s.lockedById, s.lockedAt, s.updatedAt]
+        [
+          s.id, s.primaryKeyId, s.uin, s.dataSource, s.cinNumber, s.gstNumber, s.tinNumber,
+          s.companyNameStandardized, s.companyNameOriginal, s.fullAddressRaw, s.addressLine1,
+          s.addressLine2, s.city, s.taluka, s.village, s.district, s.state, s.pinCode, s.nicCode,
+          s.nicDescription, s.category, s.priorityWeight, s.companyClass, s.companyStatus,
+          s.companyCategory, s.authorizedCapital, s.paidupCapital, s.listingStatus,
+          s.registrationDate, s.fuzzySimilarityScore, s.crossSourceMatch, s.humanReviewRequired,
+          s.dedupMatchStatus, s.sourceLineageNotes, s.status, s.lockedById, s.lockedAt, s.updatedAt
+        ]
       );
       count++;
-      // Log progress every 50 records or on the very last record
-      if (count % 50 === 0 || count === total) {
+      if (count % 10 === 0 || count === total) {
         const percent = Math.round((count / total) * 100);
         console.log(`⏳ [SQLite Stakeholders] Inserted ${count} / ${total} (${percent}%)`);
+        if (onProgress) onProgress(count, total, percent);
       }
     }
   },
@@ -280,7 +297,7 @@ export const stakeholderDao = {
 
     const rows = [];
     for (let i = 0; i < results.rows.length; i++) {
-      rows.push(results.rows.item(i));
+      rows.push(mapRowToCamel(results.rows.item(i)));
     }
     return rows;
   },
@@ -288,7 +305,7 @@ export const stakeholderDao = {
   async getById(id: string): Promise<any> {
     const database = await getDB();
     const [results] = await database.executeSql('SELECT * FROM stakeholders WHERE id = ?', [id]);
-    return results.rows.length > 0 ? results.rows.item(0) : null;
+    return results.rows.length > 0 ? mapRowToCamel(results.rows.item(0)) : null;
   },
 
   async update(id: string, updates: Record<string, any>): Promise<void> {
@@ -449,7 +466,7 @@ export const mediaDao = {
 // FACILITY DAO
 // ============================================================================
 export const facilityDao = {
-  async upsertMany(facilities: any[]): Promise<void> {
+  async upsertMany(facilities: any[], onProgress?: (inserted: number, total: number, percent: number) => void): Promise<void> {
     const db = await getDB();
     const batchSize = 100;
     const queries: any[] = [];
@@ -478,6 +495,7 @@ export const facilityDao = {
           inserted += (queries[i][1].length / 7);
           const percent = Math.round((inserted / facilities.length) * 100);
           console.log(`⏳ [SQLite Facilities] Inserted ${inserted} / ${facilities.length} (${percent}%)`);
+          if (onProgress) onProgress(inserted, facilities.length, percent);
         }
       } catch (error) {
         console.error('Batch insert failed:', error);

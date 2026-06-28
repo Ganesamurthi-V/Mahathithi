@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Animated, LayoutAnimation, UIManager, Platform, Modal, TextInput } from 'react-native';
 import { stakeholderService, surveyService } from '../../services/api';
-import { stakeholderDao, syncQueueDao } from '../../database';
+import { stakeholderDao, syncQueueDao, surveyDao } from '../../database';
+import NetInfo from '@react-native-community/netinfo';
 import { useDispatch } from 'react-redux';
 import { runAutoSync } from '../../store/slices/syncThunks';
 import { AppDispatch } from '../../store';
@@ -115,12 +116,23 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
       let shLocal = await stakeholderDao.getById(stakeholderId);
       setStakeholder(shLocal);
       
-      // Still fetch Survey History from network if online
+      // Offline-First: Load survey from local SQLite first
+      const localSurvey = await surveyDao.getByStakeholder(stakeholderId);
+      if (localSurvey) {
+        setSurvey(mapSurveyCamel(localSurvey));
+      }
+
+      // Background refresh: If online, silently check server for updated survey data
       try {
-        const svRes = await surveyService.getByStakeholder(stakeholderId);
-        setSurvey(svRes.data?.data);
+        const netState = await NetInfo.fetch();
+        if (netState.isConnected) {
+          const svRes = await surveyService.getByStakeholder(stakeholderId);
+          if (svRes.data?.data) {
+            setSurvey(svRes.data.data);
+          }
+        }
       } catch (e) {
-        setSurvey(null); // Offline or no survey
+        // Silently ignore — we already have local data
       }
       
       if (shLocal) {
@@ -141,6 +153,23 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
       Alert.alert('Error', e.response?.data?.error?.message || 'Failed to load stakeholder');
     }
     setLoading(false);
+  };
+
+  // Helper to convert snake_case survey row to camelCase
+  const mapSurveyCamel = (row: any) => {
+    if (!row) return null;
+    return {
+      contactPerson: row.contact_person ?? row.contactPerson,
+      designation: row.designation,
+      mobileNumber: row.mobile_number ?? row.mobileNumber,
+      email: row.email,
+      website: row.website,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      gpsAccuracy: row.gps_accuracy ?? row.gpsAccuracy,
+      nearestPoliceStation: row.nearest_police_station ?? row.nearestPoliceStation,
+      nearestHealthcareCenter: row.nearest_healthcare_center ?? row.nearestHealthcareCenter,
+    };
   };
 
   const handleSaveEdit = async () => {

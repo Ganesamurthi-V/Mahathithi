@@ -53,7 +53,7 @@ export default function InitialSyncModal() {
 
           {!initialSyncError && (
             <Text style={styles.warningText}>
-              Please do not close the app. This might take a minute.
+              Please do not close the app. This might take 3-5 minutes.
             </Text>
           )}
         </View>

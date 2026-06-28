@@ -483,7 +483,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
     setSaving(true);
     setUploadText('Saving survey data...');
-    const surveyId = existingSurvey?.id || `draft_${stakeholderId}`;
+    const surveyId = existingSurvey?.id || `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const surveyPayload = {
       id: surveyId,
       stakeholderId,
@@ -495,75 +495,82 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     };
 
     try {
+      // Step 1: ALWAYS save to local SQLite first (offline-first)
+      await surveyDao.save(surveyPayload);
+      await saveMediaToDb(surveyId);
+      console.log('💾 [Survey] Saved locally to SQLite.');
+
+      // Step 2: Try to sync to server if online
       const netState = await NetInfo.fetch();
       if (netState.isConnected) {
-        const response = await surveyService.createOrUpdate(surveyPayload);
-        const realSurveyId = response.data?.data?.id || surveyId;
-        await saveMediaToDb(realSurveyId);
+        try {
+          setUploadText('Uploading to server...');
+          const response = await surveyService.createOrUpdate(surveyPayload);
+          const realSurveyId = response.data?.data?.id || surveyId;
 
-        // Upload media sequentially
-        let uploadCount = 0;
-        const totalMedia = Object.keys(photos).length + (video ? 1 : 0);
+          // Upload media sequentially
+          let uploadCount = 0;
+          const totalMedia = Object.keys(photos).length + (video ? 1 : 0);
 
-        for (const key in photos) {
-          uploadCount++;
-          setUploadText(`Uploading Photo ${uploadCount}/${totalMedia}...`);
-          const p = photos[key];
-          const formData = new FormData();
-          formData.append('surveyId', realSurveyId);
-          formData.append('type', 'PHOTO');
-          formData.append('photoCategory', key);
-          if (p.latitude) formData.append('latitude', String(p.latitude));
-          if (p.longitude) formData.append('longitude', String(p.longitude));
-          if (p.gpsAccuracy) formData.append('gpsAccuracy', String(p.gpsAccuracy));
-          formData.append('file', {
-            uri: p.uri,
-            name: p.fileName,
-            type: p.type,
-          } as any);
-          await mediaService.upload(formData);
+          for (const key in photos) {
+            uploadCount++;
+            setUploadText(`Uploading Photo ${uploadCount}/${totalMedia}...`);
+            const p = photos[key];
+            const formData = new FormData();
+            formData.append('surveyId', realSurveyId);
+            formData.append('type', 'PHOTO');
+            formData.append('photoCategory', key);
+            if (p.latitude) formData.append('latitude', String(p.latitude));
+            if (p.longitude) formData.append('longitude', String(p.longitude));
+            if (p.gpsAccuracy) formData.append('gpsAccuracy', String(p.gpsAccuracy));
+            formData.append('file', {
+              uri: p.uri,
+              name: p.fileName,
+              type: p.type,
+            } as any);
+            await mediaService.upload(formData);
+          }
+
+          if (video) {
+            uploadCount++;
+            setUploadText(`Uploading Video ${uploadCount}/${totalMedia}...`);
+            const formData = new FormData();
+            formData.append('surveyId', realSurveyId);
+            formData.append('type', 'VIDEO');
+            if (video.latitude) formData.append('latitude', String(video.latitude));
+            if (video.longitude) formData.append('longitude', String(video.longitude));
+            if (video.gpsAccuracy) formData.append('gpsAccuracy', String(video.gpsAccuracy));
+            if (video.duration) formData.append('duration', String(video.duration));
+            formData.append('file', {
+              uri: video.uri,
+              name: video.fileName,
+              type: video.type || 'video/mp4',
+            } as any);
+            await mediaService.upload(formData);
+          }
+
+          setUploadText('Finalizing survey...');
+          await surveyService.complete(realSurveyId);
+          await surveyDao.markSynced(surveyId);
+          console.log('✅ [Survey] Synced to server successfully.');
+
+          Alert.alert('Saved', 'Survey and media uploaded successfully');
+        } catch (uploadError) {
+          // Network upload failed — data is safe locally, queue for background sync
+          console.warn('⚠️ [Survey] Server upload failed, queued for background sync.', uploadError);
+          await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
+          Alert.alert('Saved Locally', 'Survey saved to your device. It will sync automatically when internet is available.');
         }
-
-        if (video) {
-          uploadCount++;
-          setUploadText(`Uploading Video ${uploadCount}/${totalMedia}...`);
-          const formData = new FormData();
-          formData.append('surveyId', realSurveyId);
-          formData.append('type', 'VIDEO');
-          if (video.latitude) formData.append('latitude', String(video.latitude));
-          if (video.longitude) formData.append('longitude', String(video.longitude));
-          if (video.gpsAccuracy) formData.append('gpsAccuracy', String(video.gpsAccuracy));
-          if (video.duration) formData.append('duration', String(video.duration));
-          formData.append('file', {
-            uri: video.uri,
-            name: video.fileName,
-            type: video.type || 'video/mp4',
-          } as any);
-          await mediaService.upload(formData);
-        }
-
-        setUploadText('Finalizing survey...');
-        await surveyService.complete(realSurveyId);
-
-        Alert.alert('Saved', 'Survey and media uploaded successfully');
       } else {
-        await surveyDao.save(surveyPayload);
+        // Offline — queue for background sync
         await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
-        await saveMediaToDb(surveyId);
-        Alert.alert('Saved Offline', 'Survey and media saved locally.');
+        Alert.alert('Saved Offline', 'Survey and media saved locally. They will sync when you are back online.');
       }
+
       navigation.navigate('Main', { screen: 'Stakeholders' });
     } catch (e: any) {
-      console.error(e);
-      try {
-        await surveyDao.save(surveyPayload);
-        await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
-        await saveMediaToDb(surveyId);
-        Alert.alert('Saved Offline', 'Could not reach server. Survey saved locally.');
-        navigation.navigate('Main', { screen: 'Stakeholders' });
-      } catch (offlineError) {
-        Alert.alert('Error', 'Failed to save survey');
-      }
+      console.error('❌ [Survey] Failed to save locally:', e);
+      Alert.alert('Error', 'Failed to save survey. Please try again.');
     }
     setSaving(false);
     setUploadText('');

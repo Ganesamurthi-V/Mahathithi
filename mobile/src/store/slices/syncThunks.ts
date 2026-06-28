@@ -40,7 +40,13 @@ export const runInitialSync = createAsyncThunk(
       dispatch(updateInitialSyncProgress({ progress: 40, message: 'Saving Stakeholders to database...' }));
       if (Array.isArray(stakeholders) && stakeholders.length > 0) {
         console.log(`💾 [Initial Sync] Saving ${stakeholders.length} stakeholders into SQLite database...`);
-        await stakeholderDao.upsertMany(stakeholders);
+        await stakeholderDao.upsertMany(stakeholders, (inserted, total, percent) => {
+          const scaledProgress = 10 + Math.round(percent * 0.3); // Scale 0-100 to 10-40
+          dispatch(updateInitialSyncProgress({ 
+            progress: scaledProgress, 
+            message: `Saving Stakeholders... ${inserted} / ${total} (${percent}%)`
+          }));
+        });
         console.log('✅ [Initial Sync] Stakeholders saved to SQLite successfully.');
       }
 
@@ -54,7 +60,13 @@ export const runInitialSync = createAsyncThunk(
       dispatch(updateInitialSyncProgress({ progress: 80, message: 'Saving Facilities to database...' }));
       if (Array.isArray(facilities) && facilities.length > 0) {
         console.log(`💾 [Initial Sync] Saving ${facilities.length} facilities into SQLite database...`);
-        await facilityDao.upsertMany(facilities);
+        await facilityDao.upsertMany(facilities, (inserted, total, percent) => {
+          const scaledProgress = 60 + Math.round(percent * 0.3); // Scale 0-100 to 60-90
+          dispatch(updateInitialSyncProgress({ 
+            progress: scaledProgress, 
+            message: `Saving Facilities... ${inserted} / ${total} (${percent}%)`
+          }));
+        });
         console.log('✅ [Initial Sync] Facilities saved to SQLite successfully.');
       }
 
