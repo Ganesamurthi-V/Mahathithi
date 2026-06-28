@@ -78,6 +78,9 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
       designation TEXT,
       mobile_number TEXT,
       email TEXT,
+      contact_person_2 TEXT,
+      mobile_number_2 TEXT,
+      email_2 TEXT,
       website TEXT,
       business_category TEXT,
       notes TEXT,
@@ -98,6 +101,11 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
       FOREIGN KEY (stakeholder_id) REFERENCES stakeholders(id)
     );
   `);
+
+  // Migrate existing surveys table for secondary contact fields
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN contact_person_2 TEXT;'); } catch (e) { /* ignore if column already exists */ }
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN mobile_number_2 TEXT;'); } catch (e) { /* ignore if column already exists */ }
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN email_2 TEXT;'); } catch (e) { /* ignore if column already exists */ }
 
   await database.executeSql(`
     CREATE TABLE IF NOT EXISTS media (
@@ -329,6 +337,18 @@ export const stakeholderDao = {
     if (lockedIds.length === 0) return;
     const database = await getDB();
     const placeholders = lockedIds.map(() => '?').join(',');
+    
+    // Delete associated media first
+    await database.executeSql(`
+      DELETE FROM media WHERE survey_id IN (
+        SELECT id FROM surveys WHERE stakeholder_id IN (${placeholders})
+      )
+    `, lockedIds);
+
+    // Delete associated surveys
+    await database.executeSql(`DELETE FROM surveys WHERE stakeholder_id IN (${placeholders})`, lockedIds);
+
+    // Finally delete stakeholders
     await database.executeSql(`DELETE FROM stakeholders WHERE id IN (${placeholders})`, lockedIds);
   },
 
@@ -393,12 +413,12 @@ export const surveyDao = {
     const id = survey.id || `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     await database.executeSql(
       `INSERT OR REPLACE INTO surveys (id, stakeholder_id, enumerator_id, contact_person,
-        designation, mobile_number, email, website, business_category, notes, gst_number,
+        designation, mobile_number, email, contact_person_2, mobile_number_2, email_2, website, business_category, notes, gst_number,
         organization_type, remarks, latitude, longitude, gps_accuracy, nearest_police_station, 
         nearest_healthcare_center, is_draft, is_completed, is_synced, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [id, survey.stakeholderId, survey.enumeratorId, survey.contactPerson,
-       survey.designation, survey.mobileNumber, survey.email, survey.website,
+       survey.designation, survey.mobileNumber, survey.email, survey.contactPerson2, survey.mobileNumber2, survey.email2, survey.website,
        survey.businessCategory, survey.notes, survey.gstNumber,
        survey.organizationType, survey.remarks, survey.latitude, survey.longitude,
        survey.gpsAccuracy, survey.nearestPoliceStation, survey.nearestHealthcareCenter,

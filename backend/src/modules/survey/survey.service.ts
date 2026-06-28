@@ -12,6 +12,9 @@ interface CreateSurveyData {
   designation?: string;
   mobileNumber?: string;
   email?: string;
+  contactPerson2?: string;
+  mobileNumber2?: string;
+  email2?: string;
   website?: string;
   businessCategory?: string;
   notes?: string;
@@ -56,6 +59,9 @@ export class SurveyService {
         designation: data.designation,
         mobileNumber: data.mobileNumber,
         email: data.email,
+        contactPerson2: data.contactPerson2,
+        mobileNumber2: data.mobileNumber2,
+        email2: data.email2,
         website: data.website,
         businessCategory: data.businessCategory,
         notes: data.notes,
@@ -74,6 +80,9 @@ export class SurveyService {
         designation: data.designation,
         mobileNumber: data.mobileNumber,
         email: data.email,
+        contactPerson2: data.contactPerson2,
+        mobileNumber2: data.mobileNumber2,
+        email2: data.email2,
         website: data.website,
         businessCategory: data.businessCategory,
         notes: data.notes,

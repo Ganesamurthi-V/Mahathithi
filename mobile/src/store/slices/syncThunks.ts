@@ -204,6 +204,12 @@ export const runAutoSync = createAsyncThunk(
           // Step D: Complete Survey
           await surveyService.complete(serverSurveyId);
           console.log(`✅ Fully synced survey ${localSurveyId}`);
+          
+          // Remove from local database immediately after successful sync
+          if (stakeholderId) {
+            await stakeholderDao.removeLockedStakeholders([stakeholderId]);
+            console.log(`🗑️ Removed completed survey and stakeholder ${stakeholderId} from local DB`);
+          }
 
         } catch (surveyErr: any) {
           // If ANY step in this survey fails (Text, Media, or Complete), it catches here.

@@ -177,6 +177,12 @@ model Survey {
   designation     String?  @map("designation")
   mobileNumber    String?  @map("mobile_number")
   email           String?  @map("email")
+  
+  // Secondary Contact Information (Optional)
+  contactPerson2  String?  @map("contact_person_2")
+  mobileNumber2   String?  @map("mobile_number_2")
+  email2          String?  @map("email_2")
+
   website         String?  @map("website")
   businessCategory String? @map("business_category")
   notes           String?  @map("notes")

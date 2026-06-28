@@ -8,7 +8,7 @@ import Geolocation from 'react-native-geolocation-service';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { surveyService, mediaService } from '../../services/api';
-import { surveyDao, syncQueueDao, mediaDao, facilityDao } from '../../database';
+import { surveyDao, syncQueueDao, mediaDao, facilityDao, stakeholderDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows, iconSizes } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
@@ -23,6 +23,9 @@ interface SurveyFormData {
   designation: string;
   mobileNumber: string;
   email: string;
+  contactPerson2: string;
+  mobileNumber2: string;
+  email2: string;
   gstNumber: string;
   organizationType: string;
   website: string;
@@ -74,7 +77,10 @@ const AnimatedInput = ({ field, control, errors, onFocus, onBlur }: any) => {
         <Controller
           control={control}
           name={field.name}
-          rules={field.required ? { required: `${field.label.replace(' *', '')} is required` } : undefined}
+          rules={{
+            ...(field.required ? { required: `${field.label.replace(' *', '')} is required` } : {}),
+            ...(field.pattern ? { pattern: field.pattern } : {})
+          }}
           render={({ field: { onChange, value } }) => (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <TextInput
@@ -84,6 +90,7 @@ const AnimatedInput = ({ field, control, errors, onFocus, onBlur }: any) => {
                 value={value}
                 onChangeText={onChange}
                 keyboardType={field.keyboardType || 'default'}
+                maxLength={field.maxLength}
                 multiline={field.name === 'remarks'}
                 numberOfLines={field.name === 'remarks' ? 4 : 1}
                 onFocus={() => { setIsFocused(true); onFocus(); }}
@@ -214,6 +221,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       designation: existingSurvey?.designation || '',
       mobileNumber: existingSurvey?.mobileNumber || '',
       email: existingSurvey?.email || '',
+      contactPerson2: existingSurvey?.contactPerson2 || existingSurvey?.contact_person_2 || '',
+      mobileNumber2: existingSurvey?.mobileNumber2 || existingSurvey?.mobile_number_2 || '',
+      email2: existingSurvey?.email2 || existingSurvey?.email_2 || '',
       gstNumber: existingSurvey?.gstNumber || stakeholder?.gstNumber || '',
       organizationType: existingSurvey?.organizationType || '',
       website: existingSurvey?.website || '',
@@ -499,6 +509,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       await surveyDao.save(surveyPayload);
       await saveMediaToDb(surveyId);
       console.log('💾 [Survey] Saved locally to SQLite.');
+      
+      // Update local stakeholder status so UI reflects completion immediately
+      await stakeholderDao.update(stakeholderId, { status: 'CLOSED' });
 
       // Step 2: Try to sync to server if online
       const netState = await NetInfo.fetch();
@@ -554,6 +567,10 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           await surveyDao.markSynced(surveyId);
           console.log('✅ [Survey] Synced to server successfully.');
 
+          // Remove from local database immediately after successful sync
+          await stakeholderDao.removeLockedStakeholders([stakeholderId]);
+          console.log(`🗑️ Removed completed survey and stakeholder ${stakeholderId} from local DB`);
+
           Alert.alert('Saved', 'Survey and media uploaded successfully');
         } catch (uploadError) {
           // Network upload failed — data is safe locally, queue for background sync
@@ -576,11 +593,14 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     setUploadText('');
   };
 
-  const fields: { name: keyof SurveyFormData; label: string; placeholder: string; required?: boolean; keyboardType?: any; isLoading?: boolean; isAutocomplete?: boolean; facilityType?: string }[] = [
+  const fields: { name: keyof SurveyFormData; label: string; placeholder: string; required?: boolean; keyboardType?: any; isLoading?: boolean; isAutocomplete?: boolean; facilityType?: string; pattern?: any; maxLength?: number }[] = [
     { name: 'contactPerson', label: 'Contact Person Name *', placeholder: 'Full name of contact person', required: true },
     { name: 'designation', label: 'Designation', placeholder: 'e.g., Manager, Owner' },
-    { name: 'mobileNumber', label: 'Mobile Number *', placeholder: '10-digit mobile number', required: true, keyboardType: 'phone-pad' },
+    { name: 'mobileNumber', label: 'Mobile Number *', placeholder: '10-digit mobile number', required: true, keyboardType: 'phone-pad', maxLength: 10, pattern: { value: /^[0-9]{10}$/, message: 'Must be exactly 10 digits' } },
     { name: 'email', label: 'Email', placeholder: 'email@example.com', keyboardType: 'email-address' },
+    { name: 'contactPerson2', label: 'Secondary Contact Name', placeholder: 'Optional secondary contact' },
+    { name: 'mobileNumber2', label: 'Secondary Mobile Number', placeholder: '10-digit mobile number', keyboardType: 'phone-pad', maxLength: 10, pattern: { value: /^[0-9]{10}$/, message: 'Must be exactly 10 digits' } },
+    { name: 'email2', label: 'Secondary Email', placeholder: 'email@example.com', keyboardType: 'email-address' },
     { name: 'nearestPoliceStation', label: 'Nearest Police Station', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading, isAutocomplete: true, facilityType: 'POLICE_STATION' },
     { name: 'nearestHealthcareCenter', label: 'Nearest Healthcare Center', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading, isAutocomplete: true, facilityType: 'HEALTHCARE' },
     { name: 'gstNumber', label: 'GST Number', placeholder: 'GST Number' },
