@@ -69,6 +69,11 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
     await database.executeSql('ALTER TABLE stakeholders ADD COLUMN village TEXT;');
   } catch (e) { /* ignore if column already exists */ }
 
+  // BUG 3 FIX: add stakeholder_id to media table for media-only sync runs
+  try {
+    await database.executeSql('ALTER TABLE media ADD COLUMN stakeholder_id TEXT;');
+  } catch (e) { /* ignore if column already exists */ }
+
   await database.executeSql(`
     CREATE TABLE IF NOT EXISTS surveys (
       id TEXT PRIMARY KEY,
@@ -111,6 +116,7 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
     CREATE TABLE IF NOT EXISTS media (
       id TEXT PRIMARY KEY,
       survey_id TEXT NOT NULL,
+      stakeholder_id TEXT,
       type TEXT NOT NULL,
       photo_category TEXT,
       file_path TEXT NOT NULL,
@@ -461,9 +467,9 @@ export const mediaDao = {
     const database = await getDB();
     const id = media.id || `local_media_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     await database.executeSql(
-      `INSERT OR REPLACE INTO media (id, survey_id, type, photo_category, file_path, file_name, file_size, mime_type, latitude, longitude, gps_accuracy, captured_at, duration, thumbnail_path, is_synced)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, media.surveyId, media.type, media.photoCategory, media.filePath, media.fileName, media.fileSize, media.mimeType, media.latitude, media.longitude, media.gpsAccuracy, media.capturedAt, media.duration, media.thumbnailPath, media.isSynced ? 1 : 0]
+      `INSERT OR REPLACE INTO media (id, survey_id, stakeholder_id, type, photo_category, file_path, file_name, file_size, mime_type, latitude, longitude, gps_accuracy, captured_at, duration, thumbnail_path, is_synced)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, media.surveyId, media.stakeholderId || null, media.type, media.photoCategory, media.filePath, media.fileName, media.fileSize, media.mimeType, media.latitude, media.longitude, media.gpsAccuracy, media.capturedAt, media.duration, media.thumbnailPath, media.isSynced ? 1 : 0]
     );
   },
 
@@ -479,7 +485,18 @@ export const mediaDao = {
   async markSynced(id: string): Promise<void> {
     const db = await getDB();
     await db.executeSql(`UPDATE media SET is_synced = 1 WHERE id = ?`, [id]);
-  }
+  },
+
+  // BUG 4 FIX: fetch all media rows for a local survey id (for marking synced after online upload)
+  async getBySurveyLocal(surveyId: string): Promise<any[]> {
+    const db = await getDB();
+    const [results] = await db.executeSql(`SELECT * FROM media WHERE survey_id = ?`, [surveyId]);
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i));
+    }
+    return rows;
+  },
 };
 
 // ============================================================================

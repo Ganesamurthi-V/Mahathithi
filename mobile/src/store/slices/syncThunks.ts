@@ -116,6 +116,16 @@ export const runAutoSync = createAsyncThunk(
           if (item.entity_type === 'stakeholder' && item.action === 'UPDATE') {
             const payload = JSON.parse(item.payload);
             await stakeholderService.updateStakeholder(item.entity_id, payload);
+          } else if (item.entity_type === 'survey' && item.action === 'CREATE') {
+            // BUG 1 FIX: Handle offline-queued survey text payloads
+            const payload = JSON.parse(item.payload);
+            await syncService.upload({
+              surveys: [payload],
+              phoneValidations: [],
+              mediaMetadata: [],
+            });
+            // Mark the local survey as synced so media-only runs can pick it up
+            await surveyDao.markSynced(payload.id);
           }
           await syncQueueDao.markCompleted(item.id);
         } catch (err: any) {
@@ -132,7 +142,13 @@ export const runAutoSync = createAsyncThunk(
         try {
           const surveyLocal = unsyncedSurveys.find((s: any) => s.id === localSurveyId);
           let serverSurveyId = localSurveyId;
-          let stakeholderId = surveyLocal?.stakeholder_id || (localSurveyId.startsWith('draft_') ? localSurveyId.replace('draft_', '') : null);
+          // BUG 3 FIX: when survey is already synced (media-only run), stakeholder_id
+          // comes from the media row instead of the missing surveyLocal.
+          const mediaForThisSurvey = unsyncedMedia.filter((m: any) => m.survey_id === localSurveyId);
+          let stakeholderId =
+            surveyLocal?.stakeholder_id ||
+            mediaForThisSurvey[0]?.stakeholder_id ||
+            (localSurveyId.startsWith('draft_') ? localSurveyId.replace('draft_', '') : null);
 
           // Step A: Upload Text Payload (if unsynced)
           if (surveyLocal) {
@@ -156,6 +172,7 @@ export const runAutoSync = createAsyncThunk(
               localId: surveyLocal.id,
             };
 
+            console.log(`📤 [Sync] Uploading text payload for survey ${localSurveyId}:`, JSON.stringify(surveyPayload, null, 2));
             await syncService.upload({
               surveys: [surveyPayload],
               phoneValidations: [],
@@ -171,6 +188,7 @@ export const runAutoSync = createAsyncThunk(
                if (svRes.data?.data?.id) serverSurveyId = svRes.data.data.id;
              } catch { /* ignore if not found */ }
           }
+          console.log(`🔍 [Sync] Resolved serverSurveyId: ${serverSurveyId} (Stakeholder: ${stakeholderId})`);
 
           // Step C: Upload Media for this Survey sequentially
           const surveyMedia = unsyncedMedia.filter((m: any) => m.survey_id === localSurveyId);
@@ -192,8 +210,10 @@ export const runAutoSync = createAsyncThunk(
                  name: media.file_name || `upload_${Date.now()}`,
                } as any);
 
+               console.log(`📤 [Sync] Uploading media ${media.id} (type: ${media.type}) for survey ${serverSurveyId}`);
                await mediaService.upload(formData);
                await mediaDao.markSynced(media.id);
+               console.log(`✅ [Sync] Media ${media.id} uploaded successfully`);
              } catch (mediaErr: any) {
                console.error(`Media upload failed for ${media.id}`, mediaErr?.response?.data || mediaErr.message);
                // Throw an error to intentionally break this specific survey's pipeline (prevents completion)
@@ -202,6 +222,7 @@ export const runAutoSync = createAsyncThunk(
           }
 
           // Step D: Complete Survey
+          console.log(`🏁 [Sync] Calling complete() on server for survey ${serverSurveyId}`);
           await surveyService.complete(serverSurveyId);
           console.log(`✅ Fully synced survey ${localSurveyId}`);
           
@@ -234,21 +255,10 @@ export const runAutoSync = createAsyncThunk(
         console.warn('Failed to get changes from server (Step 2/3):', err.message);
       }
 
-      // Step 3.5: Sync Facilities
-      try {
-        const facilityRes = await facilityService.syncOffline();
-        let facilitiesList = facilityRes.data?.data || facilityRes.data;
-        if (facilitiesList && typeof facilitiesList === 'object' && !Array.isArray(facilitiesList)) {
-           facilitiesList = facilitiesList.facilities || facilitiesList.list || facilitiesList.data || [];
-        }
-        if (Array.isArray(facilitiesList) && facilitiesList.length > 0) {
-          await facilityDao.upsertMany(facilitiesList);
-        } else {
-          console.warn('Facilities sync returned empty or unparseable data:', facilitiesList);
-        }
-      } catch (err) {
-        console.warn('Failed to sync facilities:', err);
-      }
+      // Step 3.5: Sync Facilities (REMOVED)
+      // Facilities are mostly static and are already downloaded during runInitialSync.
+      // Re-downloading 13,000+ facilities on every background auto-sync causes massive DB locking/slowdown.
+      // If facility updates are needed, this should be a manual trigger or use a 'since' timestamp.
 
       dispatch(updateSyncProgress(100));
 

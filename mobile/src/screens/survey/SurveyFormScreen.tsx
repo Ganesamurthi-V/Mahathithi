@@ -214,8 +214,17 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const [video, setVideo] = useState<any>(null);
   const [recording, setRecording] = useState(false);
   const [compressing, setCompressing] = useState(false);
+  
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    if (scrollViewRef.current) {
+      scrollViewRef.current.scrollTo({ y: 0, animated: true });
+    }
+  }, [currentStep]);
 
   const { control, handleSubmit, formState: { errors }, watch, setValue } = useForm<SurveyFormData>({
+    mode: 'onChange',
     defaultValues: {
       contactPerson: existingSurvey?.contactPerson || '',
       designation: existingSurvey?.designation || '',
@@ -444,6 +453,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       const p = photos[key];
       await mediaDao.save({
         surveyId: newSurveyId,
+        stakeholderId,  // BUG 3 FIX: stored so auto-sync can resolve serverSurveyId on media-only runs
         type: 'PHOTO',
         photoCategory: key,
         filePath: p.uri,
@@ -460,6 +470,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     if (video) {
       await mediaDao.save({
         surveyId: newSurveyId,
+        stakeholderId,  // BUG 3 FIX: stored so auto-sync can resolve serverSurveyId on media-only runs
         type: 'VIDEO',
         filePath: video.uri,
         fileName: video.fileName,
@@ -565,6 +576,11 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           setUploadText('Finalizing survey...');
           await surveyService.complete(realSurveyId);
           await surveyDao.markSynced(surveyId);
+          // BUG 4 FIX: mark all media rows as synced so auto-sync doesn't re-attempt them
+          const allSavedMedia = await mediaDao.getBySurveyLocal(surveyId);
+          for (const m of allSavedMedia) {
+            await mediaDao.markSynced(m.id);
+          }
           console.log('✅ [Survey] Synced to server successfully.');
 
           // Remove from local database immediately after successful sync
@@ -596,10 +612,10 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const fields: { name: keyof SurveyFormData; label: string; placeholder: string; required?: boolean; keyboardType?: any; isLoading?: boolean; isAutocomplete?: boolean; facilityType?: string; pattern?: any; maxLength?: number }[] = [
     { name: 'contactPerson', label: 'Contact Person Name *', placeholder: 'Full name of contact person', required: true },
     { name: 'designation', label: 'Designation', placeholder: 'e.g., Manager, Owner' },
-    { name: 'mobileNumber', label: 'Mobile Number *', placeholder: '10-digit mobile number', required: true, keyboardType: 'phone-pad', maxLength: 10, pattern: { value: /^[0-9]{10}$/, message: 'Must be exactly 10 digits' } },
+    { name: 'mobileNumber', label: 'Mobile Number *', placeholder: '10-digit mobile number', required: true, keyboardType: 'phone-pad', maxLength: 10, pattern: { value: /^[0-9]{10}$/, message: 'Invalid number' } },
     { name: 'email', label: 'Email', placeholder: 'email@example.com', keyboardType: 'email-address' },
     { name: 'contactPerson2', label: 'Secondary Contact Name', placeholder: 'Optional secondary contact' },
-    { name: 'mobileNumber2', label: 'Secondary Mobile Number', placeholder: '10-digit mobile number', keyboardType: 'phone-pad', maxLength: 10, pattern: { value: /^[0-9]{10}$/, message: 'Must be exactly 10 digits' } },
+    { name: 'mobileNumber2', label: 'Secondary Mobile Number', placeholder: '10-digit mobile number', keyboardType: 'phone-pad', maxLength: 10, pattern: { value: /^[0-9]{10}$/, message: 'Invalid number' } },
     { name: 'email2', label: 'Secondary Email', placeholder: 'email@example.com', keyboardType: 'email-address' },
     { name: 'nearestPoliceStation', label: 'Nearest Police Station', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading, isAutocomplete: true, facilityType: 'POLICE_STATION' },
     { name: 'nearestHealthcareCenter', label: 'Nearest Healthcare Center', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading, isAutocomplete: true, facilityType: 'HEALTHCARE' },
@@ -636,7 +652,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         ))}
       </View>
 
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView ref={scrollViewRef} style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.stakeholderInfo}>
           <Text style={styles.stakeholderName}>{stakeholder?.companyNameStandardized}</Text>
           <Text style={styles.stakeholderMeta}>{stakeholder?.district} • {stakeholder?.pinCode}</Text>

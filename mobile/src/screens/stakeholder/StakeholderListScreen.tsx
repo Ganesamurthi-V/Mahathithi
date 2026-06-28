@@ -103,9 +103,8 @@ export default function StakeholderListScreen({ navigation }: any) {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
-  const loadStakeholders = async (p = 1) => {
-    if (p === 1) setInitialLoading(true);
-    setLoading(true);
+  const loadStakeholders = async (p = 1, isPullToRefresh = false) => {
+    if (isPullToRefresh) setLoading(true);
     try {
       // Offline-First Architecture: Always read from SQLite
       const localData = await stakeholderDao.search({}, p);
@@ -126,7 +125,7 @@ export default function StakeholderListScreen({ navigation }: any) {
 
   useFocusEffect(
     useCallback(() => {
-      loadStakeholders();
+      loadStakeholders(1, false); // Silent background refresh on focus
     }, [])
   );
 
@@ -160,8 +159,8 @@ export default function StakeholderListScreen({ navigation }: any) {
             renderItem={renderItem}
             keyExtractor={item => item.id}
             contentContainerStyle={styles.list}
-            refreshControl={<RefreshControl refreshing={loading && page === 1} onRefresh={() => loadStakeholders(1)} tintColor={colors.primary} />}
-            onEndReached={() => hasMore && !loading && loadStakeholders(page + 1)}
+            refreshControl={<RefreshControl refreshing={loading && page === 1} onRefresh={() => loadStakeholders(1, true)} tintColor={colors.primary} />}
+            onEndReached={() => hasMore && !loading && loadStakeholders(page + 1, true)}
             onEndReachedThreshold={0.3}
             removeClippedSubviews={true}
             maxToRenderPerBatch={10}
