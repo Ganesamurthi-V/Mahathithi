@@ -112,8 +112,30 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
 
   const loadData = async () => {
     try {
-      // Offline-First Architecture: Always read stakeholder from SQLite
+      // Offline-First Architecture: Always read stakeholder from SQLite first
       let shLocal = await stakeholderDao.getById(stakeholderId);
+
+      // Fallback: not cached locally yet (e.g. opened from an online search
+      // result that hasn't been synced into SQLite on this device). Fetch it
+      // from the server and cache it, so every future open of this record —
+      // online or offline — is served from SQLite.
+      if (!shLocal) {
+        const netState = await NetInfo.fetch();
+        if (netState.isConnected) {
+          try {
+            const shRes = await stakeholderService.getById(stakeholderId);
+            const remoteStakeholder = shRes.data?.data;
+            if (remoteStakeholder) {
+              await stakeholderDao.upsertMany([remoteStakeholder]);
+              shLocal = await stakeholderDao.getById(stakeholderId);
+            }
+          } catch (e) {
+            // No connectivity or server error — leave shLocal null below;
+            // the screen will show what little it has rather than crash.
+          }
+        }
+      }
+
       setStakeholder(shLocal);
       
       // Offline-First: Load survey from local SQLite first

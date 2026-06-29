@@ -132,14 +132,51 @@ export default function SearchScreen({ navigation }: any) {
     dispatch(setSearching(true));
 
     try {
-      // Offline-First Architecture: Always read from SQLite
-      const results = await stakeholderDao.search(activeFilters, page);
-      const fakePageInfo = { page, total: results.length, hasMore: results.length === 20 };
+      // 1. Offline-First: always check the local SQLite cache first.
+      //    This is the source of truth whenever it has an answer — fast,
+      //    free, and works with zero connectivity.
+      const localResults = await stakeholderDao.search(activeFilters, page);
+
+      let finalResults = localResults;
+      let pageInfo = { page, total: localResults.length, hasMore: localResults.length === 20 };
+
+      // 2. Only fall back to the network when SQLite came up empty for this
+      //    page — either nothing has been synced for this area yet, or
+      //    we've paged past what's cached locally.
+      if (localResults.length === 0) {
+        const netState = await NetInfo.fetch();
+        if (netState.isConnected) {
+          try {
+            const res = await stakeholderService.search({ ...activeFilters, page, limit: 20 });
+            const remote = res.data?.data;
+
+            if (remote?.stakeholders?.length) {
+              // Cache server results locally so this search (and any repeat
+              // of it) is answered from SQLite next time, online or offline.
+              await stakeholderDao.upsertMany(remote.stakeholders);
+
+              finalResults = remote.stakeholders;
+              const remotePage = remote.pagination?.page || page;
+              const remoteLimit = remote.pagination?.limit || 20;
+              const remoteTotal = remote.pagination?.total ?? remote.stakeholders.length;
+              pageInfo = {
+                page: remotePage,
+                total: remoteTotal,
+                hasMore: remotePage * remoteLimit < remoteTotal,
+              };
+            }
+          } catch (e) {
+            // No connectivity, server error, etc. — fall back to whatever
+            // SQLite gave us (i.e. an empty result), never throw to the UI.
+            console.warn('Online search fallback failed:', e);
+          }
+        }
+      }
 
       if (page === 1) {
-        dispatch(setSearchResults({ stakeholders: results, pagination: fakePageInfo }));
+        dispatch(setSearchResults({ stakeholders: finalResults, pagination: pageInfo }));
       } else {
-        dispatch(appendSearchResults({ stakeholders: results, pagination: fakePageInfo }));
+        dispatch(appendSearchResults({ stakeholders: finalResults, pagination: pageInfo }));
       }
     } catch (e) {
       console.error('Search error:', e);

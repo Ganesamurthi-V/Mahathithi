@@ -739,6 +739,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       if (netState.isConnected) {
         try {
           setUploadText('Uploading to server...');
+          console.log('📤 [Survey Online] Uploading text payload:', JSON.stringify(surveyPayload, null, 2));
           const response = await surveyService.createOrUpdate(surveyPayload);
           const realSurveyId = response.data?.data?.id || surveyId;
 
@@ -762,6 +763,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
               name: p.fileName,
               type: p.type,
             } as any);
+            console.log(`📤 [Survey Online] Uploading photo ${key}...`);
             await mediaService.upload(formData);
           }
 
@@ -780,10 +782,12 @@ export default function SurveyFormScreen({ route, navigation }: any) {
               name: video.fileName,
               type: video.type || 'video/mp4',
             } as any);
+            console.log(`📤 [Survey Online] Uploading video...`);
             await mediaService.upload(formData);
           }
 
           setUploadText('Finalizing survey...');
+          console.log(`🏁 [Survey Online] Calling complete() on server for survey ${realSurveyId}`);
           await surveyService.complete(realSurveyId);
           await surveyDao.markSynced(surveyId);
           // BUG 4 FIX: mark all media rows as synced so auto-sync doesn't re-attempt them
