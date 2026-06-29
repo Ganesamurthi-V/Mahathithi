@@ -29,13 +29,30 @@ export class SyncService {
       throw new ValidationError(`Batch too large. Maximum ${MAX_BATCH_ITEMS} items per array per request.`);
     }
 
+    // PERF: prefetch every referenced stakeholder in a single query instead of
+    // one findUnique per item. With a full 200-item batch the old code issued up
+    // to 400 sequential lookups (survey loop + phone-validation loop) before any
+    // write; this collapses them into one `IN (...)` query feeding an O(1) Map.
+    // The select covers the union of fields both loops read (lockedById/status
+    // for surveys, district for both).
+    const referencedStakeholderIds = [
+      ...new Set([
+        ...(payload.surveys || []).map((s) => s.stakeholderId),
+        ...(payload.phoneValidations || []).map((pv) => pv.stakeholderId),
+      ].filter(Boolean)),
+    ];
+    const stakeholderRows = referencedStakeholderIds.length
+      ? await prisma.stakeholder.findMany({
+          where: { id: { in: referencedStakeholderIds } },
+          select: { id: true, lockedById: true, status: true, district: true },
+        })
+      : [];
+    const stakeholderById = new Map(stakeholderRows.map((s) => [s.id, s]));
+
     // Process surveys
     for (const surveyData of (payload.surveys || [])) {
       try {
-        const stakeholder = await prisma.stakeholder.findUnique({
-          where: { id: surveyData.stakeholderId },
-          select: { lockedById: true, status: true, district: true },
-        });
+        const stakeholder = stakeholderById.get(surveyData.stakeholderId);
 
         if (!stakeholder) {
           results.surveys.failed++;
@@ -134,10 +151,8 @@ export class SyncService {
         // X1 FIX: enforce the same district scope as the survey loop above.
         // Without this, a mobile client could write a phone validation for a
         // stakeholder in a district it isn't assigned to.
-        const stakeholder = await prisma.stakeholder.findUnique({
-          where: { id: pvData.stakeholderId },
-          select: { district: true },
-        });
+        // PERF: reuse the batch-prefetched Map instead of a per-item findUnique.
+        const stakeholder = stakeholderById.get(pvData.stakeholderId);
 
         if (!stakeholder) {
           results.phoneValidations.failed++;

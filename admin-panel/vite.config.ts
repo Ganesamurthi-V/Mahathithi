@@ -12,4 +12,16 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // PERF: split stable third-party libs into their own chunk so they stay
+        // cached across app deploys (app code changes far more often than vendor).
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'data-vendor': ['@tanstack/react-query', 'axios'],
+        },
+      },
+    },
+  },
 });

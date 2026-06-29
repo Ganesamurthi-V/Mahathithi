@@ -284,35 +284,55 @@ export const runAutoSync = createAsyncThunk(
           }
           console.log(`🔍 [Sync] Resolved serverSurveyId: ${serverSurveyId} (Stakeholder: ${stakeholderId})`);
 
-          // Step C: Upload Media for this Survey sequentially
+          // Step C: Upload Media for this Survey with bounded concurrency.
+          // PERF: the old loop uploaded files strictly one-at-a-time, so a survey
+          // with 4 photos + a video paid the full round-trip latency serially.
+          // We now upload in chunks of MEDIA_UPLOAD_CONCURRENCY in parallel.
+          // INVARIANT PRESERVED: complete() (Step D) must only run if EVERY media
+          // file for this survey uploaded. We collect failures across the whole set
+          // and throw before reaching Step D — same effect as the old per-item throw,
+          // just without aborting siblings that were already in flight.
           const surveyMedia = unsyncedMedia.filter((m: any) => m.survey_id === localSurveyId);
-          for (const media of surveyMedia) {
-             try {
-               const formData = new FormData();
-               formData.append('surveyId', serverSurveyId);
-               formData.append('type', media.type);
-               if (media.photo_category) formData.append('photoCategory', media.photo_category);
-               if (media.latitude) formData.append('latitude', media.latitude.toString());
-               if (media.longitude) formData.append('longitude', media.longitude.toString());
-               if (media.gps_accuracy) formData.append('gpsAccuracy', media.gps_accuracy.toString());
-               if (media.duration) formData.append('duration', media.duration.toString());
-               formData.append('localId', media.id);
+          const MEDIA_UPLOAD_CONCURRENCY = 3;
+          const uploadOne = async (media: any) => {
+            const formData = new FormData();
+            formData.append('surveyId', serverSurveyId);
+            formData.append('type', media.type);
+            if (media.photo_category) formData.append('photoCategory', media.photo_category);
+            if (media.latitude) formData.append('latitude', media.latitude.toString());
+            if (media.longitude) formData.append('longitude', media.longitude.toString());
+            if (media.gps_accuracy) formData.append('gpsAccuracy', media.gps_accuracy.toString());
+            if (media.duration) formData.append('duration', media.duration.toString());
+            formData.append('localId', media.id);
 
-               formData.append('file', {
-                 uri: media.file_path,
-                 type: media.mime_type || 'image/jpeg',
-                 name: media.file_name || `upload_${Date.now()}`,
-               } as any);
+            formData.append('file', {
+              uri: media.file_path,
+              type: media.mime_type || 'image/jpeg',
+              name: media.file_name || `upload_${Date.now()}`,
+            } as any);
 
-               console.log(`📤 [Sync] Uploading media ${media.id} (type: ${media.type}) for survey ${serverSurveyId}`);
-               await mediaService.upload(formData);
-               await mediaDao.markSynced(media.id);
-               console.log(`✅ [Sync] Media ${media.id} uploaded successfully`);
-             } catch (mediaErr: any) {
-               console.error(`Media upload failed for ${media.id}`, mediaErr?.response?.data || mediaErr.message);
-               // Throw an error to intentionally break this specific survey's pipeline (prevents completion)
-               throw new Error(`Media failed: ${media.id}`); 
-             }
+            console.log(`📤 [Sync] Uploading media ${media.id} (type: ${media.type}) for survey ${serverSurveyId}`);
+            await mediaService.upload(formData);
+            await mediaDao.markSynced(media.id);
+            console.log(`✅ [Sync] Media ${media.id} uploaded successfully`);
+          };
+
+          const failedMediaIds: string[] = [];
+          for (let c = 0; c < surveyMedia.length; c += MEDIA_UPLOAD_CONCURRENCY) {
+            const chunk = surveyMedia.slice(c, c + MEDIA_UPLOAD_CONCURRENCY);
+            const settled = await Promise.allSettled(chunk.map(uploadOne));
+            settled.forEach((res, idx) => {
+              if (res.status === 'rejected') {
+                const failed = chunk[idx];
+                console.error(`Media upload failed for ${failed.id}`, res.reason?.response?.data || res.reason?.message);
+                failedMediaIds.push(failed.id);
+              }
+            });
+          }
+          if (failedMediaIds.length > 0) {
+            // Break this survey's pipeline before complete() — successfully uploaded
+            // files are already marked synced, so the next sync run retries only the rest.
+            throw new Error(`Media failed: ${failedMediaIds.join(', ')}`);
           }
 
           // Step D: Complete Survey

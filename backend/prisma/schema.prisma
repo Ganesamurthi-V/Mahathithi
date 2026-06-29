@@ -163,6 +163,15 @@ model Stakeholder {
   @@index([state, district])
   @@index([companyNameStandardized, district])
 
+  // PERF: taluka/city are queried by the stakeholder search filters but were
+  // unindexed, forcing full scans on the 313K-row table.
+  @@index([taluka])
+  @@index([city])
+  // PERF: dashboard "open in my district" counts filter on (status, district);
+  // and sync getChanges filters stakeholders by updatedAt > since.
+  @@index([status, district])
+  @@index([updatedAt])
+
   @@map("stakeholders")
 }
 
@@ -358,6 +367,8 @@ model SyncQueue {
   @@index([status])
   @@index([entityType, entityId])
   @@index([enumeratorId])
+  // PERF: dashboard pending/failed counts filter on (enumeratorId, status).
+  @@index([status, enumeratorId])
   @@map("sync_queue")
 }
 

@@ -198,6 +198,14 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_status ON stakeholders(status);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_survey_stakeholder ON surveys(stakeholder_id);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sync_status ON sync_queue(status);`);
+  // PERF: hot sync/scan paths that were doing full table scans.
+  // - media(is_synced)/media(survey_id): getUnsynced() & getBySurveyLocal() run every sync
+  // - surveys(is_synced): getUnsynced()/getUnsyncedCount() & the pending-completion join
+  // - stakeholders(district, city): the cascade getUniqueCities()/getUniquePins() dropdowns
+  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_media_is_synced ON media(is_synced);`);
+  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_media_survey ON media(survey_id);`);
+  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_surveys_is_synced ON surveys(is_synced);`);
+  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_district_city ON stakeholders(district COLLATE NOCASE, city COLLATE NOCASE);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_facilities_type ON facilities(type);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_facilities_name ON facilities(name COLLATE NOCASE);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_facilities_district ON facilities(district COLLATE NOCASE);`);
@@ -231,8 +239,38 @@ export const stakeholderDao = {
   async upsertMany(stakeholders: any[], onProgress?: (inserted: number, total: number, percent: number) => void): Promise<void> {
     const database = await getDB();
     const total = stakeholders.length;
-    let count = 0;
-    for (const s of stakeholders) {
+    if (total === 0) return;
+
+    // PERF: insert in multi-row batches instead of one executeSql per row.
+    // The old loop issued `total` separate INSERT statements — each an implicit
+    // transaction with its own disk flush — so an initial sync of thousands of
+    // stakeholders took minutes. A single multi-row INSERT OR REPLACE commits its
+    // whole batch atomically in one flush.
+    // Mirrors facilityDao.upsertMany (executeSql per batch, no db.transaction —
+    // the wrapper's transaction() promise handling is buggy in this lib).
+    // BATCH SIZE: this table has 38 bound params per row and react-native-sqlite-
+    // storage's bundled SQLite caps statement variables at 999, so 25 rows
+    // (25 × 38 = 950) is the largest safe batch.
+    const COLUMNS = 38;
+    const batchSize = 25;
+    const rowPlaceholder = `(${Array(COLUMNS).fill('?').join(',')})`;
+    let inserted = 0;
+
+    for (let i = 0; i < total; i += batchSize) {
+      const batch = stakeholders.slice(i, i + batchSize);
+      const params: any[] = [];
+      for (const s of batch) {
+        params.push(
+          s.id, s.primaryKeyId, s.uin, s.dataSource, s.cinNumber, s.gstNumber, s.tinNumber,
+          s.companyNameStandardized, s.companyNameOriginal, s.fullAddressRaw, s.addressLine1,
+          s.addressLine2, s.city, s.taluka, s.village, s.district, s.state, s.pinCode, s.nicCode,
+          s.nicDescription, s.category, s.priorityWeight, s.companyClass, s.companyStatus,
+          s.companyCategory, s.authorizedCapital, s.paidupCapital, s.listingStatus,
+          s.registrationDate, s.fuzzySimilarityScore, s.crossSourceMatch, s.humanReviewRequired,
+          s.dedupMatchStatus, s.sourceLineageNotes, s.status, s.lockedById, s.lockedAt, s.updatedAt
+        );
+      }
+
       await database.executeSql(
         `INSERT OR REPLACE INTO stakeholders (id, primary_key_id, uin, data_source, cin_number,
           gst_number, tin_number, company_name_standardized, company_name_original,
@@ -241,23 +279,14 @@ export const stakeholderDao = {
           company_category, authorized_capital, paidup_capital, listing_status, registration_date,
           fuzzy_similarity_score, cross_source_match, human_review_required, dedup_match_status,
           source_lineage_notes, status, locked_by_id, locked_at, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [
-          s.id, s.primaryKeyId, s.uin, s.dataSource, s.cinNumber, s.gstNumber, s.tinNumber,
-          s.companyNameStandardized, s.companyNameOriginal, s.fullAddressRaw, s.addressLine1,
-          s.addressLine2, s.city, s.taluka, s.village, s.district, s.state, s.pinCode, s.nicCode,
-          s.nicDescription, s.category, s.priorityWeight, s.companyClass, s.companyStatus,
-          s.companyCategory, s.authorizedCapital, s.paidupCapital, s.listingStatus,
-          s.registrationDate, s.fuzzySimilarityScore, s.crossSourceMatch, s.humanReviewRequired,
-          s.dedupMatchStatus, s.sourceLineageNotes, s.status, s.lockedById, s.lockedAt, s.updatedAt
-        ]
+        VALUES ${batch.map(() => rowPlaceholder).join(',')}`,
+        params
       );
-      count++;
-      if (count % 10 === 0 || count === total) {
-        const percent = Math.round((count / total) * 100);
-        console.log(`⏳ [SQLite Stakeholders] Inserted ${count} / ${total} (${percent}%)`);
-        if (onProgress) onProgress(count, total, percent);
-      }
+
+      inserted += batch.length;
+      const percent = Math.round((inserted / total) * 100);
+      console.log(`⏳ [SQLite Stakeholders] Inserted ${inserted} / ${total} (${percent}%)`);
+      if (onProgress) onProgress(inserted, total, percent);
     }
   },
 
@@ -310,8 +339,16 @@ export const stakeholderDao = {
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const offset = (page - 1) * limit;
 
+    // PERF: list rows only need the fields the cards render — the old `SELECT *`
+    // pulled all 38 columns (long address/lineage text) per row just to throw most
+    // away. Tapping a row re-fetches the full record via getById (SELECT *), so the
+    // detail screen is unaffected. priority_weight stays for the ORDER BY.
     const [results] = await database.executeSql(
-      `SELECT * FROM stakeholders ${whereClause} ORDER BY priority_weight DESC, company_name_standardized ASC LIMIT ? OFFSET ?`,
+      `SELECT id, primary_key_id, company_name_standardized, company_name_original,
+              district, city, pin_code, category, nic_description, status,
+              locked_by_id, priority_weight
+       FROM stakeholders ${whereClause}
+       ORDER BY priority_weight DESC, company_name_standardized ASC LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
 

@@ -156,9 +156,15 @@ export class MediaService {
       orderBy: { capturedAt: 'asc' },
     });
 
-    for (const item of media) {
-      item.fileUrl = await getPresignedUrl(item.filePath);
-    }
+    // PERF: sign all presigned URLs concurrently instead of sequentially.
+    // A survey can hold up to 50 photos + 10 videos; the old serial loop made
+    // one S3 signing round-trip per item, so opening a media-heavy survey blocked
+    // for seconds. Promise.all collapses that into a single parallel batch.
+    await Promise.all(
+      media.map(async (item) => {
+        item.fileUrl = await getPresignedUrl(item.filePath);
+      })
+    );
 
     return media;
   }

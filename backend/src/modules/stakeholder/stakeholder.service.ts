@@ -246,6 +246,10 @@ export class StakeholderService {
     // Only return OPEN stakeholders
     where.status = 'OPEN';
 
+    // NOTE: this is the offline-sync mirror feed — the mobile SQLite store
+    // (stakeholderDao.upsertMany) persists ~37 of these scalar columns, so we
+    // intentionally return the full row here. Do NOT narrow this to a list-style
+    // select; doing so silently drops columns from every device's local mirror.
     const stakeholders = await prisma.stakeholder.findMany({
       where,
       include: {

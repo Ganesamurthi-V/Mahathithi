@@ -1,6 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { searchStakeholders, updateStakeholder, getSurveyByStakeholder, getMediaBySurvey } from '../api';
+
+// PERF: pure helper hoisted to module scope so it isn't re-created each render
+// and a memoized row can reference it without breaking memoization.
+const getStatusBadge = (status: string) => {
+  const map: Record<string, string> = { PENDING: 'badge-pending', IN_PROGRESS: 'badge-active', IN_REVIEW: 'badge-admin', CLOSED: 'badge-active' };
+  return map[status] || 'badge-pending';
+};
+
+// PERF: memoized table row — only re-renders when its own stakeholder/handler
+// change, so typing in the filter inputs no longer re-renders every row.
+const StakeholderRow = memo(function StakeholderRow({ s, onSelect }: { s: any; onSelect: (s: any) => void }) {
+  return (
+    <tr style={{ cursor: 'pointer' }} onClick={() => onSelect(s)}>
+      <td style={{ fontWeight: '600', color: 'var(--text-primary)', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {s.companyNameStandardized || s.companyNameOriginal || '—'}
+      </td>
+      <td>{s.district || '—'}</td>
+      <td style={{ fontSize: '13px' }}>{s.city || s.taluka || '—'}</td>
+      <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.pinCode || '—'}</code></td>
+      <td style={{ fontSize: '12px' }}>{s.category || '—'}</td>
+      <td><span className={`badge ${getStatusBadge(s.status)}`}>{(s.status || 'PENDING').replace('_', ' ')}</span></td>
+      <td>
+        <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); onSelect(s); }}>
+          📸 View Gallery
+        </button>
+      </td>
+    </tr>
+  );
+});
 
 export default function StakeholdersPage() {
   const [filters, setFilters] = useState({ name: '', district: '', pinCode: '', category: '', status: '' });
@@ -40,10 +69,8 @@ export default function StakeholdersPage() {
     setPage(1);
   };
 
-  const getStatusBadge = (status: string) => {
-    const map: Record<string, string> = { PENDING: 'badge-pending', IN_PROGRESS: 'badge-active', IN_REVIEW: 'badge-admin', CLOSED: 'badge-active' };
-    return map[status] || 'badge-pending';
-  };
+  // PERF: stable handler reference so memoized rows don't re-render on every keystroke.
+  const handleSelect = useCallback((s: any) => setSelectedStakeholder(s), []);
 
   return (
     <>
@@ -106,21 +133,7 @@ export default function StakeholdersPage() {
               </tr>
             )}
             {stakeholders.map((s: any) => (
-              <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setSelectedStakeholder(s)}>
-                <td style={{ fontWeight: '600', color: 'var(--text-primary)', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {s.companyNameStandardized || s.companyNameOriginal || '—'}
-                </td>
-                <td>{s.district || '—'}</td>
-                <td style={{ fontSize: '13px' }}>{s.city || s.taluka || '—'}</td>
-                <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.pinCode || '—'}</code></td>
-                <td style={{ fontSize: '12px' }}>{s.category || '—'}</td>
-                <td><span className={`badge ${getStatusBadge(s.status)}`}>{(s.status || 'PENDING').replace('_', ' ')}</span></td>
-                <td>
-                  <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); setSelectedStakeholder(s); }}>
-                    📸 View Gallery
-                  </button>
-                </td>
-              </tr>
+              <StakeholderRow key={s.id} s={s} onSelect={handleSelect} />
             ))}
           </tbody>
         </table>
@@ -173,8 +186,10 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   });
 
   const media = mediaData?.data?.data || [];
-  const photos = media.filter((m: any) => m.type === 'PHOTO');
-  const videos = media.filter((m: any) => m.type === 'VIDEO');
+  // PERF: don't re-filter the media array on every modal re-render (edit typing,
+  // lightbox open/close); recompute only when the underlying media changes.
+  const photos = useMemo(() => media.filter((m: any) => m.type === 'PHOTO'), [media]);
+  const videos = useMemo(() => media.filter((m: any) => m.type === 'VIDEO'), [media]);
 
   const updateMut = useMutation({
     mutationFn: (data: any) => updateStakeholder(stakeholder.id, data),
@@ -293,7 +308,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                 <div className="photo-grid">
                   {photos.map((photo: any) => (
                     <div key={photo.id} className="photo-card" onClick={() => setLightbox(photo.fileUrl)}>
-                      <img src={photo.fileUrl} alt="Photo" />
+                      <img src={photo.fileUrl} alt="Photo" loading="lazy" decoding="async" />
                       <div className="photo-card-overlay">
                         <span className="photo-card-category">{categoryLabels[photo.photoCategory] || photo.photoCategory}</span>
                       </div>

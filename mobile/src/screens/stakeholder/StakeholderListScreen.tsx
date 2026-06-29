@@ -165,7 +165,9 @@ export default function StakeholderListScreen({ navigation }: any) {
             removeClippedSubviews={true}
             maxToRenderPerBatch={10}
             windowSize={5}
-            initialNumToRender={10}
+            // PERF: render only what fills the first viewport (~6-7 cards at 120px)
+            // before first paint; the rest stream in via maxToRenderPerBatch.
+            initialNumToRender={6}
             getItemLayout={(data, index) => (
               { length: 120, offset: 120 * index, index }
             )}

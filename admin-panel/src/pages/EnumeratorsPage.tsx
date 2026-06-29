@@ -22,6 +22,9 @@ export default function EnumeratorsPage() {
   const { data: districtsRes } = useQuery({
     queryKey: ['districts'],
     queryFn: getDistricts,
+    // PERF: districts change rarely — cache for 10m so opening/closing the
+    // create/assign modals doesn't refetch the list every time.
+    staleTime: 10 * 60_000,
   });
 
   const enumerators: Enumerator[] = enumeratorsRes?.data?.data || [];
