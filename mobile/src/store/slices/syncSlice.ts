@@ -72,7 +72,7 @@ const syncSlice = createSlice({
     },
     initialSyncFailed: (state, action: PayloadAction<string>) => {
       // Intentionally NOT setting isInitialSyncing to false here so the modal stays open with the error and retry button
-      state.initialSyncError = action.payload;
+      state.initialSyncError   = action.payload;
     },
   },
 });

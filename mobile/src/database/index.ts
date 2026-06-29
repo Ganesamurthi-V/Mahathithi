@@ -472,8 +472,26 @@ export const surveyDao = {
   // Scenario E FIX: find surveys fully synced but whose complete() never got through
   async getPendingCompletion(): Promise<any[]> {
     const database = await getDB();
+    // SCENARIO E BUG FIX: the original query only checked is_synced=1 AND
+    // is_completed=0 on the survey row. This fires prematurely when a media
+    // upload failed mid-sync: the survey text is uploaded (is_synced=1) but
+    // some media rows are still is_synced=0. The old query returned those
+    // surveys as "ready to complete", so Scenario E called complete() on the
+    // server — locking the survey — while media was still pending. The next
+    // sync then tried to upload media to a server-locked survey, which the
+    // server rejected, permanently stranding those files.
+    //
+    // Fix: only treat a survey as stranded-complete when it has NO unsynced
+    // media rows. LEFT JOIN + WHERE m.id IS NULL ensures Scenario E only fires
+    // when every file has already reached the server — the only safe time to
+    // call complete().
     const [results] = await database.executeSql(
-      'SELECT * FROM surveys WHERE is_synced = 1 AND is_completed = 0'
+      `SELECT s.*
+       FROM surveys s
+       LEFT JOIN media m ON m.survey_id = s.id AND m.is_synced = 0
+       WHERE s.is_synced = 1
+         AND s.is_completed = 0
+         AND m.id IS NULL`
     );
     const rows = [];
     for (let i = 0; i < results.rows.length; i++) rows.push(results.rows.item(i));

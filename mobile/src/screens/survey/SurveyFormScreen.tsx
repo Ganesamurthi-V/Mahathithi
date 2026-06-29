@@ -338,6 +338,25 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   // silently upgrading the stored coordinates if so. The overall timeout
   // before showing an error is generous (60s) to match real cold-start GPS
   // behavior, with a coarse-accuracy fallback if even that doesn't produce a fix.
+  //
+  // GPS FIX (second form slow / not fetching):
+  // Two compounding problems caused GPS to be slow or appear broken on the
+  // second and subsequent survey forms in the same session:
+  //
+  // 1. forceLocationManager: true — On Android this bypasses the Fused Location
+  //    Provider (FLP). FLP caches the warm GPS fix from the first form and can
+  //    return it in milliseconds. Raw LocationManager ignores that cache and
+  //    re-scans from scratch, behaving like a cold start even though the chip
+  //    is already warm. Removing this flag lets FLP serve the cached position
+  //    instantly on form 2+.
+  //
+  // 2. No last-known-position seed — captureGPS always started with gpsLoading:
+  //    true and waited for a watch callback before updating the UI, even when a
+  //    fresh, valid fix was sitting in the OS location cache. Adding a
+  //    getLastKnownPosition() call at the top seeds gps state immediately (no
+  //    spinner, no wait) while the watch continues running in the background to
+  //    refine accuracy. This makes form 2 feel instant: the GPS indicator turns
+  //    green before the user even scrolls to the GPS card.
   const captureGPS = async () => {
     setGpsLoading(true);
 
@@ -354,9 +373,48 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       gpsWatchId.current = null;
     }
 
+    // acceptedFirstFix declared before the cache seed so the seed block can
+    // set it to true — preventing the 60s error timeout from firing when the
+    // cache already gave us a perfectly good fix.
     let acceptedFirstFix = false;
     let refinementTimer: ReturnType<typeof setTimeout> | null = null;
     let overallTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Seed from OS cache first — this is the key fix for "second form is slow".
+    // After form 1, the GPS chip is warm and FLP holds a recent fix. Calling
+    // getCurrentPosition with low accuracy + short maximumAge returns that
+    // cached fix in <100ms, so the GPS indicator turns green immediately instead
+    // of spinning for 30-60s again. We only accept it if it's fresh (≤ 2 min)
+    // and plausibly accurate (≤ 200m). The watchPosition below continues in the
+    // background to refine further and overwrites with a better fix if one arrives.
+    try {
+      const lastKnown = await new Promise<any>((resolve, reject) => {
+        Geolocation.getCurrentPosition(
+          resolve,
+          reject,
+          {
+            enableHighAccuracy: false,   // low-accuracy = FLP cache path, near-instant
+            timeout: 2000,               // give up quickly if nothing is cached
+            maximumAge: 120000,          // accept fixes up to 2 minutes old
+          }
+        );
+      });
+      const ageSec = (Date.now() - lastKnown.timestamp) / 1000;
+      if (lastKnown.coords.accuracy <= 200 && ageSec <= 120) {
+        // Good enough cached fix — unblock the form immediately.
+        const { latitude, longitude, accuracy } = lastKnown.coords;
+        setGps({ latitude, longitude, accuracy });
+        setGpsLoading(false);
+        autoFillNearestFacilities(latitude, longitude);
+        // Mark accepted so the 60s error timeout and the watch's first-fix
+        // branch both know we already have a valid location.
+        acceptedFirstFix = true;
+        // Fall through: watchPosition below will refine if a better fix arrives.
+      }
+    } catch {
+      // No cached fix (true cold start on form 1, or cache expired). Normal —
+      // just fall through to the watchPosition loop below.
+    }
 
     const stopWatch = () => {
       if (gpsWatchId.current !== null) {
@@ -370,6 +428,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     // Overall safety net: if NO fix at all arrives within 60s (GPS hardware
     // issue, deeply indoors, obstructed sky), surface the error. This is much
     // more realistic than the original 15s for an offline cold start.
+    // If the cache seed above already populated gps, the 60s timer is a
+    // background refinement window — we won't show an error if it expires,
+    // because acceptedFirstFix will already be true from the seed path below.
     overallTimeoutTimer = setTimeout(() => {
       if (!acceptedFirstFix) {
         stopWatch();
@@ -390,7 +451,8 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         setGps({ latitude: lat, longitude: lng, accuracy });
 
         if (!acceptedFirstFix) {
-          // First fix of any accuracy — unblock the form immediately.
+          // First fix of any accuracy from the watch — unblock the form if the
+          // cache seed above didn't already do so.
           acceptedFirstFix = true;
           setGpsLoading(false);
           autoFillNearestFacilities(lat, lng);
@@ -406,8 +468,8 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       },
       (error) => {
         // Only surface an error if we truly never got any fix — if we already
-        // accepted one, a later watch error (e.g. signal dropped during
-        // refinement) shouldn't undo a location the user already has.
+        // accepted one (either from the cache seed or a prior watch callback),
+        // a later watch error shouldn't undo a location the user already has.
         if (!acceptedFirstFix) {
           stopWatch();
           setGpsLoading(false);
@@ -419,7 +481,11 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         distanceFilter: 0,
         forceRequestLocation: true,
         showLocationDialog: true,
-        forceLocationManager: true,
+        // NOTE: forceLocationManager intentionally removed. Setting it true
+        // bypasses Android's Fused Location Provider, which caches the warm
+        // GPS fix from the previous form and can serve it in milliseconds.
+        // Raw LocationManager ignores that cache and rescans from scratch —
+        // that's why form 2+ felt like a cold start even with the chip warm.
       }
     );
   };
@@ -469,7 +535,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           Geolocation.clearWatch(watchId);
           resolve(null);
         },
-        { enableHighAccuracy: true, forceLocationManager: true }
+        { enableHighAccuracy: true }  // forceLocationManager removed: let FLP serve warm-chip cache on form 2+
       );
       // Matches captureGPS()'s overall timeout — see comment above. Must stay
       // in sync with that value; both reflect the same real-world cold-start

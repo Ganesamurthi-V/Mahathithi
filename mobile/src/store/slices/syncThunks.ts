@@ -110,6 +110,25 @@ export const runAutoSync = createAsyncThunk(
 
     const netState = await NetInfo.fetch();
     if (!netState.isConnected) {
+      // SYNC BUTTON FIX: previously this returned silently with no Redux
+      // dispatch, so the UI had no idea the thunk ran and exited. The sync
+      // button remained enabled (good) but tapping it appeared to do nothing
+      // — the thunk entered, hit this branch, and vanished. Now we dispatch
+      // syncFailed so the Redux state reflects a completed (failed) attempt,
+      // counts are refreshed, and any screen listening to sync state gets
+      // an update. We still don't show an alert here (this is auto-sync;
+      // the SyncStatusScreen's own NetInfo check surfaces the offline state
+      // to the user through the badge and button label).
+      dispatch(startSync());
+      dispatch(syncFailed('No internet connection'));
+      try {
+        const pending = await syncQueueDao.getPendingCount();
+        const failed = await syncQueueDao.getFailedCount();
+        const dead = await syncQueueDao.getDeadLetterCount();
+        dispatch(setPendingCount(pending));
+        dispatch(setFailedCount(failed));
+        dispatch(setDeadLetterCount(dead));
+      } catch { /* best-effort */ }
       isAutoSyncRunning = false;
       return;
     }
