@@ -7,9 +7,12 @@ const syncService = new SyncService();
 export class SyncController {
   async upload(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      // H1 FIX: pass caller's districts and admin flag for district enforcement
       const results = await syncService.processUpload(
         req.enumerator!.id,
-        req.body
+        req.body,
+        req.enumerator!.districts,
+        req.enumerator!.isAdmin
       );
 
       res.json({ success: true, data: results });

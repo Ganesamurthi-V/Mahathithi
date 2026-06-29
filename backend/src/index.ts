@@ -31,16 +31,33 @@ app.set('trust proxy', 1);
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
+// M3 FIX: removed 'http://localhost:5173' from production CORS allowlist
 app.use(cors({
   origin: config.env === 'production'
-    ? ['https://mahaatithi.gov.in', 'http://localhost:5173']
+    ? ['https://mahaatithi.gov.in']
     : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'],
   credentials: true,
 }));
 app.use(compression());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// M1 FIX: lowered global body limit from 50MB to 1MB.
+// The 50MB limit is applied only on the sync upload route (see sync.routes.ts).
+// Applying it globally let anyone abuse cheap endpoints like /auth/login
+// with huge payloads, creating easy memory-pressure attacks.
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(generalLimiter);
+
+// M6 FIX: in production, redirect plain HTTP to HTTPS.
+// Railway already terminates TLS, but making the app enforce it too provides
+// a safety net in case the TLS offload config is ever changed.
+if (config.env === 'production') {
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.headers['x-forwarded-proto'] !== 'https') {
+      return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+  });
+}
 
 // ============================================================================
 // ROUTES

@@ -1,5 +1,8 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../utils/logger';
+import { ValidationError } from '../../utils/errors';
+
+const MAX_BATCH_ITEMS = 200;
 
 interface SyncPayload {
   surveys: any[];
@@ -12,23 +15,47 @@ export class SyncService {
    * Process batch upload from offline device.
    * First-to-sync-wins conflict resolution.
    */
-  async processUpload(enumeratorId: string, payload: SyncPayload) {
+  // H1 FIX: accept districts and isAdmin so we can enforce district scope
+  async processUpload(enumeratorId: string, payload: SyncPayload, districts: string[], isAdmin: boolean) {
     const results = {
       surveys: { success: 0, failed: 0, errors: [] as string[] },
       phoneValidations: { success: 0, failed: 0, errors: [] as string[] },
       media: { success: 0, failed: 0, errors: [] as string[] },
     };
 
+    // M2 FIX: cap array sizes so a malicious payload can't generate unbounded
+    // sequential DB round-trips within the body size limit
+    if ((payload.surveys?.length || 0) > MAX_BATCH_ITEMS || (payload.phoneValidations?.length || 0) > MAX_BATCH_ITEMS) {
+      throw new ValidationError(`Batch too large. Maximum ${MAX_BATCH_ITEMS} items per array per request.`);
+    }
+
     // Process surveys
     for (const surveyData of (payload.surveys || [])) {
       try {
-        // Check if stakeholder is already locked by another enumerator
         const stakeholder = await prisma.stakeholder.findUnique({
           where: { id: surveyData.stakeholderId },
-          select: { lockedById: true, status: true },
+          select: { lockedById: true, status: true, district: true },
         });
 
-        if (stakeholder?.lockedById && stakeholder.lockedById !== enumeratorId) {
+        if (!stakeholder) {
+          results.surveys.failed++;
+          results.surveys.errors.push(`Stakeholder ${surveyData.stakeholderId}: not found`);
+          continue;
+        }
+
+        // H1 FIX: enforce district scope — same rule as every other endpoint
+        if (!isAdmin) {
+          const inDistrict = districts.some(
+            (d) => d.toUpperCase() === stakeholder.district?.toUpperCase()
+          );
+          if (!inDistrict) {
+            results.surveys.failed++;
+            results.surveys.errors.push(`Stakeholder ${surveyData.stakeholderId}: outside assigned districts`);
+            continue;
+          }
+        }
+
+        if (stakeholder.lockedById && stakeholder.lockedById !== enumeratorId) {
           results.surveys.failed++;
           results.surveys.errors.push(
             `Stakeholder ${surveyData.stakeholderId}: already completed by another enumerator`

@@ -18,13 +18,19 @@ export class DashboardService {
       }),
     ]);
 
-    // Get sync stats
+    // M4 FIX: scope sync counts to the calling enumerator for non-admins.
+    // Previously every enumerator's dashboard showed the system-wide backlog
+    // count — an information leak inconsistent with the district-scoping applied
+    // to everything else on the same endpoint.
+    const syncFilter = isAdmin
+      ? {}
+      : { enumeratorId }; // scope to this enumerator's own queue items
+
     const [pendingSync, failedSync] = await Promise.all([
-      prisma.syncQueue.count({ where: { status: 'PENDING' } }),
-      prisma.syncQueue.count({ where: { status: 'FAILED' } }),
+      prisma.syncQueue.count({ where: { ...syncFilter, status: 'PENDING' } }),
+      prisma.syncQueue.count({ where: { ...syncFilter, status: 'FAILED' } }),
     ]);
 
-    // My surveys count
     const mySurveys = await prisma.survey.count({
       where: { enumeratorId },
     });
@@ -43,3 +49,4 @@ export class DashboardService {
     };
   }
 }
+

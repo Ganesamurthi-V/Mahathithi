@@ -341,10 +341,13 @@ export class StakeholderService {
       throw new ConflictError('This stakeholder is locked by another enumerator');
     }
 
-    // Filter to only allow safe fields to be updated
+    // C6 FIX: district & state intentionally removed from this list.
+    // District is the entire access-control boundary — letting an enumerator
+    // re-assign a record to their own district would defeat all isolation.
+    // Use the admin-only PATCH /admin/stakeholders/:id/relocate for that.
     const allowedFields = [
-      'companyNameStandardized', 'addressLine1', 'addressLine2', 
-      'city', 'taluka', 'village', 'district', 'state', 'pinCode', 'category'
+      'companyNameStandardized', 'addressLine1', 'addressLine2',
+      'city', 'taluka', 'village', 'pinCode', 'category',
     ];
     
     const updateData: any = {};

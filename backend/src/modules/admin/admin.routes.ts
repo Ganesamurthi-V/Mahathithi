@@ -6,7 +6,29 @@ import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { ValidationError, NotFoundError } from '../../utils/errors';
 
-const router = Router();
+/**
+ * L1 FIX: enforce minimum password strength before hashing.
+ * Requirements: 10+ chars, uppercase, lowercase, digit, special character.
+ * Applied to both create and update enumerator routes.
+ */
+function validatePassword(password: string): void {
+  if (password.length < 10) {
+    throw new ValidationError('Password must be at least 10 characters long');
+  }
+  if (!/[A-Z]/.test(password)) {
+    throw new ValidationError('Password must contain at least one uppercase letter');
+  }
+  if (!/[a-z]/.test(password)) {
+    throw new ValidationError('Password must contain at least one lowercase letter');
+  }
+  if (!/[0-9]/.test(password)) {
+    throw new ValidationError('Password must contain at least one digit');
+  }
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    throw new ValidationError('Password must contain at least one special character (!@#$%^&* etc.)');
+  }
+}
+
 
 router.use(authMiddleware);
 router.use(adminOnly);
@@ -54,6 +76,9 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
     if (!loginId || !password || !name) {
       throw new ValidationError('Login ID, password, and name are required');
     }
+
+    // L1 FIX: enforce password strength before hashing
+    validatePassword(password);
 
     const passwordHash = await bcrypt.hash(password, 12);
 
@@ -104,7 +129,11 @@ router.patch('/enumerators/:id', async (req: AuthenticatedRequest, res: Response
     if (phone !== undefined) updateData.phone = phone;
     if (email !== undefined) updateData.email = email;
     if (isActive !== undefined) updateData.isActive = isActive;
-    if (password) updateData.passwordHash = await bcrypt.hash(password, 12);
+    if (password) {
+      // L1 FIX: enforce password strength on updates too
+      validatePassword(password);
+      updateData.passwordHash = await bcrypt.hash(password, 12);
+    }
 
     const enumerator = await prisma.enumerator.update({
       where: { id: (req.params.id as string) },

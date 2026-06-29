@@ -14,11 +14,12 @@ export class SurveyController {
         throw new ValidationError('Stakeholder ID is required');
       }
 
-      const survey = await surveyService.createOrUpdate({
-        stakeholderId,
-        enumeratorId: req.enumerator!.id,
-        ...surveyData,
-      });
+      // C2 FIX: pass the caller's districts and admin flag for district enforcement
+      const survey = await surveyService.createOrUpdate(
+        { stakeholderId, enumeratorId: req.enumerator!.id, ...surveyData },
+        req.enumerator!.districts,
+        req.enumerator!.isAdmin
+      );
 
       res.json({ success: true, data: survey });
     } catch (error) {
@@ -28,7 +29,12 @@ export class SurveyController {
 
   async getByStakeholder(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const survey = await surveyService.getByStakeholderId((req.params.stakeholderId as string));
+      // C2 FIX: pass districts and isAdmin so service can enforce district access
+      const survey = await surveyService.getByStakeholderId(
+        req.params.stakeholderId as string,
+        req.enumerator!.districts,
+        req.enumerator!.isAdmin
+      );
       res.json({ success: true, data: survey });
     } catch (error) {
       next(error);

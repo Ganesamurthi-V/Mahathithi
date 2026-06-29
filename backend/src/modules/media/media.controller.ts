@@ -19,21 +19,26 @@ export class MediaController {
         throw new ValidationError('Survey ID and type are required');
       }
 
-      const media = await mediaService.upload({
-        enumeratorId: req.enumerator!.id,
-        surveyId,
-        type: type as 'PHOTO' | 'VIDEO',
-        photoCategory,
-        fileName: file.originalname,
-        fileBuffer: file.buffer,
-        mimeType: file.mimetype,
-        fileSize: file.size,
-        latitude: latitude ? parseFloat(latitude) : undefined,
-        longitude: longitude ? parseFloat(longitude) : undefined,
-        gpsAccuracy: gpsAccuracy ? parseFloat(gpsAccuracy) : undefined,
-        duration: duration ? parseInt(duration, 10) : undefined,
-        localId,
-      });
+      // C3/C4 FIX: pass caller's districts and admin flag so service can enforce access
+      const media = await mediaService.upload(
+        {
+          enumeratorId: req.enumerator!.id,
+          surveyId,
+          type: type as 'PHOTO' | 'VIDEO',
+          photoCategory,
+          fileName: file.originalname,
+          fileBuffer: file.buffer,
+          mimeType: file.mimetype,
+          fileSize: file.size,
+          latitude: latitude ? parseFloat(latitude) : undefined,
+          longitude: longitude ? parseFloat(longitude) : undefined,
+          gpsAccuracy: gpsAccuracy ? parseFloat(gpsAccuracy) : undefined,
+          duration: duration ? parseInt(duration, 10) : undefined,
+          localId,
+        },
+        req.enumerator!.districts,
+        req.enumerator!.isAdmin
+      );
 
       res.json({ success: true, data: media });
     } catch (error) {
@@ -43,7 +48,13 @@ export class MediaController {
 
   async getBySurvey(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const media = await mediaService.getBySurvey((req.params.surveyId as string));
+      // C3 FIX: pass caller context for district enforcement
+      const media = await mediaService.getBySurvey(
+        req.params.surveyId as string,
+        req.enumerator!.id,
+        req.enumerator!.districts,
+        req.enumerator!.isAdmin
+      );
       res.json({ success: true, data: media });
     } catch (error) {
       next(error);
@@ -52,7 +63,12 @@ export class MediaController {
 
   async delete(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      await mediaService.delete((req.params.id as string));
+      // C3 FIX: pass caller context for ownership enforcement
+      await mediaService.delete(
+        req.params.id as string,
+        req.enumerator!.id,
+        req.enumerator!.isAdmin
+      );
       res.json({ success: true, message: 'Media deleted' });
     } catch (error) {
       next(error);

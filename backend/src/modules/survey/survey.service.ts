@@ -1,5 +1,6 @@
 import { prisma } from '../../config/database';
 import { NotFoundError, ValidationError, ConflictError } from '../../utils/errors';
+import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
 import { StakeholderService } from '../stakeholder/stakeholder.service';
 
@@ -31,7 +32,8 @@ export class SurveyService {
   /**
    * Create or update a survey for a stakeholder
    */
-  async createOrUpdate(data: CreateSurveyData) {
+  // C2 FIX: accept caller's districts and admin flag so we can enforce district isolation
+  async createOrUpdate(data: CreateSurveyData, enumeratorDistricts: string[], isAdmin: boolean) {
     // Check if stakeholder exists and is accessible
     const stakeholder = await prisma.stakeholder.findUnique({
       where: { id: data.stakeholderId },
@@ -40,6 +42,9 @@ export class SurveyService {
     if (!stakeholder) {
       throw new NotFoundError('Stakeholder');
     }
+
+    // C2 FIX: enforce district-based access before any write
+    assertStakeholderAccess(stakeholder, enumeratorDistricts, isAdmin);
 
     // Check if locked by another enumerator
     if (stakeholder.lockedById && stakeholder.lockedById !== data.enumeratorId) {
@@ -114,7 +119,13 @@ export class SurveyService {
   /**
    * Get survey for a stakeholder
    */
-  async getByStakeholderId(stakeholderId: string) {
+  // C2 FIX: enforce district-based access on read path too
+  async getByStakeholderId(stakeholderId: string, enumeratorDistricts: string[], isAdmin: boolean) {
+    // Load the stakeholder first so we can check district access
+    const stakeholder = await prisma.stakeholder.findUnique({ where: { id: stakeholderId } });
+    if (!stakeholder) throw new NotFoundError('Stakeholder');
+    assertStakeholderAccess(stakeholder, enumeratorDistricts, isAdmin);
+
     const survey = await prisma.survey.findFirst({
       where: { stakeholderId },
       include: {

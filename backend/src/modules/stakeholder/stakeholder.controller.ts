@@ -80,8 +80,12 @@ export class StakeholderController {
   async updateStatus(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { status } = req.body;
-      if (!status || !['PENDING', 'IN_PROGRESS', 'IN_REVIEW', 'COMPLETED'].includes(status)) {
-        throw new ValidationError('Invalid status value');
+      // H3 FIX: validate against the real Prisma enum — StakeholderStatus is OPEN/CLOSED,
+      // NOT the old ['PENDING','IN_PROGRESS','IN_REVIEW','COMPLETED'] that made this
+      // endpoint permanently broken (Prisma would throw a cast error on every call).
+      const validStatuses = ['OPEN', 'CLOSED'];
+      if (!status || !validStatuses.includes(status)) {
+        throw new ValidationError(`Invalid status value. Must be one of: ${validStatuses.join(', ')}`);
       }
 
       const result = await stakeholderService.updateStatus(

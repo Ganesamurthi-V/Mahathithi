@@ -12,10 +12,12 @@
     "db:generate": "prisma generate",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
+    "db:cleanup-sessions": "tsx src/scripts/cleanupSessions.ts",
     "import:csv": "tsx scripts/import-csv.ts",
     "import:health": "tsx scripts/import-health-facilities.ts",
     "lint": "eslint src/",
-    "test": "jest"
+    "test": "jest",
+    "audit": "npm audit --production"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
