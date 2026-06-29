@@ -223,6 +223,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const [compressing, setCompressing] = useState(false);
   
   const scrollViewRef = useRef<ScrollView>(null);
+  const isSubmitSuccessRef = useRef(false);
+
+
 
   useEffect(() => {
     if (scrollViewRef.current) {
@@ -230,7 +233,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     }
   }, [currentStep]);
 
-  const { control, handleSubmit, formState: { errors }, watch, setValue } = useForm<SurveyFormData>({
+  const { control, handleSubmit, formState: { errors, isDirty }, watch, setValue } = useForm<SurveyFormData>({
     mode: 'onChange',
     defaultValues: {
       contactPerson: existingSurvey?.contactPerson || '',
@@ -250,6 +253,30 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   });
 
   const watchAllFields = watch();
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
+      // Allow navigation if form was successfully submitted
+      if (isSubmitSuccessRef.current) return;
+
+      // Check if user has made any changes
+      const hasMedia = Object.keys(photos).length > 0 || video !== null;
+      if (!isDirty && !hasMedia) return;
+
+      // Prevent default navigation
+      e.preventDefault();
+
+      Alert.alert(
+        'Discard changes?',
+        'You have unsaved changes. Are you sure you want to go back and discard them?',
+        [
+          { text: 'Keep Editing', style: 'cancel', onPress: () => {} },
+          { text: 'Discard', style: 'destructive', onPress: () => navigation.dispatch(e.data.action) },
+        ]
+      );
+    });
+    return unsubscribe;
+  }, [navigation, isDirty, photos, video]);
 
   useEffect(() => {
     // Calculate progress
@@ -816,6 +843,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         Alert.alert('Saved Offline', 'Survey and media saved locally. They will sync when you are back online.');
       }
 
+      isSubmitSuccessRef.current = true;
       navigation.navigate('Main', { screen: 'Stakeholders' });
     } catch (e: any) {
       console.error('❌ [Survey] Failed to save locally:', e);
