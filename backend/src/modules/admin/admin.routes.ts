@@ -29,6 +29,7 @@ function validatePassword(password: string): void {
   }
 }
 
+const router = Router();
 
 router.use(authMiddleware);
 router.use(adminOnly);

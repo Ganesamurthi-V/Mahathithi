@@ -28,8 +28,23 @@ app.set('trust proxy', 1);
 // MIDDLEWARE
 // ============================================================================
 
+// C8 FIX: add a strict Content-Security-Policy as the minimum-viable mitigation
+// for the admin panel storing tokens in localStorage. A locked-down CSP shrinks
+// the XSS surface that could read those tokens. (The long-term fix remains moving
+// the admin session to httpOnly+Secure+SameSite cookies.)
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'", 'https://mahaatithi.gov.in'],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+    },
+  },
 }));
 // M3 FIX: removed 'http://localhost:5173' from production CORS allowlist
 app.use(cors({

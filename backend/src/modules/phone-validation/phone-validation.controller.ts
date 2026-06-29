@@ -19,6 +19,15 @@ export class PhoneValidationController {
         throw new ValidationError('Invalid verification status');
       }
 
+      // C5/N4 FIX: enforce district access on the write path too. The read and
+      // update paths were patched, but create still allowed any enumerator to
+      // record a phone validation against a stakeholder in another district (IDOR).
+      const stakeholder = await prisma.stakeholder.findUnique({
+        where: { id: stakeholderId },
+      });
+      if (!stakeholder) throw new NotFoundError('Stakeholder');
+      assertStakeholderAccess(stakeholder, req.enumerator!.districts, req.enumerator!.isAdmin);
+
       const validation = await prisma.phoneValidation.create({
         data: {
           stakeholderId,

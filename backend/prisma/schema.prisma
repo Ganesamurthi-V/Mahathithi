@@ -74,6 +74,9 @@ model Session {
   isValid       Boolean  @default(true) @map("is_valid")
   expiresAt     DateTime @map("expires_at")
   createdAt     DateTime @default(now()) @map("created_at")
+  // L5 FIX: needed by cleanupSessions.ts to apply a 24h grace period before
+  // purging invalidated sessions (filters on when the row was last modified).
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
 
   // Relations
   enumerator    Enumerator @relation(fields: [enumeratorId], references: [id], onDelete: Cascade)
@@ -267,11 +270,17 @@ model Media {
   syncedAt        DateTime?     @map("synced_at")
   createdAt       DateTime      @default(now()) @map("created_at")
 
+  // L6/N2 FIX: soft-delete tombstone. media.delete marks this before removing the
+  // S3 object so a failed S3 delete leaves a row a cleanup job can retry, and so
+  // queries never reference a file that is already gone. Excluded from getBySurvey.
+  deletedAt       DateTime?     @map("deleted_at")
+
   // Relations
   survey          Survey        @relation(fields: [surveyId], references: [id], onDelete: Cascade)
 
   @@index([surveyId])
   @@index([type])
+  @@index([deletedAt])
   @@map("media")
 }
 
@@ -330,6 +339,10 @@ enum SyncAction {
 
 model SyncQueue {
   id           String     @id @default(uuid())
+  // N1/M4 FIX: column the dashboard's per-enumerator sync filter relies on.
+  // Without it, prisma.syncQueue.count({ where: { enumeratorId } }) throws and
+  // GET /dashboard/stats 500s for every non-admin user.
+  enumeratorId String?    @map("enumerator_id")
   entityType   String     @map("entity_type")    // survey, media, phone_validation
   entityId     String     @map("entity_id")
   action       SyncAction @map("action")
@@ -344,6 +357,7 @@ model SyncQueue {
 
   @@index([status])
   @@index([entityType, entityId])
+  @@index([enumeratorId])
   @@map("sync_queue")
 }
 

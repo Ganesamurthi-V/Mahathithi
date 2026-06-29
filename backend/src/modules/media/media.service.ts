@@ -73,7 +73,7 @@ export class MediaService {
 
     if (data.type === 'PHOTO') {
       const existingPhotos = await prisma.media.count({
-        where: { surveyId: resolvedSurveyId, type: 'PHOTO' },
+        where: { surveyId: resolvedSurveyId, type: 'PHOTO', deletedAt: null },
       });
       if (existingPhotos >= 50) {
         throw new Error('Maximum 50 photos allowed per survey');
@@ -82,7 +82,7 @@ export class MediaService {
 
     if (data.type === 'VIDEO') {
       const existingVideos = await prisma.media.count({
-        where: { surveyId: resolvedSurveyId, type: 'VIDEO' },
+        where: { surveyId: resolvedSurveyId, type: 'VIDEO', deletedAt: null },
       });
       if (existingVideos >= 10) {
         throw new Error('Maximum 10 videos allowed per survey');
@@ -150,8 +150,9 @@ export class MediaService {
       if (!inDistrict) throw new ForbiddenError('Not assigned to this district');
     }
 
+    // L6/N2 FIX: never surface soft-deleted (tombstoned) media in listings
     const media = await prisma.media.findMany({
-      where: { surveyId },
+      where: { surveyId, deletedAt: null },
       orderBy: { capturedAt: 'asc' },
     });
 
