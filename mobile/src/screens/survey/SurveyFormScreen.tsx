@@ -5,10 +5,11 @@ import {
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import Geolocation from 'react-native-geolocation-service';
-import { useSelector } from 'react-redux';
-import { RootState } from '../../store';
+import { useSelector, useDispatch } from 'react-redux';
+import { RootState, AppDispatch } from '../../store';
 import { surveyService, mediaService } from '../../services/api';
 import { surveyDao, syncQueueDao, mediaDao, facilityDao, stakeholderDao } from '../../database';
+import { refreshSyncCountsThunk } from '../../store/slices/syncThunks';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows, iconSizes } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
@@ -202,6 +203,7 @@ const AutocompleteInput = ({ field, control, errors, onFocus, onBlur, setValue }
 export default function SurveyFormScreen({ route, navigation }: any) {
   const { stakeholderId, stakeholder, survey: existingSurvey } = route.params;
   const { user } = useSelector((state: RootState) => state.auth);
+  const dispatch = useDispatch<AppDispatch>();
   const [gps, setGps] = useState<{ latitude: number; longitude: number; accuracy: number } | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
   // GPS FIX: tracks the active watchPosition subscription so it can be cleared
@@ -800,11 +802,13 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           // Network upload failed — data is safe locally, queue for background sync
           console.warn('⚠️ [Survey] Server upload failed, queued for background sync.', uploadError);
           await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
+          dispatch(refreshSyncCountsThunk() as any);
           Alert.alert('Saved Locally', 'Survey saved to your device. It will sync automatically when internet is available.');
         }
       } else {
         // Offline — queue for background sync
         await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
+        dispatch(refreshSyncCountsThunk() as any);
         Alert.alert('Saved Offline', 'Survey and media saved locally. They will sync when you are back online.');
       }
 

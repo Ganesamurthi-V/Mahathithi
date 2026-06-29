@@ -101,16 +101,21 @@ export const runInitialSync = createAsyncThunk(
 // they are NOT in sync_queue. The old count refresh only queried sync_queue,
 // so the Sync Center always showed 0 pending even with many surveys waiting.
 // This helper aggregates all three sources so the UI reflects reality.
+export const refreshSyncCountsThunk = createAsyncThunk(
+  'sync/refreshCounts',
+  async (_, { dispatch }) => {
+    await refreshSyncCounts(dispatch);
+  }
+);
+
 const refreshSyncCounts = async (dispatch: any) => {
-  const [pending, failed, dead, unsyncedSurveys, unsyncedMedia] = await Promise.all([
-    syncQueueDao.getPendingCount(),
+  const [pending, failed, dead] = await Promise.all([
+    syncQueueDao.getLogicalPendingCount(),
     syncQueueDao.getFailedCount(),
     syncQueueDao.getDeadLetterCount(),
-    surveyDao.getUnsyncedCount(),
-    mediaDao.getUnsyncedCount(),
   ]);
-  // pendingCount = sync_queue PENDING items + unsynced survey texts + unsynced media files
-  dispatch(setPendingCount(pending + unsyncedSurveys + unsyncedMedia));
+  
+  dispatch(setPendingCount(pending));
   dispatch(setFailedCount(failed));
   dispatch(setDeadLetterCount(dead));
 };

@@ -754,6 +754,25 @@ export const syncQueueDao = {
     return results.rows.item(0).count;
   },
 
+  async getLogicalPendingCount(): Promise<number> {
+    const database = await getDB();
+    const [syncQueueResult] = await database.executeSql(
+      "SELECT COUNT(*) as count FROM sync_queue WHERE status = 'PENDING' AND entity_type != 'survey'"
+    );
+    const pendingSyncQueue = syncQueueResult.rows.item(0).count;
+
+    const [surveyResult] = await database.executeSql(`
+      SELECT COUNT(DISTINCT id) as count FROM (
+        SELECT id FROM surveys WHERE is_synced = 0
+        UNION
+        SELECT survey_id as id FROM media WHERE is_synced = 0
+      )
+    `);
+    const pendingSurveys = surveyResult.rows.item(0).count;
+
+    return pendingSyncQueue + pendingSurveys;
+  },
+
   // SYNC FIX: "failed" now specifically means "still retrying automatically" —
   // distinct from dead-lettered, so the count the user sees isn't alarming for
   // something that's already self-healing in the background.
