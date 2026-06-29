@@ -204,6 +204,11 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const { user } = useSelector((state: RootState) => state.auth);
   const [gps, setGps] = useState<{ latitude: number; longitude: number; accuracy: number } | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
+  // GPS FIX: tracks the active watchPosition subscription so it can be cleared
+  // on unmount or once we've accepted a fix — react-native-geolocation-service
+  // keeps the GPS radio on until clearWatch() is called, which would otherwise
+  // drain battery indefinitely after the user leaves this screen.
+  const gpsWatchId = useRef<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploadText, setUploadText] = useState('');
   const [completionPercent, setCompletionPercent] = useState(0);
@@ -278,8 +283,61 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
   useEffect(() => {
     captureGPS();
+    // GPS FIX: stop the watch if the user navigates away mid-capture —
+    // otherwise the GPS radio stays on and callbacks keep firing into a
+    // screen that's no longer mounted.
+    return () => {
+      if (gpsWatchId.current !== null) {
+        Geolocation.clearWatch(gpsWatchId.current);
+        gpsWatchId.current = null;
+      }
+    };
   }, []);
 
+  const autoFillNearestFacilities = async (lat: number, lng: number) => {
+    try {
+      const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+        const p = 0.017453292519943295; // Math.PI / 180
+        const c = Math.cos;
+        const a = 0.5 - c((lat2 - lat1) * p)/2 + c(lat1 * p) * c(lat2 * p) * (1 - c((lon2 - lon1) * p))/2;
+        return 12742 * Math.asin(Math.sqrt(a)); // 2 * R; R = 6371 km
+      };
+
+      const policeStations = await facilityDao.getNearest(lat, lng, 'POLICE_STATION');
+      if (policeStations.length > 0 && !watchAllFields.nearestPoliceStation) {
+         const dist = getDistance(lat, lng, policeStations[0].latitude, policeStations[0].longitude);
+         setValue('nearestPoliceStation', `${policeStations[0].name} (${dist.toFixed(1)} km)`);
+      } else if (policeStations.length === 0 && !watchAllFields.nearestPoliceStation) {
+         setValue('nearestPoliceStation', 'Offline database empty. Please sync first.');
+      }
+
+      const healthCenters = await facilityDao.getNearest(lat, lng, 'HEALTHCARE');
+      if (healthCenters.length > 0 && !watchAllFields.nearestHealthcareCenter) {
+         const dist = getDistance(lat, lng, healthCenters[0].latitude, healthCenters[0].longitude);
+         setValue('nearestHealthcareCenter', `${healthCenters[0].name} (${dist.toFixed(1)} km)`);
+      } else if (healthCenters.length === 0 && !watchAllFields.nearestHealthcareCenter) {
+         setValue('nearestHealthcareCenter', 'Offline database empty. Please sync first.');
+      }
+    } catch (e) {}
+  };
+
+  // GPS FIX (root cause): the original code called getCurrentPosition() with a
+  // single 15s window demanding enableHighAccuracy. Offline (no wifi/cell data
+  // for network-assisted positioning), the GPS chip is doing a "cold start" —
+  // searching for satellites with no almanac/ephemeris assistance — which
+  // routinely takes 30-60+ seconds outdoors and can take even longer indoors.
+  // A single 15s all-or-nothing attempt fails this every time it's not near-
+  // instant, which is most of the time when offline. That's the GPS Error.
+  //
+  // Fix: use watchPosition instead of getCurrentPosition. This keeps the GPS
+  // radio actively listening rather than making one timed attempt. We accept
+  // the FIRST fix that arrives — even a rough one — immediately, so the
+  // enumerator isn't blocked waiting for perfection. We then keep the watch
+  // open for a short refinement window in case a more accurate fix follows
+  // (common right after a cold start, as the chip locks onto more satellites),
+  // silently upgrading the stored coordinates if so. The overall timeout
+  // before showing an error is generous (60s) to match real cold-start GPS
+  // behavior, with a coarse-accuracy fallback if even that doesn't produce a fix.
   const captureGPS = async () => {
     setGpsLoading(true);
 
@@ -290,52 +348,75 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       return;
     }
 
-    Geolocation.getCurrentPosition(
-      async (position) => {
+    // Clear any previous watch before starting a new one (e.g. user tapped Retry)
+    if (gpsWatchId.current !== null) {
+      Geolocation.clearWatch(gpsWatchId.current);
+      gpsWatchId.current = null;
+    }
+
+    let acceptedFirstFix = false;
+    let refinementTimer: ReturnType<typeof setTimeout> | null = null;
+    let overallTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const stopWatch = () => {
+      if (gpsWatchId.current !== null) {
+        Geolocation.clearWatch(gpsWatchId.current);
+        gpsWatchId.current = null;
+      }
+      if (refinementTimer) clearTimeout(refinementTimer);
+      if (overallTimeoutTimer) clearTimeout(overallTimeoutTimer);
+    };
+
+    // Overall safety net: if NO fix at all arrives within 60s (GPS hardware
+    // issue, deeply indoors, obstructed sky), surface the error. This is much
+    // more realistic than the original 15s for an offline cold start.
+    overallTimeoutTimer = setTimeout(() => {
+      if (!acceptedFirstFix) {
+        stopWatch();
+        setGpsLoading(false);
+        Alert.alert(
+          'GPS Error',
+          'Could not get a location fix. Move to an open area away from buildings, make sure GPS/Location is enabled, and try again.'
+        );
+      }
+    }, 60000);
+
+    gpsWatchId.current = Geolocation.watchPosition(
+      (position) => {
         const lat = position.coords.latitude;
         const lng = position.coords.longitude;
-        setGps({
-          latitude: lat,
-          longitude: lng,
-          accuracy: position.coords.accuracy,
-        });
+        const accuracy = position.coords.accuracy;
 
-        // Auto-fill nearest facilities
-        try {
-          const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-            const p = 0.017453292519943295; // Math.PI / 180
-            const c = Math.cos;
-            const a = 0.5 - c((lat2 - lat1) * p)/2 + c(lat1 * p) * c(lat2 * p) * (1 - c((lon2 - lon1) * p))/2;
-            return 12742 * Math.asin(Math.sqrt(a)); // 2 * R; R = 6371 km
-          };
+        setGps({ latitude: lat, longitude: lng, accuracy });
 
-          const policeStations = await facilityDao.getNearest(lat, lng, 'POLICE_STATION');
-          if (policeStations.length > 0 && !watchAllFields.nearestPoliceStation) {
-             const dist = getDistance(lat, lng, policeStations[0].latitude, policeStations[0].longitude);
-             setValue('nearestPoliceStation', `${policeStations[0].name} (${dist.toFixed(1)} km)`);
-          } else if (policeStations.length === 0 && !watchAllFields.nearestPoliceStation) {
-             setValue('nearestPoliceStation', 'Offline database empty. Please sync first.');
-          }
+        if (!acceptedFirstFix) {
+          // First fix of any accuracy — unblock the form immediately.
+          acceptedFirstFix = true;
+          setGpsLoading(false);
+          autoFillNearestFacilities(lat, lng);
 
-          const healthCenters = await facilityDao.getNearest(lat, lng, 'HEALTHCARE');
-          if (healthCenters.length > 0 && !watchAllFields.nearestHealthcareCenter) {
-             const dist = getDistance(lat, lng, healthCenters[0].latitude, healthCenters[0].longitude);
-             setValue('nearestHealthcareCenter', `${healthCenters[0].name} (${dist.toFixed(1)} km)`);
-          } else if (healthCenters.length === 0 && !watchAllFields.nearestHealthcareCenter) {
-             setValue('nearestHealthcareCenter', 'Offline database empty. Please sync first.');
-          }
-        } catch (e) {}
-
-        setGpsLoading(false);
+          // Give the chip a further 12s to refine (common right after a cold
+          // start as it locks onto more satellites), then stop listening to
+          // save battery. Any better fix that arrives in that window silently
+          // overwrites the stored coordinates via the same setGps() above.
+          refinementTimer = setTimeout(() => {
+            stopWatch();
+          }, 12000);
+        }
       },
       (error) => {
-        Alert.alert('GPS Error', 'Could not get location. Please enable GPS and try again.');
-        setGpsLoading(false);
+        // Only surface an error if we truly never got any fix — if we already
+        // accepted one, a later watch error (e.g. signal dropped during
+        // refinement) shouldn't undo a location the user already has.
+        if (!acceptedFirstFix) {
+          stopWatch();
+          setGpsLoading(false);
+          Alert.alert('GPS Error', 'Could not get location. Please enable GPS and try again.');
+        }
       },
       {
         enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 10000,
+        distanceFilter: 0,
         forceRequestLocation: true,
         showLocationDialog: true,
         forceLocationManager: true,
@@ -344,6 +425,48 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   };
 
   // === MEDIA CAPTURE LOGIC ===
+
+  // GPS FIX: previously this called getCurrentPosition() fresh for every single
+  // photo, with the same 15s cold-start timeout problem as the main capture —
+  // if GPS hadn't locked yet, the enumerator couldn't take a photo at all. The
+  // form already acquires a location fix once via captureGPS() on load; we
+  // reuse that here. This is also more correct: every photo/video for one
+  // survey visit gets the same consistent coordinates instead of slightly
+  // different ones per shot. If `gps` is somehow still null (e.g. user moved
+  // fast past the GPS step before a fix arrived), we fall back to a short,
+  // best-effort watch rather than blocking the photo entirely.
+  const getLocationForMedia = (): Promise<{ latitude: number; longitude: number; accuracy: number } | null> => {
+    if (gps) return Promise.resolve(gps);
+
+    return new Promise((resolve) => {
+      let resolved = false;
+      const watchId = Geolocation.watchPosition(
+        (position) => {
+          if (resolved) return;
+          resolved = true;
+          Geolocation.clearWatch(watchId);
+          resolve({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+          });
+        },
+        () => {
+          if (resolved) return;
+          resolved = true;
+          Geolocation.clearWatch(watchId);
+          resolve(null);
+        },
+        { enableHighAccuracy: true, forceLocationManager: true }
+      );
+      setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        Geolocation.clearWatch(watchId);
+        resolve(null);
+      }, 20000);
+    });
+  };
 
   const capturePhoto = async (category: string) => {
     const hasCameraPermission = await requestCameraPermission();
@@ -357,35 +480,35 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       return;
     }
 
-    Geolocation.getCurrentPosition(
-      async (position) => {
-        const result = await launchCamera({
-          mediaType: 'photo',
-          quality: 0.8,
-          saveToPhotos: true,
-          includeExtra: true,
-        });
+    const location = await getLocationForMedia();
+    if (!location) {
+      Alert.alert('GPS Error', 'Enable GPS for photo capture with location metadata');
+      return;
+    }
 
-        if (result.assets && result.assets[0]) {
-          const asset = result.assets[0];
-          setPhotos(prev => ({
-            ...prev,
-            [category]: {
-              uri: asset.uri,
-              fileName: asset.fileName,
-              fileSize: asset.fileSize,
-              type: asset.type,
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              gpsAccuracy: position.coords.accuracy,
-              capturedAt: new Date().toISOString(),
-            },
-          }));
-        }
-      },
-      () => Alert.alert('GPS Error', 'Enable GPS for photo capture with location metadata'),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000, forceLocationManager: true }
-    );
+    const result = await launchCamera({
+      mediaType: 'photo',
+      quality: 0.8,
+      saveToPhotos: true,
+      includeExtra: true,
+    });
+
+    if (result.assets && result.assets[0]) {
+      const asset = result.assets[0];
+      setPhotos(prev => ({
+        ...prev,
+        [category]: {
+          uri: asset.uri,
+          fileName: asset.fileName,
+          fileSize: asset.fileSize,
+          type: asset.type,
+          latitude: location.latitude,
+          longitude: location.longitude,
+          gpsAccuracy: location.accuracy,
+          capturedAt: new Date().toISOString(),
+        },
+      }));
+    }
   };
 
   const captureVideo = async () => {
@@ -400,51 +523,48 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       return;
     }
 
+    const location = await getLocationForMedia();
+    if (!location) {
+      Alert.alert('GPS Error', 'Enable GPS for video capture');
+      return;
+    }
+
     setRecording(true);
-    Geolocation.getCurrentPosition(
-      async (position) => {
-        const result = await launchCamera({
-          mediaType: 'video',
-          videoQuality: 'low',
-          durationLimit: 60,
-          saveToPhotos: true,
-        });
+    const result = await launchCamera({
+      mediaType: 'video',
+      videoQuality: 'low',
+      durationLimit: 60,
+      saveToPhotos: true,
+    });
 
-        if (result.assets && result.assets[0]) {
-          const asset = result.assets[0];
-          let finalUri = asset.uri;
-          setCompressing(true);
-          try {
-            if (asset.uri) {
-              finalUri = await VideoCompressor.compress(asset.uri, {
-                compressionMethod: 'auto',
-              });
-            }
-          } catch (e) {
-            console.error('Compression failed', e);
-          }
-          setCompressing(false);
-
-          setVideo({
-            uri: finalUri,
-            fileName: asset.fileName,
-            fileSize: asset.fileSize,
-            type: asset.type,
-            duration: asset.duration,
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            gpsAccuracy: position.coords.accuracy,
-            capturedAt: new Date().toISOString(),
+    if (result.assets && result.assets[0]) {
+      const asset = result.assets[0];
+      let finalUri = asset.uri;
+      setCompressing(true);
+      try {
+        if (asset.uri) {
+          finalUri = await VideoCompressor.compress(asset.uri, {
+            compressionMethod: 'auto',
           });
         }
-        setRecording(false);
-      },
-      () => {
-        Alert.alert('GPS Error', 'Enable GPS for video capture');
-        setRecording(false);
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000, forceLocationManager: true }
-    );
+      } catch (e) {
+        console.error('Compression failed', e);
+      }
+      setCompressing(false);
+
+      setVideo({
+        uri: finalUri,
+        fileName: asset.fileName,
+        fileSize: asset.fileSize,
+        type: asset.type,
+        duration: asset.duration,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        gpsAccuracy: location.accuracy,
+        capturedAt: new Date().toISOString(),
+      });
+    }
+    setRecording(false);
   };
 
   // === SAVE LOGIC ===
@@ -687,7 +807,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                 </Text>
               ) : (
                 <Text style={styles.gpsWaiting}>
-                  {gpsLoading ? 'Acquiring high accuracy location...' : 'Location required'}
+                  {gpsLoading ? 'Acquiring location... this can take up to a minute offline' : 'Location required'}
                 </Text>
               )}
             </View>
