@@ -2,7 +2,9 @@ import { prisma } from '../../config/database';
 import { NotFoundError, ValidationError, ConflictError } from '../../utils/errors';
 import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
+import { StakeholderService } from '../stakeholder/stakeholder.service';
 
+const stakeholderService = new StakeholderService();
 
 interface CreateSurveyData {
   stakeholderId: string;
