@@ -158,14 +158,13 @@ export class SurveyService {
     const survey = await prisma.survey.findUnique({
       where: { id: surveyId },
       include: {
-        // NEW-1 FIX: exclude soft-deleted (tombstoned) media so completion
-        // requirements (min photos/video) are never satisfied by media whose
-        // S3 object may already be gone.
-        media: { where: { deletedAt: null } },
+        media: {
+          where: { deletedAt: null }
+        },
         stakeholder: {
           include: {
             phoneValidations: {
-              where: { enumeratorId },
+              where: { enumeratorId }
             },
           },
         },
