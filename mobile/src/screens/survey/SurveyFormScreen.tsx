@@ -426,15 +426,27 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
   // === MEDIA CAPTURE LOGIC ===
 
-  // GPS FIX: previously this called getCurrentPosition() fresh for every single
-  // photo, with the same 15s cold-start timeout problem as the main capture —
-  // if GPS hadn't locked yet, the enumerator couldn't take a photo at all. The
-  // form already acquires a location fix once via captureGPS() on load; we
-  // reuse that here. This is also more correct: every photo/video for one
-  // survey visit gets the same consistent coordinates instead of slightly
-  // different ones per shot. If `gps` is somehow still null (e.g. user moved
-  // fast past the GPS step before a fix arrived), we fall back to a short,
-  // best-effort watch rather than blocking the photo entirely.
+  // GPS FIX (round 2): previously this called getCurrentPosition() fresh for
+  // every single photo, with the same 15s cold-start timeout problem as the
+  // main capture — if GPS hadn't locked yet, the enumerator couldn't take a
+  // photo at all. The form already acquires a location fix once via
+  // captureGPS() on load; we reuse that here. This is also more correct:
+  // every photo/video for one survey visit gets the same consistent
+  // coordinates instead of slightly different ones per shot.
+  //
+  // The fallback path below (used only if `gps` is somehow still null) had
+  // its own bug: it used a 20s timeout, while offline cold-start GPS
+  // routinely takes 30-60+ seconds — the exact same class of failure the
+  // main captureGPS() fix addressed with its 60s window. That mismatch is
+  // why "Enable GPS to capture photos" could still fire even with GPS fully
+  // enabled and a fix in progress: the fallback gave up too early. The
+  // timeout here now matches captureGPS()'s 60s window so a photo taken
+  // while the main fix is still settling doesn't fail for the same reason
+  // that fix was supposed to prevent. The UI also now disables capture
+  // buttons until a fix exists (see disabled={!gps} below), so this
+  // fallback should rarely run in practice — it remains only as a safety
+  // net for edge cases like a fast double-tap during the gap between the
+  // GPS indicator updating and the button's disabled state re-rendering.
   const getLocationForMedia = (): Promise<{ latitude: number; longitude: number; accuracy: number } | null> => {
     if (gps) return Promise.resolve(gps);
 
@@ -459,12 +471,15 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         },
         { enableHighAccuracy: true, forceLocationManager: true }
       );
+      // Matches captureGPS()'s overall timeout — see comment above. Must stay
+      // in sync with that value; both reflect the same real-world cold-start
+      // ceiling, not an arbitrary UI choice.
       setTimeout(() => {
         if (resolved) return;
         resolved = true;
         Geolocation.clearWatch(watchId);
         resolve(null);
-      }, 20000);
+      }, 60000);
     });
   };
 
@@ -482,7 +497,10 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
     const location = await getLocationForMedia();
     if (!location) {
-      Alert.alert('GPS Error', 'Enable GPS for photo capture with location metadata');
+      Alert.alert(
+        'Still Acquiring Location',
+        'GPS hasn\'t locked on yet. This can take up to a minute offline — wait for the green checkmark next to "Location" above, then try again.'
+      );
       return;
     }
 
@@ -525,7 +543,10 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
     const location = await getLocationForMedia();
     if (!location) {
-      Alert.alert('GPS Error', 'Enable GPS for video capture');
+      Alert.alert(
+        'Still Acquiring Location',
+        'GPS hasn\'t locked on yet. This can take up to a minute offline — wait for the green checkmark next to "Location" above, then try again.'
+      );
       return;
     }
 
@@ -849,7 +870,11 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                       <View>
                         <Image source={{ uri: photo.uri }} style={styles.photoPreview} />
                         <View style={styles.photoActions}>
-                          <TouchableOpacity style={styles.retakeBtn} onPress={() => capturePhoto(cat.key)}>
+                          <TouchableOpacity
+                            style={[styles.retakeBtn, !gps && styles.captureBtnDisabled]}
+                            onPress={() => capturePhoto(cat.key)}
+                            disabled={!gps}
+                          >
                             <Icon name="camera-retake" size={16} color={colors.textSecondary} />
                             <Text style={styles.retakeBtnText}>Retake</Text>
                           </TouchableOpacity>
@@ -862,9 +887,15 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                         </View>
                       </View>
                     ) : (
-                      <TouchableOpacity style={styles.captureBtn} onPress={() => capturePhoto(cat.key)}>
-                        <Icon name="camera" size={24} color={colors.textSecondary} />
-                        <Text style={styles.captureBtnText}>Capture {cat.label}</Text>
+                      <TouchableOpacity
+                        style={[styles.captureBtn, !gps && styles.captureBtnDisabled]}
+                        onPress={() => capturePhoto(cat.key)}
+                        disabled={!gps}
+                      >
+                        <Icon name={gps ? 'camera' : 'crosshairs-gps'} size={24} color={colors.textSecondary} />
+                        <Text style={styles.captureBtnText}>
+                          {gps ? `Capture ${cat.label}` : 'Waiting for GPS lock...'}
+                        </Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -894,7 +925,11 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                       />
                     </View>
                     <View style={styles.photoActions}>
-                      <TouchableOpacity style={styles.retakeBtn} onPress={captureVideo}>
+                      <TouchableOpacity
+                        style={[styles.retakeBtn, !gps && styles.captureBtnDisabled]}
+                        onPress={captureVideo}
+                        disabled={!gps}
+                      >
                         <Icon name="camera-retake" size={16} color={colors.textSecondary} />
                         <Text style={styles.retakeBtnText}>Retake</Text>
                       </TouchableOpacity>
@@ -905,10 +940,20 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                     </View>
                   </View>
                 ) : (
-                  <TouchableOpacity style={styles.captureBtn} onPress={captureVideo} disabled={recording || compressing}>
-                    <Icon name={compressing ? "movie-roll" : "video"} size={24} color={colors.textSecondary} />
+                  <TouchableOpacity
+                    style={[styles.captureBtn, !gps && styles.captureBtnDisabled]}
+                    onPress={captureVideo}
+                    disabled={recording || compressing || !gps}
+                  >
+                    <Icon name={compressing ? 'movie-roll' : gps ? 'video' : 'crosshairs-gps'} size={24} color={colors.textSecondary} />
                     <Text style={styles.captureBtnText}>
-                      {compressing ? 'Compressing Video...' : recording ? 'Opening Camera...' : 'Record Video'}
+                      {compressing
+                        ? 'Compressing Video...'
+                        : recording
+                        ? 'Opening Camera...'
+                        : !gps
+                        ? 'Waiting for GPS lock...'
+                        : 'Record Video'}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -1069,6 +1114,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'center', gap: spacing.sm
   },
   captureBtnText: { ...typography.button, color: colors.textSecondary },
+  // GPS FIX: visual state for capture buttons while no GPS fix exists yet.
+  // Prevents the "Enable GPS to capture photos" dead-end by making the wait
+  // visible (dimmed + relabeled) instead of letting the user tap through to
+  // a 60s timeout. See getLocationForMedia() for the underlying fix.
+  captureBtnDisabled: { opacity: 0.5 },
   
   submitBtn: {
     backgroundColor: colors.primary, borderRadius: borderRadius.full, padding: spacing.xl,
