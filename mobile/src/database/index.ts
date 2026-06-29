@@ -458,6 +458,18 @@ export const surveyDao = {
     return rows;
   },
 
+  // COUNT FIX: surveys pending upload live in the surveys table (is_synced=0),
+  // not in sync_queue. The Sync Center's getPendingCount() only counted
+  // sync_queue rows (stakeholder updates), so offline surveys were invisible to
+  // the counter — it always showed 0 even with 10 surveys waiting to upload.
+  async getUnsyncedCount(): Promise<number> {
+    const database = await getDB();
+    const [results] = await database.executeSql(
+      "SELECT COUNT(*) as count FROM surveys WHERE is_synced = 0"
+    );
+    return results.rows.item(0).count ?? 0;
+  },
+
   async markSynced(id: string): Promise<void> {
     const database = await getDB();
     await database.executeSql('UPDATE surveys SET is_synced = 1 WHERE id = ?', [id]);
@@ -519,6 +531,17 @@ export const mediaDao = {
     }
     return rows;
   },
+
+  // COUNT FIX: unsynced media files also live outside sync_queue.
+  // Each photo/video is a separate pending upload the user is waiting on.
+  async getUnsyncedCount(): Promise<number> {
+    const db = await getDB();
+    const [results] = await db.executeSql(
+      "SELECT COUNT(*) as count FROM media WHERE is_synced = 0"
+    );
+    return results.rows.item(0).count ?? 0;
+  },
+
   async markSynced(id: string): Promise<void> {
     const db = await getDB();
     await db.executeSql(`UPDATE media SET is_synced = 1 WHERE id = ?`, [id]);

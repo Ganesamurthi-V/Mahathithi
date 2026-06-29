@@ -97,6 +97,24 @@ export const runInitialSync = createAsyncThunk(
 // breaking" under flaky connectivity. A plain module-level boolean is
 // checked and set synchronously, before any `await`, so there's no window
 // for a second concurrent call to slip through.
+// COUNT FIX: surveys and media each track their own is_synced column —
+// they are NOT in sync_queue. The old count refresh only queried sync_queue,
+// so the Sync Center always showed 0 pending even with many surveys waiting.
+// This helper aggregates all three sources so the UI reflects reality.
+const refreshSyncCounts = async (dispatch: any) => {
+  const [pending, failed, dead, unsyncedSurveys, unsyncedMedia] = await Promise.all([
+    syncQueueDao.getPendingCount(),
+    syncQueueDao.getFailedCount(),
+    syncQueueDao.getDeadLetterCount(),
+    surveyDao.getUnsyncedCount(),
+    mediaDao.getUnsyncedCount(),
+  ]);
+  // pendingCount = sync_queue PENDING items + unsynced survey texts + unsynced media files
+  dispatch(setPendingCount(pending + unsyncedSurveys + unsyncedMedia));
+  dispatch(setFailedCount(failed));
+  dispatch(setDeadLetterCount(dead));
+};
+
 let isAutoSyncRunning = false;
 
 export const runAutoSync = createAsyncThunk(
@@ -121,14 +139,7 @@ export const runAutoSync = createAsyncThunk(
       // to the user through the badge and button label).
       dispatch(startSync());
       dispatch(syncFailed('No internet connection'));
-      try {
-        const pending = await syncQueueDao.getPendingCount();
-        const failed = await syncQueueDao.getFailedCount();
-        const dead = await syncQueueDao.getDeadLetterCount();
-        dispatch(setPendingCount(pending));
-        dispatch(setFailedCount(failed));
-        dispatch(setDeadLetterCount(dead));
-      } catch { /* best-effort */ }
+      try { await refreshSyncCounts(dispatch); } catch { /* best-effort */ }
       isAutoSyncRunning = false;
       return;
     }
@@ -359,14 +370,7 @@ export const runAutoSync = createAsyncThunk(
       // the UI until some future sync happened to complete end-to-end without
       // a single drop — which with flaky connectivity may never happen. Using
       // `finally` guarantees this runs whether the sync succeeded or threw.
-      try {
-        const pending = await syncQueueDao.getPendingCount();
-        const failed = await syncQueueDao.getFailedCount();
-        const dead = await syncQueueDao.getDeadLetterCount();
-        dispatch(setPendingCount(pending));
-        dispatch(setFailedCount(failed));
-        dispatch(setDeadLetterCount(dead));
-      } catch { /* best-effort; don't let a count-read failure mask the real sync result */ }
+      try { await refreshSyncCounts(dispatch); } catch { /* best-effort; don't let a count-read failure mask the real sync result */ }
 
       isAutoSyncRunning = false;
     }

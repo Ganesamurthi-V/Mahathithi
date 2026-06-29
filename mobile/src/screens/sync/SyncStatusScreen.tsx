@@ -8,7 +8,7 @@ import {
   setPendingCount, setFailedCount, setDeadLetterCount,
 } from '../../store/slices/syncSlice';
 import { runAutoSync, retryFailedSyncNow, resetDeadLettersAndRetry } from '../../store/slices/syncThunks';
-import { syncQueueDao } from '../../database';
+import { syncQueueDao, surveyDao, mediaDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 
@@ -68,12 +68,20 @@ export default function SyncStatusScreen() {
 
   const loadCounts = async () => {
     try {
-      const pendingCountFromDb = await syncQueueDao.getPendingCount();
-      const failedCountFromDb = await syncQueueDao.getFailedCount();
-      const deadLetterCountFromDb = await syncQueueDao.getDeadLetterCount();
-      dispatch(setPendingCount(pendingCountFromDb));
-      dispatch(setFailedCount(failedCountFromDb));
-      dispatch(setDeadLetterCount(deadLetterCountFromDb));
+      // COUNT FIX: surveys and media each track pending uploads with is_synced=0
+      // in their own tables — they are NOT in sync_queue (which only holds
+      // stakeholder updates). Querying only sync_queue meant the counters
+      // always showed 0 even when the user had many offline surveys waiting.
+      const [pending, failed, dead, unsyncedSurveys, unsyncedMedia] = await Promise.all([
+        syncQueueDao.getPendingCount(),
+        syncQueueDao.getFailedCount(),
+        syncQueueDao.getDeadLetterCount(),
+        surveyDao.getUnsyncedCount(),
+        mediaDao.getUnsyncedCount(),
+      ]);
+      dispatch(setPendingCount(pending + unsyncedSurveys + unsyncedMedia));
+      dispatch(setFailedCount(failed));
+      dispatch(setDeadLetterCount(dead));
     } catch(e) {}
   };
 
