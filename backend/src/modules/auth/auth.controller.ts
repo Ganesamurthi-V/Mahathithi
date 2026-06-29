@@ -23,8 +23,8 @@ export class AuthController {
 
       res.cookie('admin_session', result.tokens.accessToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
+        secure: true, // MUST be true for SameSite=none
+        sameSite: 'none', // Allows cross-domain cookies between vercel and railway
         maxAge: 15 * 60 * 1000,
       });
 

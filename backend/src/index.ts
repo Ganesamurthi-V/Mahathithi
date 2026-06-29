@@ -50,8 +50,8 @@ app.use(helmet({
 // M3 FIX: removed 'http://localhost:5173' from production CORS allowlist
 app.use(cors({
   origin: config.env === 'production'
-    ? ['https://mahaatithi.gov.in']
-    : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'],
+    ? ['https://mahaatithi.gov.in', 'https://mahathithi.vercel.app']
+    : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'https://mahathithi.vercel.app'],
   credentials: true,
 }));
 app.use(compression());

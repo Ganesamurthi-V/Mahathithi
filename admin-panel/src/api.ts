@@ -20,8 +20,28 @@ api.interceptors.response.use(
 );
 
 // Auth
-export const login = (loginId: string, password: string) =>
-  api.post('/auth/login', { loginId, password });
+export const login = (loginId: string, password: string) => {
+  console.log('--- ADMIN LOGIN REQUEST STARTED ---');
+  console.log(`URL: ${api.defaults.baseURL || API_BASE}/auth/login`);
+  console.log(`Method: POST`);
+  console.log(`Payload:`, { loginId, password: '***' }); // hiding password in logs for security
+  return api.post('/auth/login', { loginId, password })
+    .then(res => {
+      console.log('--- ADMIN LOGIN SUCCESS ---');
+      console.log('Response Status:', res.status);
+      console.log('Response Data:', res.data);
+      return res;
+    })
+    .catch(err => {
+      console.log('--- ADMIN LOGIN FAILED ---');
+      console.log('Error:', err.message);
+      if (err.response) {
+        console.log('Response Status:', err.response.status);
+        console.log('Response Data:', err.response.data);
+      }
+      throw err;
+    });
+};
 
 export const getProfile = () => api.get('/auth/me');
 
