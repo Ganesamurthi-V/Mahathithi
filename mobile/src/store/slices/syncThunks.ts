@@ -83,14 +83,34 @@ export const runInitialSync = createAsyncThunk(
   }
 );
 
+// SYNC FIX (round 2): true mutex for runAutoSync, separate from the Redux
+// `isSyncing` flag. The Redux check (`getState().sync.isSyncing`) and the
+// flag flip (`dispatch(startSync())`) are two separate, non-atomic steps
+// separated by `await NetInfo.fetch()`. When connectivity flaps rapidly —
+// connect/disconnect/connect within a second or two, exactly what "internet
+// cuts multiple times" produces — AppNavigator's global NetInfo listener can
+// fire this thunk again before the first call has flipped isSyncing to true.
+// Both calls then read isSyncing=false and both proceed, racing on the same
+// sync_queue rows: double media uploads, lost markCompleted/markFailed writes
+// when two updates land on the same row, corrupted progress percentages.
+// This is the core mechanism behind the reported "entire sync pipeline
+// breaking" under flaky connectivity. A plain module-level boolean is
+// checked and set synchronously, before any `await`, so there's no window
+// for a second concurrent call to slip through.
+let isAutoSyncRunning = false;
+
 export const runAutoSync = createAsyncThunk(
   'sync/runAutoSync',
   async (_, { dispatch, getState }) => {
+    if (isAutoSyncRunning) return;
+    isAutoSyncRunning = true;
+
     const state = getState() as RootState;
-    if (state.sync.isSyncing) return;
+    if (state.sync.isSyncing) { isAutoSyncRunning = false; return; }
 
     const netState = await NetInfo.fetch();
     if (!netState.isConnected) {
+      isAutoSyncRunning = false;
       return;
     }
 
@@ -304,19 +324,32 @@ export const runAutoSync = createAsyncThunk(
       await appStateDao.set('last_sync_time', syncTime);
 
       dispatch(syncComplete({ timestamp: syncTime }));
-      
-      const pending = await syncQueueDao.getPendingCount();
-      const failed = await syncQueueDao.getFailedCount();
-      const dead = await syncQueueDao.getDeadLetterCount();
-      dispatch(setPendingCount(pending));
-      dispatch(setFailedCount(failed));
-      dispatch(setDeadLetterCount(dead));
 
     } catch (error: any) {
       dispatch(syncFailed(error.message || 'Sync failed'));
       // Only alert if we are actively viewing a screen that triggers it manually,
       // but since it's an auto-sync, we'll silently fail or log it.
       console.error('AutoSync Error:', error.message);
+    } finally {
+      // SYNC FIX (round 2): counts must refresh here, not only after a clean
+      // run. Previously this block sat at the end of the `try`, right after
+      // dispatch(syncComplete(...)) — so any disconnect partway through sync
+      // (the per-item loop, the 1-by-1 pipeline, or getChanges) jumped
+      // straight to `catch` and skipped it entirely. Every item that had
+      // just been marked FAILED or COMPLETED in that run stayed invisible to
+      // the UI until some future sync happened to complete end-to-end without
+      // a single drop — which with flaky connectivity may never happen. Using
+      // `finally` guarantees this runs whether the sync succeeded or threw.
+      try {
+        const pending = await syncQueueDao.getPendingCount();
+        const failed = await syncQueueDao.getFailedCount();
+        const dead = await syncQueueDao.getDeadLetterCount();
+        dispatch(setPendingCount(pending));
+        dispatch(setFailedCount(failed));
+        dispatch(setDeadLetterCount(dead));
+      } catch { /* best-effort; don't let a count-read failure mask the real sync result */ }
+
+      isAutoSyncRunning = false;
     }
   }
 );

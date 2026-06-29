@@ -115,13 +115,32 @@ export function AppNavigator() {
     // Trigger initial sync check upon login/auth
     dispatch(runInitialSync() as any);
 
+    // SYNC FIX (round 2): debounce reconnect events. runAutoSync() now has
+    // its own internal mutex (see syncThunks.ts) so overlapping calls can no
+    // longer corrupt the sync_queue — but with flaky connectivity (the
+    // "internet cuts multiple times" case), a connect/disconnect/connect
+    // flutter can still fire this listener many times in a couple of
+    // seconds. Without debouncing, each transition dispatches runAutoSync()
+    // immediately; the mutex makes the extras no-ops, but they still cost a
+    // NetInfo.fetch() round trip and a Redux dispatch each, and the first one
+    // to grab the lock may end up running against a connection that's about
+    // to drop again a moment later. Waiting for the connection to be stable
+    // for a short window before syncing is both cheaper and more likely to
+    // actually complete.
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = NetInfo.addEventListener((state) => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       if (state.isConnected) {
-        dispatch(runAutoSync() as any);
+        debounceTimer = setTimeout(() => {
+          dispatch(runAutoSync() as any);
+        }, 1500);
       }
     });
     
-    return () => unsubscribe();
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      unsubscribe();
+    };
   }, [dispatch, isAuthenticated]);
 
   if (isLoading) {

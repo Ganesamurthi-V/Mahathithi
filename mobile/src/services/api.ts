@@ -21,6 +21,43 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// SYNC FIX (round 2): the refresh handler used to treat ANY error during
+// token refresh — including a plain dropped connection, indistinguishable
+// here from a genuinely invalid/expired refresh token — as a hard auth
+// failure, wiping EncryptedStorage and calling clearAllData(), which deletes
+// every unsynced survey, photo, video, and queue row on the device. With
+// flaky connectivity, this could fire on an ordinary disconnect: an access
+// token expires, the request 401s, the refresh call itself drops mid-flight,
+// and the user's offline field work for that session (and everything else
+// queued) is destroyed — not "failed to sync", just gone. The fix:
+//   1. Retry the refresh call itself a few times with backoff if it's a
+//      transient failure (no response at all / 5xx) — the same network blip
+//      that caused the original 401 may well still be in effect a second later.
+//   2. Only treat it as a genuine auth failure — and only then wipe local
+//      data — if the refresh endpoint itself responds with an explicit
+//      rejection (401/403: the refresh token is actually invalid/expired/
+//      revoked). Any other failure (still no response after retries, 5xx,
+//      timeout) is left as a normal transient error: reject and let the
+//      original request fail through the normal sync-queue retry path
+//      instead of nuking the device.
+function isTransientRefreshError(err: any): boolean {
+  if (!err.response) return true; // no response = network error/timeout/dropped connection
+  return err.response.status >= 500;
+}
+
+async function attemptRefresh(refreshToken: string, attempt = 1): Promise<any> {
+  const MAX_REFRESH_RETRIES = 3;
+  try {
+    return await axios.post(`${API_BASE}/auth/refresh`, { refreshToken }, { timeout: 15000 });
+  } catch (err: any) {
+    if (isTransientRefreshError(err) && attempt < MAX_REFRESH_RETRIES) {
+      await new Promise((resolve) => setTimeout(() => resolve(undefined), 1000 * attempt));
+      return attemptRefresh(refreshToken, attempt + 1);
+    }
+    throw err;
+  }
+}
+
 // Response interceptor — handle token refresh
 api.interceptors.response.use(
   (response) => response,
@@ -32,7 +69,7 @@ api.interceptors.response.use(
       try {
         const refreshToken = await EncryptedStorage.getItem('refresh_token');
         if (refreshToken) {
-          const res = await axios.post(`${API_BASE}/auth/refresh`, { refreshToken });
+          const res = await attemptRefresh(refreshToken);
           const { accessToken, refreshToken: newRefresh } = res.data.data.tokens;
 
           await EncryptedStorage.setItem('access_token', accessToken);
@@ -41,15 +78,27 @@ api.interceptors.response.use(
           originalRequest.headers.Authorization = `Bearer ${accessToken}`;
           return api(originalRequest);
         }
-      } catch (refreshError) {
-        // Force logout
-        await EncryptedStorage.removeItem('access_token');
-        await EncryptedStorage.removeItem('refresh_token');
-        await EncryptedStorage.removeItem('user_data');
-        
-        // Wipe all local SQLite data to lock them out completely
-        const { clearAllData } = require('../database');
-        await clearAllData();
+      } catch (refreshError: any) {
+        // Only wipe local data if the refresh endpoint explicitly rejected
+        // the refresh token (401/403) — a real, confirmed auth failure. A
+        // network drop, timeout, or 5xx during refresh (even after retries
+        // above) is NOT proof the refresh token is invalid, and must never
+        // destroy unsynced field data on that basis alone.
+        const isConfirmedAuthFailure =
+          refreshError.response?.status === 401 || refreshError.response?.status === 403;
+
+        if (isConfirmedAuthFailure) {
+          await EncryptedStorage.removeItem('access_token');
+          await EncryptedStorage.removeItem('refresh_token');
+          await EncryptedStorage.removeItem('user_data');
+
+          // Wipe all local SQLite data to lock them out completely
+          const { clearAllData } = require('../database');
+          await clearAllData();
+        }
+        // else: leave tokens and local data untouched. Reject below and let
+        // the caller (e.g. the sync queue) treat this as an ordinary failed
+        // request, eligible for normal retry/backoff.
       }
     }
     return Promise.reject(error);
@@ -73,7 +122,7 @@ function isTransientError(error: any): boolean {
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(() => resolve(), ms));
 }
 
 api.interceptors.response.use(undefined, async (error) => {
