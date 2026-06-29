@@ -25,27 +25,43 @@ const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_SECONDS = 15 * 60; // 15 minutes
 
 async function checkLocked(loginId: string): Promise<void> {
-  const locked = await redisClient.get(`login_lock:${loginId}`);
-  if (locked) {
-    throw new UnauthorizedError(
-      'Account temporarily locked due to too many failed attempts. Please try again in 15 minutes.'
-    );
+  try {
+    const locked = await redisClient.get(`login_lock:${loginId}`);
+    if (locked) {
+      throw new UnauthorizedError(
+        'Account temporarily locked due to too many failed attempts. Please try again in 15 minutes.'
+      );
+    }
+  } catch (err) {
+    // Re-throw the intentional lockout; swallow only Redis transport errors.
+    if (err instanceof AppError) throw err;
+    // H7 FIX: fail open — a Redis outage must not block all logins.
+    logger.error('[Redis] checkLocked failed, allowing login:', err);
   }
 }
 
 async function checkAndRecordFailure(loginId: string): Promise<void> {
-  const key = `login_attempts:${loginId}`;
-  const attempts = await redisClient.incr(key);
-  await redisClient.expire(key, LOCKOUT_SECONDS);
-  
-  if (attempts >= MAX_FAILED_ATTEMPTS) {
-    await redisClient.set(`login_lock:${loginId}`, '1', { ex: LOCKOUT_SECONDS });
+  try {
+    const key = `login_attempts:${loginId}`;
+    const attempts = await redisClient.incr(key);
+    await redisClient.expire(key, LOCKOUT_SECONDS);
+
+    if (attempts >= MAX_FAILED_ATTEMPTS) {
+      await redisClient.set(`login_lock:${loginId}`, '1', { ex: LOCKOUT_SECONDS });
+    }
+  } catch (err) {
+    // H7 FIX: never let a brute-force bookkeeping failure 500 the login response.
+    logger.error('[Redis] checkAndRecordFailure failed:', err);
   }
 }
 
 async function clearFailures(loginId: string): Promise<void> {
-  await redisClient.del(`login_attempts:${loginId}`);
-  await redisClient.del(`login_lock:${loginId}`);
+  try {
+    await redisClient.del(`login_attempts:${loginId}`);
+    await redisClient.del(`login_lock:${loginId}`);
+  } catch (err) {
+    logger.error('[Redis] clearFailures failed:', err);
+  }
 }
 
 interface TokenPair {

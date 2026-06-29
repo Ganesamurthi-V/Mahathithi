@@ -153,8 +153,28 @@ api.interceptors.response.use(undefined, async (error) => {
 // ============================================================================
 
 export const authService = {
-  login: (loginId: string, password: string) =>
-    api.post('/auth/login', { loginId, password }),
+  login: (loginId: string, password: string) => {
+    console.log('--- LOGIN REQUEST STARTED ---');
+    console.log(`URL: ${api.defaults.baseURL}/auth/login`);
+    console.log(`Method: POST`);
+    console.log(`Payload:`, { loginId, password: '***' }); // hiding password in logs for security
+    return api.post('/auth/login', { loginId, password })
+      .then(res => {
+        console.log('--- LOGIN SUCCESS ---');
+        console.log('Response Status:', res.status);
+        console.log('Response Data:', JSON.stringify(res.data, null, 2));
+        return res;
+      })
+      .catch(err => {
+        console.log('--- LOGIN FAILED ---');
+        console.log('Error:', err.message);
+        if (err.response) {
+          console.log('Response Status:', err.response.status);
+          console.log('Response Data:', JSON.stringify(err.response.data, null, 2));
+        }
+        throw err;
+      });
+  },
   logout: (refreshToken?: string) =>
     api.post('/auth/logout', { refreshToken }),
   getProfile: () => api.get('/auth/me'),
