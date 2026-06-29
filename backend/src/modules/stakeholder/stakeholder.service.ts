@@ -182,16 +182,23 @@ export class StakeholderService {
   /**
    * Get full stakeholder detail
    */
-  async getById(id: string, enumeratorDistricts: string[], isAdmin: boolean) {
+  // X2 FIX: thread the caller's enumeratorId so non-admins only see their own
+  // surveys/phone validations for this stakeholder, not other enumerators'.
+  async getById(id: string, enumeratorId: string, enumeratorDistricts: string[], isAdmin: boolean) {
     const stakeholder = await prisma.stakeholder.findUnique({
       where: { id },
       include: {
         surveys: {
+          // X2 FIX: admins see all surveys; enumerators see only their own.
+          where: isAdmin ? undefined : { enumeratorId },
           include: {
-            media: true,
+            // B5 FIX: exclude soft-deleted (tombstoned) media so deleted
+            // S3 keys / presigned URLs aren't leaked in the detail view.
+            media: { where: { deletedAt: null } },
           },
         },
-        phoneValidations: true,
+        // X2 FIX: scope phone validations to the caller as well.
+        phoneValidations: isAdmin ? true : { where: { enumeratorId } },
         lockedBy: {
           select: { id: true, name: true },
         },

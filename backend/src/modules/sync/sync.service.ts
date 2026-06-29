@@ -75,6 +75,12 @@ export class SyncService {
             designation: surveyData.designation,
             mobileNumber: surveyData.mobileNumber,
             email: surveyData.email,
+            // B4 FIX: persist secondary contact fields on sync — they were
+            // validated from the mobile payload but silently dropped here,
+            // causing permanent data loss on every offline upload.
+            contactPerson2: surveyData.contactPerson2,
+            mobileNumber2: surveyData.mobileNumber2,
+            email2: surveyData.email2,
             website: surveyData.website,
             businessCategory: surveyData.businessCategory,
             notes: surveyData.notes,
@@ -94,6 +100,10 @@ export class SyncService {
             designation: surveyData.designation,
             mobileNumber: surveyData.mobileNumber,
             email: surveyData.email,
+            // B4 FIX: persist secondary contact fields on sync (create path)
+            contactPerson2: surveyData.contactPerson2,
+            mobileNumber2: surveyData.mobileNumber2,
+            email2: surveyData.email2,
             website: surveyData.website,
             businessCategory: surveyData.businessCategory,
             notes: surveyData.notes,
@@ -121,6 +131,33 @@ export class SyncService {
     // Process phone validations
     for (const pvData of (payload.phoneValidations || [])) {
       try {
+        // X1 FIX: enforce the same district scope as the survey loop above.
+        // Without this, a mobile client could write a phone validation for a
+        // stakeholder in a district it isn't assigned to.
+        const stakeholder = await prisma.stakeholder.findUnique({
+          where: { id: pvData.stakeholderId },
+          select: { district: true },
+        });
+
+        if (!stakeholder) {
+          results.phoneValidations.failed++;
+          results.phoneValidations.errors.push(`Stakeholder ${pvData.stakeholderId}: not found`);
+          continue;
+        }
+
+        if (!isAdmin) {
+          const inDistrict = districts.some(
+            (d) => d.toUpperCase() === stakeholder.district?.toUpperCase()
+          );
+          if (!inDistrict) {
+            results.phoneValidations.failed++;
+            results.phoneValidations.errors.push(
+              `Stakeholder ${pvData.stakeholderId}: outside assigned districts`
+            );
+            continue;
+          }
+        }
+
         await prisma.phoneValidation.create({
           data: {
             stakeholderId: pvData.stakeholderId,

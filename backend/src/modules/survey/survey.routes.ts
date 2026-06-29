@@ -8,7 +8,7 @@ const controller = new SurveyController();
 router.use(authMiddleware);
 
 router.post('/', controller.createOrUpdate);
-router.get('/mine', controller.getMysSurveys);
+router.get('/mine', controller.getMySurveys);
 router.get('/stakeholder/:stakeholderId', controller.getByStakeholder);
 router.post('/:id/complete', controller.complete);
 

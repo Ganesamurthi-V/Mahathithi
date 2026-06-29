@@ -2,9 +2,9 @@ import { prisma } from '../../config/database';
 import { NotFoundError, ValidationError, ConflictError } from '../../utils/errors';
 import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
-import { StakeholderService } from '../stakeholder/stakeholder.service';
-
-const stakeholderService = new StakeholderService();
+// B7 FIX: removed unused StakeholderService import/instance — it was never
+// referenced and risked a circular dependency between the survey and
+// stakeholder services.
 
 interface CreateSurveyData {
   stakeholderId: string;
@@ -120,14 +120,25 @@ export class SurveyService {
    * Get survey for a stakeholder
    */
   // C2 FIX: enforce district-based access on read path too
-  async getByStakeholderId(stakeholderId: string, enumeratorDistricts: string[], isAdmin: boolean) {
+  // B2 FIX: scope to the calling enumerator so one enumerator can never read
+  // another enumerator's draft survey (PII leak) for the same stakeholder.
+  async getByStakeholderId(
+    stakeholderId: string,
+    enumeratorId: string,
+    enumeratorDistricts: string[],
+    isAdmin: boolean
+  ) {
     // Load the stakeholder first so we can check district access
     const stakeholder = await prisma.stakeholder.findUnique({ where: { id: stakeholderId } });
     if (!stakeholder) throw new NotFoundError('Stakeholder');
     assertStakeholderAccess(stakeholder, enumeratorDistricts, isAdmin);
 
     const survey = await prisma.survey.findFirst({
-      where: { stakeholderId },
+      where: {
+        stakeholderId,
+        // B2 FIX: only return the caller's own survey for this stakeholder
+        enumeratorId,
+      },
       include: {
         // NEW-1 FIX: don't surface tombstoned media in survey detail
         media: { where: { deletedAt: null } },
@@ -140,6 +151,12 @@ export class SurveyService {
         },
       },
     });
+
+    // B9 FIX: return a clean 404 instead of a 200 with `data: null`, which
+    // crashes clients that dereference the survey object.
+    if (!survey) {
+      throw new NotFoundError('Survey');
+    }
 
     return survey;
   }
@@ -154,7 +171,15 @@ export class SurveyService {
    * - 1 video
    * - Phone verification completed
    */
-  async completeSurvey(surveyId: string, enumeratorId: string) {
+  async completeSurvey(
+    surveyId: string,
+    enumeratorId: string,
+    // B1 FIX: thread the caller's districts and admin flag so the highest-
+    // privilege write in the system enforces the same district isolation as
+    // every other stakeholder-scoped endpoint.
+    enumeratorDistricts: string[],
+    isAdmin: boolean
+  ) {
     const survey = await prisma.survey.findUnique({
       where: { id: surveyId },
       include: {
@@ -175,6 +200,9 @@ export class SurveyService {
       throw new NotFoundError('Survey');
     }
 
+    // B1 FIX: district check must come before the ownership check.
+    assertStakeholderAccess(survey.stakeholder, enumeratorDistricts, isAdmin);
+
     if (survey.enumeratorId !== enumeratorId) {
       throw new ConflictError('You can only complete your own surveys');
     }
@@ -193,7 +221,10 @@ export class SurveyService {
     }
 
     // 3. GPS
-    if (!survey.latitude || !survey.longitude) {
+    // B3 FIX: use explicit null checks, not truthiness — lat/lon of 0 (the
+    // equator / prime meridian) are valid coordinates and must not be treated
+    // as "missing".
+    if (survey.latitude == null || survey.longitude == null) {
       validationErrors.push('GPS coordinates are required');
     }
 
@@ -218,61 +249,55 @@ export class SurveyService {
     // }
 
     // === DETERMINE STATUS ===
-    if (validationErrors.length === 0) {
-      // All requirements met → CLOSED + LOCK
-      await prisma.$transaction([
-        prisma.survey.update({
-          where: { id: surveyId },
-          data: {
-            isDraft: false,
-            isCompleted: true,
-            completedAt: new Date(),
-          },
-        }),
-        prisma.stakeholder.update({
-          where: { id: survey.stakeholderId },
-          data: {
-            status: 'CLOSED',
-            lockedById: enumeratorId,
-            lockedAt: new Date(),
-          },
-        }),
-        prisma.auditLog.create({
-          data: {
-            action: 'survey_completed',
-            entityType: 'survey',
-            entityId: surveyId,
-            enumeratorId,
-            details: {
-              stakeholderId: survey.stakeholderId,
-              photosCount: photos.length,
-              videosCount: videos.length,
-            },
-          },
-        }),
-      ]);
-
-      logger.info(`Survey completed: ${surveyId}, stakeholder locked by ${enumeratorId}`);
-
-      return {
-        status: 'CLOSED',
-        message: 'Survey completed successfully. Stakeholder has been closed and locked.',
-      };
-    } else {
-      // Requirements NOT met → remains OPEN
-      await prisma.$transaction([
-        prisma.survey.update({
-          where: { id: surveyId },
-          data: { isDraft: false },
-        }),
-      ]);
-
-      return {
-        status: 'OPEN',
-        message: 'Survey submitted but not complete. Some requirements are not met.',
-        missingRequirements: validationErrors,
-      };
+    // B6 FIX: an incomplete survey is a failed completion, not a success.
+    // Throw a ValidationError (400) carrying the missing requirements as
+    // details instead of returning a 200 with `status: 'OPEN'`. This also
+    // removes the ambiguous `isDraft:false` + `isCompleted:false` state the
+    // old partial-update branch left behind — a survey only leaves draft when
+    // it actually completes.
+    if (validationErrors.length > 0) {
+      throw new ValidationError('Survey is incomplete', validationErrors);
     }
+
+    // All requirements met → CLOSED + LOCK
+    await prisma.$transaction([
+      prisma.survey.update({
+        where: { id: surveyId },
+        data: {
+          isDraft: false,
+          isCompleted: true,
+          completedAt: new Date(),
+        },
+      }),
+      prisma.stakeholder.update({
+        where: { id: survey.stakeholderId },
+        data: {
+          status: 'CLOSED',
+          lockedById: enumeratorId,
+          lockedAt: new Date(),
+        },
+      }),
+      prisma.auditLog.create({
+        data: {
+          action: 'survey_completed',
+          entityType: 'survey',
+          entityId: surveyId,
+          enumeratorId,
+          details: {
+            stakeholderId: survey.stakeholderId,
+            photosCount: photos.length,
+            videosCount: videos.length,
+          },
+        },
+      }),
+    ]);
+
+    logger.info(`Survey completed: ${surveyId}, stakeholder locked by ${enumeratorId}`);
+
+    return {
+      status: 'CLOSED',
+      message: 'Survey completed successfully. Stakeholder has been closed and locked.',
+    };
   }
 
   /**

@@ -27,8 +27,10 @@ export class SurveyController {
   async getByStakeholder(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       // C2 FIX: pass districts and isAdmin so service can enforce district access
+      // B2 FIX: pass the caller's id so they only get their own survey
       const survey = await surveyService.getByStakeholderId(
         req.params.stakeholderId as string,
+        req.enumerator!.id,
         req.enumerator!.districts,
         req.enumerator!.isAdmin
       );
@@ -40,9 +42,12 @@ export class SurveyController {
 
   async complete(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      // B1 FIX: pass districts and isAdmin so completion enforces district access
       const result = await surveyService.completeSurvey(
         (req.params.id as string),
-        req.enumerator!.id
+        req.enumerator!.id,
+        req.enumerator!.districts,
+        req.enumerator!.isAdmin
       );
 
       res.json({ success: true, data: result });
@@ -51,7 +56,8 @@ export class SurveyController {
     }
   }
 
-  async getMysSurveys(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  // B8 FIX: corrected method name typo (was getMysSurveys)
+  async getMySurveys(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const surveys = await surveyService.getByEnumerator(req.enumerator!.id);
       res.json({ success: true, data: surveys });

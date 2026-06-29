@@ -38,8 +38,10 @@ export class StakeholderController {
 
   async getById(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      // X2 FIX: pass the caller's id so surveys/phone validations are scoped
       const stakeholder = await stakeholderService.getById(
         (req.params.id as string),
+        req.enumerator!.id,
         req.enumerator!.districts,
         req.enumerator!.isAdmin
       );
