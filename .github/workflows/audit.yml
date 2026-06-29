@@ -1,0 +1,36 @@
+name: Dependency Security Audit
+
+on:
+  push:
+    branches: [main, feature/**]
+  pull_request:
+    branches: [main]
+
+jobs:
+  audit:
+    name: npm audit (${{ matrix.workspace }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [backend, admin-panel, mobile]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.workspace }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.workspace }}
+        run: npm ci --prefer-offline
+
+      - name: Run audit
+        working-directory: ${{ matrix.workspace }}
+        # Fail on high/critical vulnerabilities; moderate and below are warnings.
+        # Adjust --audit-level if you want stricter enforcement.
+        run: npm audit --audit-level=high --production

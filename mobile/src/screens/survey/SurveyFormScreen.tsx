@@ -793,7 +793,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
               name: p.fileName,
               type: p.type,
             } as any);
-            console.log(`📤 [Survey Online] Uploading photo ${key}...`);
+            if (__DEV__) { console.log(`📤 [Survey Online] Uploading photo ${key}...`); }
             await mediaService.upload(formData);
           }
 
@@ -812,12 +812,12 @@ export default function SurveyFormScreen({ route, navigation }: any) {
               name: video.fileName,
               type: video.type || 'video/mp4',
             } as any);
-            console.log(`📤 [Survey Online] Uploading video...`);
+            if (__DEV__) { console.log(`📤 [Survey Online] Uploading video...`); }
             await mediaService.upload(formData);
           }
 
           setUploadText('Finalizing survey...');
-          console.log(`🏁 [Survey Online] Calling complete() on server for survey ${realSurveyId}`);
+          if (__DEV__) { console.log(`🏁 [Survey Online] Calling complete() on server for survey ${realSurveyId}`); }
           await surveyService.complete(realSurveyId);
           await surveyDao.markSynced(surveyId);
           // BUG 4 FIX: mark all media rows as synced so auto-sync doesn't re-attempt them
@@ -825,11 +825,11 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           for (const m of allSavedMedia) {
             await mediaDao.markSynced(m.id);
           }
-          console.log('✅ [Survey] Synced to server successfully.');
+          if (__DEV__) { console.log('✅ [Survey] Synced to server successfully.'); }
 
           // Remove from local database immediately after successful sync
           await stakeholderDao.removeLockedStakeholders([stakeholderId]);
-          console.log(`🗑️ Removed completed survey and stakeholder ${stakeholderId} from local DB`);
+          if (__DEV__) { console.log(`🗑️ Removed completed survey and stakeholder ${stakeholderId} from local DB`); }
 
           Alert.alert('Saved', 'Survey and media uploaded successfully');
         } catch (uploadError) {
