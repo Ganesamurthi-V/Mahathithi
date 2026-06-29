@@ -3,32 +3,14 @@ import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
-const MAHARASHTRA_DISTRICTS = [
-  'AHMEDNAGAR', 'AKOLA', 'AMRAVATI', 'AURANGABAD', 'BEED', 'BHANDARA',
-  'BULDHANA', 'CHANDRAPUR', 'DHULE', 'GADCHIROLI', 'GONDIA', 'HINGOLI',
-  'JALGAON', 'JALNA', 'KOLHAPUR', 'LATUR', 'MUMBAI', 'MUMBAI SUBURBAN',
-  'NAGPUR', 'NANDED', 'NANDURBAR', 'NASHIK', 'OSMANABAD', 'PALGHAR',
-  'PARBHANI', 'PUNE', 'RAIGAD', 'RATNAGIRI', 'SANGLI', 'SATARA',
-  'SINDHUDURG', 'SOLAPUR', 'THANE', 'WARDHA', 'WASHIM', 'YAVATMAL',
-];
-
 async function main() {
   console.log('🌱 Seeding database...\n');
 
-  // Create districts
-  console.log('📍 Creating Maharashtra districts...');
-  for (const districtName of MAHARASHTRA_DISTRICTS) {
-    await prisma.district.upsert({
-      where: { name: districtName },
-      update: {},
-      create: {
-        name: districtName,
-        state: 'Maharashtra',
-        code: districtName.substring(0, 3).toUpperCase(),
-      },
-    });
-  }
-  console.log(`  ✅ ${MAHARASHTRA_DISTRICTS.length} districts created\n`);
+  // Create districts (Skipped per user request)
+  // console.log('📍 Creating Maharashtra districts...');
+  // for (const districtName of MAHARASHTRA_DISTRICTS) {
+  //   await prisma.district.upsert({ ... });
+  // }
 
   // Create admin user
   console.log('👤 Creating admin user...');
