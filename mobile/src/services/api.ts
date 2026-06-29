@@ -56,6 +56,41 @@ api.interceptors.response.use(
   }
 );
 
+// SYNC FIX: retry transient failures in-process before letting them bubble up
+// to syncThunks/syncQueueDao. Without this, a single dropped packet on a flaky
+// mobile connection looks identical to a permanently broken request — both
+// went straight to markFailed with zero attempt to just try again immediately.
+// Only retries: no response at all (dropped connection, DNS hiccup, timeout)
+// or 5xx (server-side blip). Never retries 4xx — those are real rejections
+// (bad payload, auth, validation) and retrying them would just waste battery
+// and bandwidth on something that will never succeed.
+const MAX_TRANSIENT_RETRIES = 2;
+const TRANSIENT_RETRY_DELAY_MS = 1500;
+
+function isTransientError(error: any): boolean {
+  if (!error.response) return true; // no response = network error/timeout/dropped connection
+  return error.response.status >= 500;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+api.interceptors.response.use(undefined, async (error) => {
+  const config = error.config;
+  if (!config || !isTransientError(error)) {
+    return Promise.reject(error);
+  }
+
+  config._transientRetryCount = (config._transientRetryCount || 0) + 1;
+  if (config._transientRetryCount > MAX_TRANSIENT_RETRIES) {
+    return Promise.reject(error);
+  }
+
+  await delay(TRANSIENT_RETRY_DELAY_MS * config._transientRetryCount);
+  return api(config);
+});
+
 // ============================================================================
 // API SERVICES
 // ============================================================================

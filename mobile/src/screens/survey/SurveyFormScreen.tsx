@@ -338,6 +338,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         maximumAge: 10000,
         forceRequestLocation: true,
         showLocationDialog: true,
+        forceLocationManager: true,
       }
     );
   };
@@ -383,7 +384,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         }
       },
       () => Alert.alert('GPS Error', 'Enable GPS for photo capture with location metadata'),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000, forceLocationManager: true }
     );
   };
 
@@ -442,7 +443,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         Alert.alert('GPS Error', 'Enable GPS for video capture');
         setRecording(false);
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000, forceLocationManager: true }
     );
   };
 

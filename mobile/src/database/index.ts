@@ -160,9 +160,15 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
       status TEXT DEFAULT 'PENDING',
       retry_count INTEGER DEFAULT 0,
       error_message TEXT,
+      next_retry_at TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  // SYNC FIX: add next_retry_at for backoff scheduling on existing installs
+  try {
+    await database.executeSql('ALTER TABLE sync_queue ADD COLUMN next_retry_at TEXT;');
+  } catch (e) { /* ignore if column already exists */ }
 
   await database.executeSql(`
     CREATE TABLE IF NOT EXISTS app_state (
@@ -593,6 +599,16 @@ export const facilityDao = {
 // SYNC QUEUE DAO
 // ============================================================================
 
+// SYNC FIX: cap automatic retries so a permanently-broken payload (e.g. server
+// rejects with 400 every time) doesn't hammer the API forever. After this many
+// failures the item becomes "DEAD" and needs a manual retry from Sync Center.
+const MAX_AUTO_RETRIES = 5;
+
+// SYNC FIX: exponential backoff schedule (minutes) indexed by retry_count.
+// Prevents every reconnect/manual-sync from immediately re-hitting an item
+// that just failed seconds ago.
+const BACKOFF_MINUTES = [0, 1, 5, 15, 60, 240];
+
 export const syncQueueDao = {
   async add(entityType: string, entityId: string, action: string, payload: any): Promise<void> {
     const database = await getDB();
@@ -602,6 +618,27 @@ export const syncQueueDao = {
     );
   },
 
+  // SYNC FIX: replaces the old getPending(). Returns PENDING items immediately,
+  // and FAILED items only once their backoff window has elapsed AND they're
+  // still under the retry cap. This is what makes "Failed uploads are retried
+  // automatically" (as SyncStatusScreen claims) actually true.
+  async getRetryable(): Promise<any[]> {
+    const database = await getDB();
+    const [results] = await database.executeSql(
+      `SELECT * FROM sync_queue
+       WHERE status = 'PENDING'
+          OR (status = 'FAILED' AND retry_count < ? AND (next_retry_at IS NULL OR next_retry_at <= datetime('now')))
+       ORDER BY created_at ASC`,
+      [MAX_AUTO_RETRIES]
+    );
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i));
+    }
+    return rows;
+  },
+
+  // Kept for any external caller still expecting the old name/behavior.
   async getPending(): Promise<any[]> {
     const database = await getDB();
     const [results] = await database.executeSql(
@@ -619,24 +656,96 @@ export const syncQueueDao = {
     await database.executeSql("UPDATE sync_queue SET status = 'COMPLETED' WHERE id = ?", [id]);
   },
 
+  // SYNC FIX: schedules the next allowed retry time using exponential backoff
+  // based on the new retry_count, so getRetryable() won't pick this item up
+  // again until the window has passed. Status stays 'FAILED' so the UI can
+  // surface it, but it's still eligible for automatic retry until the cap.
   async markFailed(id: number, error: string): Promise<void> {
     const database = await getDB();
+    const [results] = await database.executeSql('SELECT retry_count FROM sync_queue WHERE id = ?', [id]);
+    const currentRetryCount = results.rows.length > 0 ? results.rows.item(0).retry_count : 0;
+    const newRetryCount = currentRetryCount + 1;
+    const backoffIndex = Math.min(newRetryCount, BACKOFF_MINUTES.length - 1);
+    const backoffMinutes = BACKOFF_MINUTES[backoffIndex];
+
     await database.executeSql(
-      "UPDATE sync_queue SET status = 'FAILED', retry_count = retry_count + 1, error_message = ? WHERE id = ?",
-      [error, id]
+      `UPDATE sync_queue
+       SET status = 'FAILED',
+           retry_count = ?,
+           error_message = ?,
+           next_retry_at = datetime('now', '+' || ? || ' minutes')
+       WHERE id = ?`,
+      [newRetryCount, error, backoffMinutes, id]
     );
+  },
+
+  // SYNC FIX: manual override for Sync Center's "Retry Failed Now" button —
+  // resets backoff so the next sync run picks these up immediately regardless
+  // of the scheduled window. Does NOT reset items that already hit MAX_AUTO_RETRIES;
+  // those need retryDeadLetters() since they likely need investigation, not a blind retry.
+  async retryAllFailedNow(): Promise<number> {
+    const database = await getDB();
+    const [result] = await database.executeSql(
+      `UPDATE sync_queue SET next_retry_at = datetime('now') WHERE status = 'FAILED' AND retry_count < ?`,
+      [MAX_AUTO_RETRIES]
+    );
+    return result?.rowsAffected ?? 0;
+  },
+
+  // SYNC FIX: explicit re-arm for items that exhausted automatic retries.
+  // Resets retry_count to 0 so they get a fresh backoff cycle. Surfaced as a
+  // distinct, deliberate action in the UI (separate from the normal retry button)
+  // since a dead-lettered item likely needs the user to check connectivity/data first.
+  async resetDeadLetters(): Promise<number> {
+    const database = await getDB();
+    const [result] = await database.executeSql(
+      `UPDATE sync_queue SET status = 'PENDING', retry_count = 0, next_retry_at = NULL WHERE status = 'FAILED' AND retry_count >= ?`,
+      [MAX_AUTO_RETRIES]
+    );
+    return result?.rowsAffected ?? 0;
   },
 
   async getPendingCount(): Promise<number> {
     const database = await getDB();
-    const [results] = await database.executeSql("SELECT COUNT(*) as count FROM sync_queue WHERE status = 'PENDING'");
+    const [results] = await database.executeSql(
+      "SELECT COUNT(*) as count FROM sync_queue WHERE status = 'PENDING'"
+    );
     return results.rows.item(0).count;
   },
 
+  // SYNC FIX: "failed" now specifically means "still retrying automatically" —
+  // distinct from dead-lettered, so the count the user sees isn't alarming for
+  // something that's already self-healing in the background.
   async getFailedCount(): Promise<number> {
     const database = await getDB();
-    const [results] = await database.executeSql("SELECT COUNT(*) as count FROM sync_queue WHERE status = 'FAILED'");
+    const [results] = await database.executeSql(
+      "SELECT COUNT(*) as count FROM sync_queue WHERE status = 'FAILED' AND retry_count < ?",
+      [MAX_AUTO_RETRIES]
+    );
     return results.rows.item(0).count;
+  },
+
+  // SYNC FIX: items that exhausted MAX_AUTO_RETRIES and need manual attention.
+  async getDeadLetterCount(): Promise<number> {
+    const database = await getDB();
+    const [results] = await database.executeSql(
+      "SELECT COUNT(*) as count FROM sync_queue WHERE status = 'FAILED' AND retry_count >= ?",
+      [MAX_AUTO_RETRIES]
+    );
+    return results.rows.item(0).count;
+  },
+
+  async getDeadLetters(): Promise<any[]> {
+    const database = await getDB();
+    const [results] = await database.executeSql(
+      "SELECT * FROM sync_queue WHERE status = 'FAILED' AND retry_count >= ? ORDER BY created_at ASC",
+      [MAX_AUTO_RETRIES]
+    );
+    const rows = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i));
+    }
+    return rows;
   },
 };
 

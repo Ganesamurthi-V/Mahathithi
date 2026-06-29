@@ -4,7 +4,7 @@ import { Alert } from 'react-native';
 import { RootState } from '../index';
 import {
   startSync, syncComplete, syncFailed, updateSyncProgress,
-  setPendingCount, setFailedCount,
+  setPendingCount, setFailedCount, setDeadLetterCount,
   startInitialSync, updateInitialSyncProgress, initialSyncComplete, initialSyncFailed
 } from './syncSlice';
 import { syncService, mediaService, surveyService, stakeholderService, facilityService } from '../../services/api';
@@ -139,7 +139,13 @@ export const runAutoSync = createAsyncThunk(
       }
 
       // === Generic Sync Queue Pipeline ===
-      const pendingSyncItems = await syncQueueDao.getPending();
+      // SYNC FIX: getRetryable() returns PENDING items AND FAILED items whose
+      // backoff window has elapsed and are still under the retry cap. Previously
+      // this called getPending() which only ever saw PENDING — once an item hit
+      // FAILED it was retried by nothing, forever. This is the fix for stakeholder
+      // edits in particular, since unlike survey/media they have no SQLite-side
+      // fallback signal (is_synced=0) to catch them via the 1-by-1 pipeline below.
+      const pendingSyncItems = await syncQueueDao.getRetryable();
       for (const item of pendingSyncItems) {
         try {
           if (item.entity_type === 'stakeholder' && item.action === 'UPDATE') {
@@ -158,7 +164,7 @@ export const runAutoSync = createAsyncThunk(
           }
           await syncQueueDao.markCompleted(item.id);
         } catch (err: any) {
-          console.error(`Sync Queue Item Failed [${item.id}]:`, err.message);
+          console.error(`Sync Queue Item Failed [${item.id}] (attempt ${(item.retry_count || 0) + 1}):`, err.message);
           await syncQueueDao.markFailed(item.id, err.message);
         }
       }
@@ -301,8 +307,10 @@ export const runAutoSync = createAsyncThunk(
       
       const pending = await syncQueueDao.getPendingCount();
       const failed = await syncQueueDao.getFailedCount();
+      const dead = await syncQueueDao.getDeadLetterCount();
       dispatch(setPendingCount(pending));
       dispatch(setFailedCount(failed));
+      dispatch(setDeadLetterCount(dead));
 
     } catch (error: any) {
       dispatch(syncFailed(error.message || 'Sync failed'));
@@ -310,5 +318,34 @@ export const runAutoSync = createAsyncThunk(
       // but since it's an auto-sync, we'll silently fail or log it.
       console.error('AutoSync Error:', error.message);
     }
+  }
+);
+
+// SYNC FIX: lets Sync Center's "Retry Failed Now" button bypass the backoff
+// window immediately, then kicks off a normal runAutoSync so those items get
+// a real attempt right away instead of waiting for their scheduled retry time.
+export const retryFailedSyncNow = createAsyncThunk(
+  'sync/retryFailedSyncNow',
+  async (_, { dispatch }) => {
+    const count = await syncQueueDao.retryAllFailedNow();
+    if (count > 0) {
+      await dispatch(runAutoSync());
+    }
+    return count;
+  }
+);
+
+// SYNC FIX: explicit, separate action for re-arming dead-lettered items (those
+// that exhausted MAX_AUTO_RETRIES). Kept distinct from retryFailedSyncNow so a
+// user doesn't accidentally re-trigger a batch of items that have already
+// failed 5+ times without first being made aware that's what they're doing.
+export const resetDeadLettersAndRetry = createAsyncThunk(
+  'sync/resetDeadLettersAndRetry',
+  async (_, { dispatch }) => {
+    const count = await syncQueueDao.resetDeadLetters();
+    if (count > 0) {
+      await dispatch(runAutoSync());
+    }
+    return count;
   }
 );

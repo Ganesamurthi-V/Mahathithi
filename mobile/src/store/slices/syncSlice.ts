@@ -5,6 +5,11 @@ interface SyncState {
   lastSyncTime: string | null;
   pendingCount: number;
   failedCount: number;
+  // SYNC FIX: items that exhausted automatic retries and need a manual
+  // "reset and retry" action, kept distinct from failedCount (which now means
+  // "still retrying automatically in the background") so the failed badge
+  // doesn't look alarming for something that's self-healing.
+  deadLetterCount: number;
   syncProgress: number;
   syncErrors: string[];
   
@@ -20,6 +25,7 @@ const initialState: SyncState = {
   lastSyncTime: null,
   pendingCount: 0,
   failedCount: 0,
+  deadLetterCount: 0,
   syncProgress: 0,
   syncErrors: [],
   
@@ -46,6 +52,7 @@ const syncSlice = createSlice({
     },
     setPendingCount: (state, action: PayloadAction<number>) => { state.pendingCount = action.payload; },
     setFailedCount: (state, action: PayloadAction<number>) => { state.failedCount = action.payload; },
+    setDeadLetterCount: (state, action: PayloadAction<number>) => { state.deadLetterCount = action.payload; },
     
     // Initial Sync Reducers
     startInitialSync: (state) => {
@@ -72,7 +79,7 @@ const syncSlice = createSlice({
 
 export const {
   startSync, updateSyncProgress, syncComplete, syncFailed,
-  setPendingCount, setFailedCount,
+  setPendingCount, setFailedCount, setDeadLetterCount,
   startInitialSync, updateInitialSyncProgress, initialSyncComplete, initialSyncFailed
 } = syncSlice.actions;
 export default syncSlice.reducer;

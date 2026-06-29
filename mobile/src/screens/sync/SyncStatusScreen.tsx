@@ -5,19 +5,20 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import {
-  setPendingCount, setFailedCount,
+  setPendingCount, setFailedCount, setDeadLetterCount,
 } from '../../store/slices/syncSlice';
-import { runAutoSync } from '../../store/slices/syncThunks';
+import { runAutoSync, retryFailedSyncNow, resetDeadLettersAndRetry } from '../../store/slices/syncThunks';
 import { syncQueueDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 
 export default function SyncStatusScreen() {
   const dispatch = useDispatch<AppDispatch>();
-  const { isSyncing, lastSyncTime, pendingCount, failedCount, syncProgress } = useSelector(
+  const { isSyncing, lastSyncTime, pendingCount, failedCount, deadLetterCount, syncProgress } = useSelector(
     (state: RootState) => state.sync
   );
   const [isOnline, setIsOnline] = useState(true);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // Animations
   const spinAnim = useRef(new Animated.Value(0)).current;
@@ -67,14 +68,12 @@ export default function SyncStatusScreen() {
 
   const loadCounts = async () => {
     try {
-      const pending = await syncQueueDao.getPending();
-      // Since getFailedCount might not be implemented, we can filter pending manually if we wanted,
-      // but if the user didn't write it, we should ensure the app doesn't crash.
-      // Wait, let's restore it EXACTLY to what it was before I broke it.
-      const pendingCountFromDb = await (syncQueueDao as any).getPendingCount?.() || 0;
-      const failedCountFromDb = await (syncQueueDao as any).getFailedCount?.() || 0;
+      const pendingCountFromDb = await syncQueueDao.getPendingCount();
+      const failedCountFromDb = await syncQueueDao.getFailedCount();
+      const deadLetterCountFromDb = await syncQueueDao.getDeadLetterCount();
       dispatch(setPendingCount(pendingCountFromDb));
       dispatch(setFailedCount(failedCountFromDb));
+      dispatch(setDeadLetterCount(deadLetterCountFromDb));
     } catch(e) {}
   };
 
@@ -87,8 +86,53 @@ export default function SyncStatusScreen() {
       return;
     }
 
-    dispatch(runAutoSync() as any);
+    await dispatch(runAutoSync() as any);
+    loadCounts();
   }, [dispatch, isSyncing]);
+
+  // SYNC FIX: lets the user force an immediate retry of FAILED items instead of
+  // waiting for the backoff window. Only touches items still under the retry cap —
+  // dead-lettered items need handleResetDeadLetters below instead.
+  const handleRetryFailed = useCallback(async () => {
+    const netState = await NetInfo.fetch();
+    if (!netState.isConnected) {
+      Alert.alert('Offline', 'Connect to the internet to retry failed uploads.');
+      return;
+    }
+    setIsRetrying(true);
+    try {
+      await dispatch(retryFailedSyncNow() as any);
+    } finally {
+      setIsRetrying(false);
+      loadCounts();
+    }
+  }, [dispatch]);
+
+  // SYNC FIX: distinct, deliberate action for items that exhausted automatic
+  // retries (5 attempts). Asks for confirmation since these have already failed
+  // repeatedly and a blind retry without checking connectivity/data first may
+  // just fail again.
+  const handleResetDeadLetters = useCallback(() => {
+    Alert.alert(
+      'Retry Stuck Items?',
+      `${deadLetterCount} item(s) failed repeatedly and stopped retrying automatically. Make sure you have a stable connection, then try again?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Retry Now',
+          onPress: async () => {
+            setIsRetrying(true);
+            try {
+              await dispatch(resetDeadLettersAndRetry() as any);
+            } finally {
+              setIsRetrying(false);
+              loadCounts();
+            }
+          },
+        },
+      ]
+    );
+  }, [dispatch, deadLetterCount]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -126,9 +170,41 @@ export default function SyncStatusScreen() {
                 <Icon name="alert-circle" size={28} color={colors.error} />
               </View>
               <Text style={styles.statusValue}>{failedCount}</Text>
-              <Text style={styles.statusLabel}>Failed Uploads</Text>
+              <Text style={styles.statusLabel}>Retrying</Text>
             </View>
           </View>
+
+          {/* SYNC FIX: Dead-letter card + manual retry, only shown when there's something stuck */}
+          {deadLetterCount > 0 && (
+            <View style={styles.deadLetterCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md }}>
+                <Icon name="alert-octagon" size={20} color={colors.error} style={{ marginRight: 8 }} />
+                <Text style={styles.deadLetterTitle}>{deadLetterCount} item(s) stuck</Text>
+              </View>
+              <Text style={styles.deadLetterText}>
+                These failed repeatedly and stopped retrying automatically. Check your connection and try again.
+              </Text>
+              <TouchableOpacity
+                style={[styles.retryButton, isRetrying && styles.syncButtonDisabled]}
+                onPress={handleResetDeadLetters}
+                disabled={isRetrying}
+              >
+                <Text style={styles.retryButtonText}>Retry Stuck Items</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* SYNC FIX: Manual "retry now" for items still auto-retrying but waiting on backoff */}
+          {failedCount > 0 && (
+            <TouchableOpacity
+              style={[styles.retryNowLink, isRetrying && { opacity: 0.5 }]}
+              onPress={handleRetryFailed}
+              disabled={isRetrying || !isOnline}
+            >
+              <Icon name="refresh" size={16} color={colors.primary} style={{ marginRight: 6 }} />
+              <Text style={styles.retryNowLinkText}>Retry {failedCount} failed item(s) now</Text>
+            </TouchableOpacity>
+          )}
 
           {/* Progress Bar */}
           {isSyncing && (
@@ -178,7 +254,8 @@ export default function SyncStatusScreen() {
             </View>
             <Text style={styles.infoText}>• Surveys are saved locally when offline</Text>
             <Text style={styles.infoText}>• Auto-sync triggers when internet is available</Text>
-            <Text style={styles.infoText}>• Failed uploads are retried automatically</Text>
+            <Text style={styles.infoText}>• Failed uploads retry automatically with increasing delays</Text>
+            <Text style={styles.infoText}>• Items that fail 5 times need a manual retry, shown above</Text>
             <Text style={styles.infoText}>• Completed stakeholders are removed from your list</Text>
           </View>
         </Animated.View>
@@ -232,6 +309,22 @@ const styles = StyleSheet.create({
   },
   syncButtonDisabled: { opacity: 0.5 },
   syncButtonText: { ...typography.button, color: '#FFF', fontSize: 16 },
+  deadLetterCard: {
+    backgroundColor: colors.errorBg, borderRadius: borderRadius.md,
+    padding: spacing.xl, marginBottom: spacing.xl, borderWidth: 1, borderColor: colors.error,
+  },
+  deadLetterTitle: { ...typography.body, fontWeight: '700', color: colors.error },
+  deadLetterText: { ...typography.bodySmall, color: colors.textSecondary, marginBottom: spacing.md, lineHeight: 20 },
+  retryButton: {
+    backgroundColor: colors.error, borderRadius: borderRadius.md,
+    padding: spacing.md, alignItems: 'center',
+  },
+  retryButtonText: { ...typography.button, color: '#FFF', fontSize: 14 },
+  retryNowLink: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    marginBottom: spacing.xl, padding: spacing.sm,
+  },
+  retryNowLinkText: { ...typography.bodySmall, color: colors.primary, fontWeight: '600' },
   infoCard: {
     backgroundColor: colors.bgCard, borderRadius: borderRadius.md,
     padding: spacing.xl, borderWidth: 1, borderColor: colors.border,
