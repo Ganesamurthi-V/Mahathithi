@@ -1,18 +1,15 @@
 import { Response, NextFunction } from 'express';
 import { SurveyService } from './survey.service';
 import { AuthenticatedRequest } from '../../middleware/auth';
-import { ValidationError } from '../../utils/errors';
+import { createSurveySchema } from '../../schemas/request-schemas';
 
 const surveyService = new SurveyService();
 
 export class SurveyController {
   async createOrUpdate(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { stakeholderId, ...surveyData } = req.body;
-
-      if (!stakeholderId) {
-        throw new ValidationError('Stakeholder ID is required');
-      }
+      // M5 FIX: validate + enforce length limits on every free-text field
+      const { stakeholderId, ...surveyData } = createSurveySchema.parse(req.body);
 
       // C2 FIX: pass the caller's districts and admin flag for district enforcement
       const survey = await surveyService.createOrUpdate(

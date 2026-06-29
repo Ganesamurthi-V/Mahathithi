@@ -766,7 +766,10 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       if (netState.isConnected) {
         try {
           setUploadText('Uploading to server...');
-          console.log('📤 [Survey Online] Uploading text payload:', JSON.stringify(surveyPayload, null, 2));
+          // NEW-3 FIX: PII payload — debug builds only, never in release logs.
+          if (__DEV__) {
+            console.log('📤 [Survey Online] Uploading text payload:', JSON.stringify(surveyPayload, null, 2));
+          }
           const response = await surveyService.createOrUpdate(surveyPayload);
           const realSurveyId = response.data?.data?.id || surveyId;
 

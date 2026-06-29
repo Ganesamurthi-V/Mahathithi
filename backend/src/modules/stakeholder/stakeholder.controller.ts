@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { StakeholderService } from './stakeholder.service';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { ValidationError } from '../../utils/errors';
+import { updateStakeholderSchema } from '../../schemas/request-schemas';
 
 const stakeholderService = new StakeholderService();
 
@@ -102,9 +103,12 @@ export class StakeholderController {
 
   async updateStakeholder(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      // M5 FIX: validate + enforce field length limits via Zod
+      const validated = updateStakeholderSchema.parse(req.body);
+
       const result = await stakeholderService.updateStakeholder(
         (req.params.id as string),
-        req.body,
+        validated,
         req.enumerator!.id
       );
 

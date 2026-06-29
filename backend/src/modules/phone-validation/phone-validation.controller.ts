@@ -1,23 +1,15 @@
 import { Response, NextFunction } from 'express';
 import { prisma } from '../../config/database';
 import { AuthenticatedRequest } from '../../middleware/auth';
-import { NotFoundError, ValidationError, ForbiddenError } from '../../utils/errors';
+import { NotFoundError, ForbiddenError } from '../../utils/errors';
 import { assertStakeholderAccess } from '../../utils/access-control';
-
-const ALLOWED_STATUSES = ['PENDING_VERIFICATION', 'VERIFIED', 'FAILED'];
+import { createPhoneValidationSchema, updatePhoneValidationSchema } from '../../schemas/request-schemas';
 
 export class PhoneValidationController {
   async create(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { stakeholderId, phoneNumber, status, method, remarks } = req.body;
-
-      if (!stakeholderId || !phoneNumber) {
-        throw new ValidationError('Stakeholder ID and phone number are required');
-      }
-
-      if (!ALLOWED_STATUSES.includes(status)) {
-        throw new ValidationError('Invalid verification status');
-      }
+      // M5 FIX: validate + enforce length limits via Zod (replaces hand-rolled checks)
+      const { stakeholderId, phoneNumber, status, method, remarks } = createPhoneValidationSchema.parse(req.body);
 
       // C5/N4 FIX: enforce district access on the write path too. The read and
       // update paths were patched, but create still allowed any enumerator to
@@ -78,13 +70,8 @@ export class PhoneValidationController {
 
   async update(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { status, remarks } = req.body;
-
-      // C5 FIX: validate the enum before touching the DB — previously any string
-      // could be written into the status field (or the record VERIFIED for anyone)
-      if (status && !ALLOWED_STATUSES.includes(status)) {
-        throw new ValidationError(`Invalid verification status. Must be one of: ${ALLOWED_STATUSES.join(', ')}`);
-      }
+      // M5 FIX: validate + enforce length limits via Zod (replaces hand-rolled enum check)
+      const { status, remarks } = updatePhoneValidationSchema.parse(req.body);
 
       // C5 FIX: verify the caller owns this record before allowing changes
       const existing = await prisma.phoneValidation.findUnique({

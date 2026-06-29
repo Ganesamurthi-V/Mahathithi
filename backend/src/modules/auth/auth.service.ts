@@ -11,59 +11,41 @@ function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+import { redisClient } from '../../config/redis';
+
 /**
- * H7 FIX: per-account brute-force lockout.
+ * H7 FIX: per-account brute-force lockout via Redis.
  *
- * The IP-only rate limiter in loginLimiter middleware can be bypassed by a
- * distributed attacker rotating IPs. This per-account counter locks a specific
- * loginId after MAX_FAILED_ATTEMPTS consecutive bad passwords, regardless of
- * how many different IPs were used.
- *
- * Implementation uses a module-level Map (safe for single-instance Node processes).
- * For a multi-instance deployment, swap these two variables for a Redis client:
- *   await redisClient.incr(`login_attempts:${loginId}`) etc.
+ * This locks a specific loginId after MAX_FAILED_ATTEMPTS consecutive bad passwords,
+ * regardless of how many different IPs were used. Using Redis instead of an
+ * in-memory Map ensures lockouts work across multi-instance deployments (like Railway)
+ * and survive server restarts, while auto-expiring keys prevent memory leaks.
  */
 const MAX_FAILED_ATTEMPTS = 5;
-const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+const LOCKOUT_SECONDS = 15 * 60; // 15 minutes
 
-interface LockoutEntry {
-  attempts: number;
-  lockedUntil?: number; // epoch ms
-}
-const loginFailures = new Map<string, LockoutEntry>();
-
-function checkAndRecordFailure(loginId: string): void {
-  const now = Date.now();
-  const entry = loginFailures.get(loginId) ?? { attempts: 0 };
-
-  // If currently locked, reject immediately
-  if (entry.lockedUntil && now < entry.lockedUntil) {
-    throw new UnauthorizedError(
-      'Account temporarily locked due to too many failed attempts. Please try again in 15 minutes.'
-    );
-  }
-
-  // Otherwise increment and possibly lock
-  entry.attempts++;
-  if (entry.attempts >= MAX_FAILED_ATTEMPTS) {
-    entry.lockedUntil = now + LOCKOUT_MS;
-    entry.attempts = 0; // reset counter for the next lockout period
-  }
-  loginFailures.set(loginId, entry);
-}
-
-function checkLocked(loginId: string): void {
-  const now = Date.now();
-  const entry = loginFailures.get(loginId);
-  if (entry?.lockedUntil && now < entry.lockedUntil) {
+async function checkLocked(loginId: string): Promise<void> {
+  const locked = await redisClient.get(`login_lock:${loginId}`);
+  if (locked) {
     throw new UnauthorizedError(
       'Account temporarily locked due to too many failed attempts. Please try again in 15 minutes.'
     );
   }
 }
 
-function clearFailures(loginId: string): void {
-  loginFailures.delete(loginId);
+async function checkAndRecordFailure(loginId: string): Promise<void> {
+  const key = `login_attempts:${loginId}`;
+  const attempts = await redisClient.incr(key);
+  await redisClient.expire(key, LOCKOUT_SECONDS);
+  
+  if (attempts >= MAX_FAILED_ATTEMPTS) {
+    await redisClient.set(`login_lock:${loginId}`, '1', { EX: LOCKOUT_SECONDS });
+  }
+}
+
+async function clearFailures(loginId: string): Promise<void> {
+  await redisClient.del(`login_attempts:${loginId}`);
+  await redisClient.del(`login_lock:${loginId}`);
 }
 
 interface TokenPair {
@@ -83,7 +65,7 @@ export class AuthService {
     ipAddress?: string
   ): Promise<{ tokens: TokenPair; enumerator: any }> {
     // H7 FIX: check account lockout before even querying the DB
-    checkLocked(loginId);
+    await checkLocked(loginId);
 
     const enumerator = await prisma.enumerator.findUnique({
       where: { loginId },
@@ -105,7 +87,7 @@ export class AuthService {
     const passwordValid = await bcrypt.compare(password, enumerator.passwordHash);
     if (!passwordValid) {
       // H7 FIX: record failed attempt, lock after MAX_FAILED_ATTEMPTS
-      checkAndRecordFailure(loginId);
+      await checkAndRecordFailure(loginId);
       // Log failed attempt
       await prisma.auditLog.create({
         data: {
@@ -121,7 +103,7 @@ export class AuthService {
     }
 
     // H7 FIX: clear failure counter on successful login
-    clearFailures(loginId);
+    await clearFailures(loginId);
 
     // Generate tokens
     const tokens = await this.generateTokens(enumerator.id, enumerator.loginId, enumerator.name, enumerator.isAdmin);

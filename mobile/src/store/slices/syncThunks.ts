@@ -262,7 +262,11 @@ export const runAutoSync = createAsyncThunk(
               localId: surveyLocal.id,
             };
 
-            console.log(`📤 [Sync] Uploading text payload for survey ${localSurveyId}:`, JSON.stringify(surveyPayload, null, 2));
+            // NEW-3 FIX: never write full survey PII to device logs in release
+            // builds (RN does not strip console.* by default → visible in logcat).
+            if (__DEV__) {
+              console.log(`📤 [Sync] Uploading text payload for survey ${localSurveyId}:`, JSON.stringify(surveyPayload, null, 2));
+            }
             await syncService.upload({
               surveys: [surveyPayload],
               phoneValidations: [],

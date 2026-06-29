@@ -129,7 +129,8 @@ export class SurveyService {
     const survey = await prisma.survey.findFirst({
       where: { stakeholderId },
       include: {
-        media: true,
+        // NEW-1 FIX: don't surface tombstoned media in survey detail
+        media: { where: { deletedAt: null } },
         stakeholder: {
           select: {
             companyNameStandardized: true,
@@ -157,7 +158,10 @@ export class SurveyService {
     const survey = await prisma.survey.findUnique({
       where: { id: surveyId },
       include: {
-        media: true,
+        // NEW-1 FIX: exclude soft-deleted (tombstoned) media so completion
+        // requirements (min photos/video) are never satisfied by media whose
+        // S3 object may already be gone.
+        media: { where: { deletedAt: null } },
         stakeholder: {
           include: {
             phoneValidations: {
@@ -288,6 +292,8 @@ export class SurveyService {
           },
         },
         media: {
+          // NEW-1 FIX: exclude tombstoned media from per-survey listings
+          where: { deletedAt: null },
           select: { id: true, type: true, photoCategory: true },
         },
       },

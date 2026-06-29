@@ -1,0 +1,9 @@
+# Android / Gradle build artifacts and machine-specific config
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.cxx/
+captures/
+.externalNativeBuild/

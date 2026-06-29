@@ -5,40 +5,43 @@ import bcrypt from 'bcryptjs';
 import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { ValidationError, NotFoundError } from '../../utils/errors';
+import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
 
 /**
  * L1 FIX: enforce minimum password strength before hashing.
- * Requirements: 10+ chars, uppercase, lowercase, digit, special character.
- * Applied to both create and update enumerator routes.
+ * Requires: 10+ chars, 1 uppercase, 1 lowercase, 1 number, 1 special char.
  */
-function validatePassword(password: string): void {
-  if (password.length < 10) {
-    throw new ValidationError('Password must be at least 10 characters long');
-  }
-  if (!/[A-Z]/.test(password)) {
-    throw new ValidationError('Password must contain at least one uppercase letter');
-  }
-  if (!/[a-z]/.test(password)) {
-    throw new ValidationError('Password must contain at least one lowercase letter');
-  }
-  if (!/[0-9]/.test(password)) {
-    throw new ValidationError('Password must contain at least one digit');
-  }
-  if (!/[^A-Za-z0-9]/.test(password)) {
-    throw new ValidationError('Password must contain at least one special character (!@#$%^&* etc.)');
-  }
+function validatePassword(password: string) {
+  if (password.length < 10) throw new ValidationError('Password must be at least 10 characters long');
+  if (!/[A-Z]/.test(password)) throw new ValidationError('Password must contain at least one uppercase letter');
+  if (!/[a-z]/.test(password)) throw new ValidationError('Password must contain at least one lowercase letter');
+  if (!/[0-9]/.test(password)) throw new ValidationError('Password must contain at least one number');
+  if (!/[^A-Za-z0-9]/.test(password)) throw new ValidationError('Password must contain at least one special character');
 }
 
 const router = Router();
+router.use(authMiddleware, adminOnly);
 
-router.use(authMiddleware);
-router.use(adminOnly);
+// Dashboard stats
+router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const [totalStakeholders, completedSurveys, pendingSync, failedSync] = await Promise.all([
+      prisma.stakeholder.count(),
+      prisma.survey.count({ where: { isCompleted: true } }),
+      prisma.syncQueue.count({ where: { status: 'PENDING' } }),
+      prisma.syncQueue.count({ where: { status: 'FAILED' } }),
+    ]);
 
-// ============================================================================
-// ENUMERATOR MANAGEMENT
-// ============================================================================
+    res.json({
+      success: true,
+      data: { totalStakeholders, completedSurveys, pendingSync, failedSync },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
-// List all enumerators
+// List enumerators
 router.get('/enumerators', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const enumerators = await prisma.enumerator.findMany({
@@ -72,11 +75,8 @@ router.get('/enumerators', async (req: AuthenticatedRequest, res: Response, next
 // Create enumerator
 router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const { loginId, password, name, phone, email, isAdmin, districtIds } = req.body;
-
-    if (!loginId || !password || !name) {
-      throw new ValidationError('Login ID, password, and name are required');
-    }
+    // M5 FIX: validate + enforce length limits via Zod
+    const { loginId, password, name, phone, email, isAdmin, districtIds } = createEnumeratorSchema.parse(req.body);
 
     // L1 FIX: enforce password strength before hashing
     validatePassword(password);
@@ -123,7 +123,8 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
 // Update enumerator
 router.patch('/enumerators/:id', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const { name, phone, email, isActive, password } = req.body;
+    // M5 FIX: validate + enforce length limits via Zod
+    const { name, phone, email, isActive, password } = updateEnumeratorSchema.parse(req.body);
 
     const updateData: any = {};
     if (name) updateData.name = name;

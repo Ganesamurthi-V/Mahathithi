@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 import { AppError } from '../utils/errors';
 import { logger } from '../utils/logger';
 
@@ -8,6 +9,23 @@ export function errorHandler(
   res: Response,
   next: NextFunction
 ): void {
+  // M5 FIX: turn Zod validation failures into clean 400s with field-level
+  // detail instead of falling through to a generic 500.
+  if (err instanceof ZodError) {
+    res.status(400).json({
+      success: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        details: err.issues.map((i) => ({
+          field: i.path.join('.'),
+          message: i.message,
+        })),
+      },
+    });
+    return;
+  }
+
   if (err instanceof AppError) {
     res.status(err.statusCode).json({
       success: false,

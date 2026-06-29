@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { MediaService } from './media.service';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { ValidationError } from '../../utils/errors';
+import { mediaUploadFieldsSchema } from '../../schemas/request-schemas';
 
 const mediaService = new MediaService();
 
@@ -13,11 +14,8 @@ export class MediaController {
         throw new ValidationError('No file provided');
       }
 
-      const { surveyId, type, photoCategory, latitude, longitude, gpsAccuracy, duration, localId } = req.body;
-
-      if (!surveyId || !type) {
-        throw new ValidationError('Survey ID and type are required');
-      }
+      // M5 FIX: validate + enforce length limits on form-data fields via Zod
+      const { surveyId, type, photoCategory, latitude, longitude, gpsAccuracy, duration, localId } = mediaUploadFieldsSchema.parse(req.body);
 
       // C3/C4 FIX: pass caller's districts and admin flag so service can enforce access
       const media = await mediaService.upload(
