@@ -21,6 +21,13 @@ export class AuthController {
         req.ip
       );
 
+      res.cookie('admin_session', result.tokens.accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 15 * 60 * 1000,
+      });
+
       res.json({
         success: true,
         data: result,
@@ -53,6 +60,8 @@ export class AuthController {
     try {
       const { refreshToken } = req.body;
       await authService.logout(req.enumerator!.id, refreshToken);
+
+      res.clearCookie('admin_session');
 
       res.json({
         success: true,

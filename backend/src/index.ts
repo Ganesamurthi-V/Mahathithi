@@ -5,6 +5,7 @@ import compression from 'compression';
 import { config } from './config';
 import { connectDatabase, disconnectDatabase } from './config/database';
 import { errorHandler } from './middleware/error-handler';
+import cookieParser from 'cookie-parser';
 import { generalLimiter } from './middleware/rate-limiter';
 import { logger } from './utils/logger';
 
@@ -54,6 +55,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(compression());
+app.use(cookieParser());
 // M1 FIX: lowered global body limit from 50MB to 1MB.
 // The 50MB limit is applied only on the sync upload route (see sync.routes.ts).
 // Applying it globally let anyone abuse cheap endpoints like /auth/login

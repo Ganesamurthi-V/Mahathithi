@@ -1,20 +1,11 @@
 import axios from 'axios';
 import EncryptedStorage from 'react-native-encrypted-storage';
+import Config from 'react-native-config';
 
 // M7 FIX: The API base URL is no longer hardcoded.
-//
 // In a production build, set API_BASE_URL via your CI/CD build environment
-// (e.g. react-native-config, react-native-dotenv, or a build-time .env file):
-//
-//   # .env.production
-//   API_BASE_URL=https://api.mahaatithi.gov.in/api
-//
-// In development, the app falls back to the Railway test deployment.
-// If you have react-native-config installed, replace the fallback line with:
-//   import Config from 'react-native-config';
-//   const API_BASE = Config.API_BASE_URL;
-const API_BASE = (globalThis as any).__ENV__?.API_BASE_URL
-  || (__DEV__ ? 'https://mahathithi-test.up.railway.app/api' : '');
+// e.g. in an .env file or build secrets.
+const API_BASE = Config.API_BASE_URL || (__DEV__ ? 'https://mahathithi-test.up.railway.app/api' : '');
 
 if (!API_BASE) {
   throw new Error('[CONFIG] API_BASE_URL is not set. Set it via .env.production before building a release.');

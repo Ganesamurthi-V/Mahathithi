@@ -41,21 +41,16 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('admin_token');
-    if (token) {
-      getProfile()
-        .then((res) => {
-          if (res.data.data.isAdmin) {
-            setUser(res.data.data);
-          } else {
-            localStorage.removeItem('admin_token');
-          }
-        })
-        .catch(() => localStorage.removeItem('admin_token'))
-        .finally(() => setLoading(false));
-    } else {
-      setLoading(false);
-    }
+    getProfile()
+      .then((res) => {
+        if (res.data.data.isAdmin) {
+          setUser(res.data.data);
+        }
+      })
+      .catch(() => {
+        // Not logged in, cookie missing or expired
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) {
@@ -70,7 +65,17 @@ export default function App() {
     return <LoginPage onLogin={setUser} />;
   }
 
-  return <Dashboard user={user} onLogout={() => { localStorage.removeItem('admin_token'); setUser(null); }} />;
+  return (
+    <Dashboard 
+      user={user} 
+      onLogout={async () => {
+        try {
+          await import('./api').then(m => m.default.post('/auth/logout'));
+        } catch (e) {}
+        setUser(null);
+      }} 
+    />
+  );
 }
 
 // ============================================================================
@@ -98,8 +103,6 @@ function LoginPage({ onLogin }: { onLogin: (user: User) => void }) {
         return;
       }
 
-      localStorage.setItem('admin_token', tokens.accessToken);
-      localStorage.setItem('admin_refresh', tokens.refreshToken);
       onLogin(enumerator);
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Login failed');
