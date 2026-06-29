@@ -36,16 +36,38 @@ export const checkSession = createAsyncThunk('auth/checkSession', async () => {
 // Login
 export const login = createAsyncThunk(
   'auth/login',
-  async ({ loginId, password }: { loginId: string; password: string }) => {
-    const response = await authService.login(loginId, password);
-    const { tokens, enumerator } = response.data.data;
+  async ({ loginId, password }: { loginId: string; password: string }, { rejectWithValue }) => {
+    try {
+      const response = await authService.login(loginId, password);
+      const { tokens, enumerator } = response.data.data;
 
-    // Store tokens securely
-    await EncryptedStorage.setItem('access_token', tokens.accessToken);
-    await EncryptedStorage.setItem('refresh_token', tokens.refreshToken);
-    await EncryptedStorage.setItem('user_data', JSON.stringify(enumerator));
+      // Store tokens securely
+      await EncryptedStorage.setItem('access_token', tokens.accessToken);
+      await EncryptedStorage.setItem('refresh_token', tokens.refreshToken);
+      await EncryptedStorage.setItem('user_data', JSON.stringify(enumerator));
 
-    return enumerator;
+      return enumerator;
+    } catch (err: any) {
+      // If the backend sent a structured error response
+      if (err.response && err.response.data && err.response.data.error && err.response.data.error.message) {
+        return rejectWithValue(err.response.data.error.message);
+      }
+      
+      // If it's a network error (server down, no internet)
+      if (err.message === 'Network Error' || err.code === 'ECONNABORTED') {
+        return rejectWithValue('Unable to connect to the server. Please check your internet connection and try again.');
+      }
+
+      // Fallback for unhandled HTTP status codes that didn't have a JSON error body
+      if (err.response && err.response.status === 401) {
+        return rejectWithValue('Invalid login credentials');
+      } else if (err.response && err.response.status >= 500) {
+        return rejectWithValue('The server is experiencing issues. Please try again later.');
+      }
+
+      // Generic fallback
+      return rejectWithValue('An unexpected error occurred during login. Please try again.');
+    }
   }
 );
 
@@ -100,7 +122,8 @@ const authSlice = createSlice({
       })
       .addCase(login.rejected, (state, action) => {
         state.isLoading = false;
-        state.error = action.error.message || 'Login failed';
+        // Use the custom message from rejectWithValue if available
+        state.error = (action.payload as string) || action.error.message || 'Login failed. Please try again.';
       })
       .addCase(logout.fulfilled, (state) => {
         state.isAuthenticated = false;
