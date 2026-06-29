@@ -39,7 +39,7 @@ async function checkAndRecordFailure(loginId: string): Promise<void> {
   await redisClient.expire(key, LOCKOUT_SECONDS);
   
   if (attempts >= MAX_FAILED_ATTEMPTS) {
-    await redisClient.set(`login_lock:${loginId}`, '1', { EX: LOCKOUT_SECONDS });
+    await redisClient.set(`login_lock:${loginId}`, '1', { ex: LOCKOUT_SECONDS });
   }
 }
 

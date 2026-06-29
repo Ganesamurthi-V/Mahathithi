@@ -41,8 +41,10 @@ export const config = {
     s3Endpoint: process.env.S3_ENDPOINT || undefined,
   },
 
-  redis: {
-    url: process.env.REDIS_URL || 'redis://localhost:6379',
+  upstash: {
+    // Upstash Redis REST — required for brute-force lockout across instances.
+    url: requireEnv('UPSTASH_REDIS_REST_URL'),
+    token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
   },
 
   rateLimit: {
