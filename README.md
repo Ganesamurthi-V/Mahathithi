@@ -165,3 +165,40 @@ If you only remember one thing about this project: **it's a three-app system (of
 cd "c:\test file\Manasa project\mobile\android"
 .\gradlew clean
 .\gradlew assembleRelease
+
+
+## How to run 
+
+Prerequisites:
+Node.js (v18 or higher)
+PostgreSQL running locally (or via Docker)
+Android Studio (for the Android emulator and SDKs)
+
+1. Backend Setup (/backend)
+The backend is the central API and database manager.
+
+Open a terminal in the backend/ folder and run npm install.
+Copy the .env.example file to a new file named .env and configure your local DATABASE_URL (e.g., postgresql://user:pass@localhost:5432/mahaatithi) and a random string for JWT_SECRET.
+Push the database schema: npm run db:push
+Seed the database with default accounts and districts: npm run db:seed
+This creates the default admin (admin / admin@123) and enumerators (e.g., enum_wardha_01 / enum@123).
+Start the backend server: npm run dev (it usually runs on http://localhost:3000).
+
+2. Admin Panel Setup (/admin-panel)
+The web dashboard for managing the system.
+
+Open a new terminal in the admin-panel/ folder and run npm install.
+Create a .env file here if needed, and point it to the backend (e.g., VITE_API_BASE_URL=http://localhost:3000/api).
+Start the dev server: npm run dev.
+Open the displayed URL in your browser and log in with the admin credentials.
+
+3. Mobile App Setup (/mobile)
+The React Native Android app for field enumerators.
+
+Open a new terminal in the mobile/ folder and run npm install.
+Create a mobile/.env file and set the API URL:
+For Android Emulator: API_BASE_URL=http://10.0.2.2:3000/api (The emulator uses 10.0.2.2 to point to your computer's localhost).
+For Physical Device: API_BASE_URL=http://<YOUR_LAPTOP_WIFI_IP>:3000/api
+Launch your Android Emulator via Android Studio (or plug in a physical Android device with USB debugging enabled).
+Run the app: npm run android (or npm start followed by pressing a for Android).
+Once the app launches on the device, log in with an enumerator account (e.g., enum_wardha_01 / enum@123).
