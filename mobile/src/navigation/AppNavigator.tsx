@@ -99,6 +99,7 @@ function MainTabs() {
 
 import InitialSyncModal from '../screens/sync/InitialSyncModal';
 import { runInitialSync } from '../store/slices/syncThunks';
+import { connectRealtime, disconnectRealtime } from '../services/realtime';
 
 export function AppNavigator() {
   const dispatch = useDispatch<AppDispatch>();
@@ -122,6 +123,7 @@ export function AppNavigator() {
     
     // Trigger initial sync check upon login/auth
     dispatch(runInitialSync() as any);
+    connectRealtime();
 
     // SYNC FIX (round 2): debounce reconnect events. runAutoSync() now has
     // its own internal mutex (see syncThunks.ts) so overlapping calls can no
@@ -148,6 +150,7 @@ export function AppNavigator() {
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       unsubscribe();
+      disconnectRealtime();
     };
   }, [dispatch, isAuthenticated]);
 

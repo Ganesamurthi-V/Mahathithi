@@ -8,6 +8,8 @@ import { errorHandler } from './middleware/error-handler';
 import cookieParser from 'cookie-parser';
 import { generalLimiter } from './middleware/rate-limiter';
 import { logger } from './utils/logger';
+import { createServer } from 'http';
+import { initRealtime } from './realtime/socket';
 
 // Route imports
 import authRoutes from './modules/auth/auth.routes';
@@ -125,8 +127,11 @@ async function startServer() {
     // Connect to database
     await connectDatabase();
 
+    const httpServer = createServer(app);
+    initRealtime(httpServer);
+
     // Start server
-    const server = app.listen(config.port, () => {
+    const server = httpServer.listen(config.port, () => {
       logger.info(`
 ╔══════════════════════════════════════════════════╗
 ║           MahaAtithi API Server                 ║

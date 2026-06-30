@@ -87,6 +87,8 @@ api.interceptors.response.use(
           await EncryptedStorage.setItem('access_token', accessToken);
           await EncryptedStorage.setItem('refresh_token', newRefresh);
 
+          import('./realtime').then(m => m.reauthRealtime());
+
           originalRequest.headers.Authorization = `Bearer ${accessToken}`;
           return api(originalRequest);
         }

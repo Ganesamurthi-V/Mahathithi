@@ -2,6 +2,7 @@ import { prisma } from '../../config/database';
 import { NotFoundError, ValidationError, ConflictError } from '../../utils/errors';
 import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
+import { emitToDistrictAndAdmins } from '../../realtime/socket';
 // B7 FIX: removed unused StakeholderService import/instance — it was never
 // referenced and risked a circular dependency between the survey and
 // stakeholder services.
@@ -303,6 +304,14 @@ export class SurveyService {
     ]);
 
     logger.info(`Survey completed: ${surveyId}, stakeholder locked by ${enumeratorId}`);
+
+    // REALTIME: notify the district's other enumerators + all admins
+    emitToDistrictAndAdmins(survey.stakeholder.district, 'stakeholder:locked', {
+      stakeholderId: survey.stakeholderId,
+      lockedById: enumeratorId,
+      lockedAt: new Date().toISOString(),
+      district: survey.stakeholder.district,
+    });
 
     return {
       status: 'CLOSED',

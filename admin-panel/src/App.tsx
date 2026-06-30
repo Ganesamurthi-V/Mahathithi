@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { getProfile } from './api';
 import { User } from './types';
+import { connectAdminRealtime, disconnectAdminRealtime } from './realtime';
 
 // PERF: lazy-load route pages so the initial bundle only ships the login/shell.
 // Each page becomes its own chunk fetched on first navigation, cutting TTI.
@@ -54,6 +55,15 @@ export default function App() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      disconnectAdminRealtime();
+      return;
+    }
+    connectAdminRealtime(queryClient);
+    return () => disconnectAdminRealtime();
+  }, [user]);
 
   if (loading) {
     return (

@@ -6,6 +6,7 @@ import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { ValidationError, NotFoundError } from '../../utils/errors';
 import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
+import { emitToDistrictAndAdmins } from '../../realtime/socket';
 
 /**
  * L1 FIX: enforce minimum password strength before hashing.
@@ -167,9 +168,23 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
     await prisma.session.deleteMany({ where: { enumeratorId } });
     
     // Unlock any stakeholders they have locked so other enumerators can work on them
+    const unlockedStakeholders = await prisma.stakeholder.findMany({
+      where: { lockedById: enumeratorId },
+      select: { id: true, district: true },
+    });
+
     await prisma.stakeholder.updateMany({
       where: { lockedById: enumeratorId },
       data: { lockedById: null, lockedAt: null }
+    });
+
+    const affectedDistricts = [...new Set(unlockedStakeholders.map(s => s.district).filter(Boolean))];
+    affectedDistricts.forEach((district) => {
+      emitToDistrictAndAdmins(district, 'stakeholder:unlocked', {
+        stakeholderIds: unlockedStakeholders.filter(s => s.district === district).map(s => s.id),
+        reason: 'enumerator_deactivated',
+        district,
+      });
     });
 
     // Remove their assigned districts so they don't show up in metrics
