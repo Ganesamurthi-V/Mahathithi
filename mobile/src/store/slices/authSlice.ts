@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import EncryptedStorage from 'react-native-encrypted-storage';
 import { authService } from '../../services/api';
+import { clearAllData } from '../../database';
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -84,7 +85,6 @@ export const logout = createAsyncThunk('auth/logout', async () => {
   await EncryptedStorage.removeItem('user_data');
   
   // Wipe all local SQLite data on logout
-  const { clearAllData } = require('../../database');
   await clearAllData();
 });
 

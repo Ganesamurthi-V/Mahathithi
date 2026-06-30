@@ -1,10 +1,10 @@
 import React, { useEffect, useRef } from 'react';
-import { ActivityIndicator, View, StyleSheet, Text, Animated, TouchableOpacity, Platform } from 'react-native';
+import { ActivityIndicator, View, StyleSheet, Text, Animated, TouchableOpacity, Platform, DeviceEventEmitter } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../store';
-import { checkSession } from '../store/slices/authSlice';
+import { checkSession, logout } from '../store/slices/authSlice';
 import { runAutoSync } from '../store/slices/syncThunks';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, typography, shadows, spacing } from '../theme';
@@ -106,6 +106,14 @@ export function AppNavigator() {
 
   useEffect(() => {
     dispatch(checkSession());
+  }, [dispatch]);
+
+  // Global listener for forced logouts from interceptors
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('force_logout', () => {
+      dispatch(logout() as any);
+    });
+    return () => sub.remove();
   }, [dispatch]);
 
   // Global Auto-Sync Listener & Initial Sync Trigger

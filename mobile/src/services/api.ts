@@ -23,7 +23,11 @@ api.interceptors.request.use(async (config) => {
   try {
     const token = await EncryptedStorage.getItem('access_token');
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      if (config.headers && typeof config.headers.set === 'function') {
+        config.headers.set('Authorization', `Bearer ${token}`);
+      } else {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
     }
   } catch (e) {}
   return config;
@@ -96,13 +100,9 @@ api.interceptors.response.use(
           refreshError.response?.status === 401 || refreshError.response?.status === 403;
 
         if (isConfirmedAuthFailure) {
-          await EncryptedStorage.removeItem('access_token');
-          await EncryptedStorage.removeItem('refresh_token');
-          await EncryptedStorage.removeItem('user_data');
-
-          // Wipe all local SQLite data to lock them out completely
-          const { clearAllData } = require('../database');
-          await clearAllData();
+          import('react-native').then(({ DeviceEventEmitter }) => {
+            DeviceEventEmitter.emit('force_logout');
+          });
         }
         // else: leave tokens and local data untouched. Reject below and let
         // the caller (e.g. the sync queue) treat this as an ordinary failed
