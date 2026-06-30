@@ -23,7 +23,15 @@ import { z } from 'zod';
 /** Trimmed, max-length capped string — the building block for every text field */
 const text = (max: number) => z.string().trim().max(max);
 
-const optText = (max: number) => text(max).optional().or(z.literal(''));
+// SYNC FIX: accepts '', undefined, AND null. The mobile app reads these
+// fields straight out of SQLite TEXT columns (business_category, notes,
+// etc.). An unset SQLite TEXT column comes back as `null`, not `''` or
+// `undefined` — so the mobile sync payload legitimately sends
+// `"businessCategory": null`. The previous `text(max).optional().or(z.literal(''))`
+// rejected `null` outright, causing every offline-queued survey with an
+// empty optional field to fail sync with a 400 (visible in app logs as
+// `Request failed with status code 400` on every single survey upload).
+const optText = (max: number) => text(max).nullable().optional().or(z.literal(''));
 
 /** UUID string (stakeholder IDs, survey IDs, etc.) */
 const uuid = z.string().uuid();
