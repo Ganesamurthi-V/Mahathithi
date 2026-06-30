@@ -10,6 +10,7 @@ build/
 .idea/
 .vs/
 .claude/
+Final_Mahaathithi.xlsx
 
 # Mobile specific
 mobile/android/.gradle
