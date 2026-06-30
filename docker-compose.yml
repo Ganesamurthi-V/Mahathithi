@@ -1,38 +1,28 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: mahaatithi_db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: mahaatithi
-      POSTGRES_USER: mahaatithi_admin
-      # C7 FIX: :? means Docker will error at startup if POSTGRES_PASSWORD is not set.
-      # The old fallback (:-MahaAtithi@2024Secure) was a real password committed in the repo.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
-    # C7 FIX: use 'expose' not 'ports' so the DB is only reachable by other
-    # containers on this compose network — NOT published to the host OS or internet.
-    # If you need direct DB access for ops, use: docker exec -it mahaatithi_db psql ...
+  backend:
+    build:
+      context: ./backend
+    container_name: mahaatithi-backend
     ports:
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mahaatithi_admin -d mahaatithi"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    command: >
-      postgres
-        -c shared_buffers=256MB
-        -c effective_cache_size=768MB
-        -c work_mem=16MB
-        -c maintenance_work_mem=128MB
-        -c max_connections=100
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=development
+    restart: unless-stopped
 
-volumes:
-  postgres_data:
-    driver: local
-
+  admin-panel:
+    build:
+      context: ./admin-panel
+    container_name: mahaatithi-admin
+    ports:
+      - "${VITE_PORT:-5173}:5173"
+    env_file:
+      - .env
+    environment:
+      - VITE_API_BASE_URL=http://localhost:3000/api
+    depends_on:
+      - backend
+    restart: unless-stopped
