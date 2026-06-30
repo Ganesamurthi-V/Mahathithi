@@ -2,6 +2,40 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 apply from: file("../../node_modules/react-native-config/android/dotenv.gradle")
+
+// CRASH FIX: previously a missing mobile/.env silently produced a release
+// APK with no API_BASE_URL, which crashed on launch with zero diagnostics
+// (see services/api.ts for the full root-cause writeup). This task fails
+// the build itself — loudly, with a clear message, before an APK is even
+// produced — instead of letting that broken APK reach a device. Runs only
+// for Release variants; debug builds keep falling back to the hardcoded
+// dev URL in api.ts as before.
+tasks.whenTaskAdded { task ->
+    if (task.name == "assembleRelease" || task.name == "bundleRelease") {
+        task.dependsOn("checkReleaseEnvConfig")
+    }
+}
+
+tasks.register("checkReleaseEnvConfig") {
+    doLast {
+        def envFile = file("${rootDir}/../.env")
+        if (!envFile.exists()) {
+            throw new GradleException(
+                "Missing mobile/.env — required for release builds. " +
+                "Copy mobile/.env.example to mobile/.env and set API_BASE_URL " +
+                "before building a release. See mobile/.env.example for details."
+            )
+        }
+        def envText = envFile.text
+        if (!(envText =~ /(?m)^API_BASE_URL\s*=\s*\S+/)) {
+            throw new GradleException(
+                "mobile/.env exists but API_BASE_URL is missing or empty. " +
+                "Set API_BASE_URL before building a release."
+            )
+        }
+    }
+}
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.

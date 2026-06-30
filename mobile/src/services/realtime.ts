@@ -15,6 +15,18 @@ let socket: Socket | null = null;
 export async function connectRealtime(): Promise<void> {
   if (socket?.connected) return;
 
+  // CRASH FIX (companion to api.ts): if API_BASE_URL is unset, App.tsx now
+  // renders ConfigErrorScreen and this code path is unreachable in
+  // practice. This guard is kept anyway as defense-in-depth — without it,
+  // io('') would attempt to connect to a nonsensical empty-string URL,
+  // which on some socket.io-client versions throws synchronously rather
+  // than failing async like a normal connection error, which would
+  // reintroduce a crash-on-login symptom through a different door.
+  if (!SOCKET_BASE) {
+    console.error('[realtime] SOCKET_BASE is empty (API_BASE_URL not configured) — skipping connect.');
+    return;
+  }
+
   const token = await EncryptedStorage.getItem('access_token');
   if (!token) return;
 

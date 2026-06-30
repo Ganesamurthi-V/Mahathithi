@@ -6,6 +6,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { store } from './store';
 import { RootNavigator } from './navigation/AppNavigator';
 import { initDatabase } from './database';
+import { isApiConfigured } from './services/api';
+import ConfigErrorScreen from './screens/ConfigErrorScreen';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,6 +22,14 @@ export default function App() {
   useEffect(() => {
     initDatabase().catch(console.error);
   }, []);
+
+  // CRASH FIX: bail out to a visible, static screen before mounting any of
+  // the app's data-dependent tree (auth, navigation, sync) if the build is
+  // missing its server URL. See services/api.ts for the full root-cause
+  // writeup of why this used to crash the app on launch instead.
+  if (!isApiConfigured) {
+    return <ConfigErrorScreen />;
+  }
 
   return (
     <Provider store={store}>

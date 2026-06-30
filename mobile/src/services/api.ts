@@ -5,10 +5,39 @@ import Config from 'react-native-config';
 // M7 FIX: The API base URL is no longer hardcoded.
 // In a production build, set API_BASE_URL via your CI/CD build environment
 // e.g. in an .env file or build secrets.
+//
+// CRASH FIX: this used to `throw` at module scope when API_BASE was empty.
+// api.ts is imported transitively at app boot (App.tsx -> store/index.ts ->
+// authSlice.ts -> services/api.ts), so a top-level throw here fires during
+// the very first JS module evaluation, before any React component — even
+// the root <App/> — has mounted. There is no error boundary above that
+// point to catch it, and RN release builds have the red-box overlay
+// disabled, so the *visible* symptom is just "the app closes" with zero
+// indication why. This is exactly what happened in release APKs: the repo
+// ships with no `.env` (it's gitignored on purpose — see root .gitignore —
+// and was never created for release builds), so API_BASE silently resolved
+// to '' and this throw fired on launch.
+//
+// Fix: never throw at module scope. Export a boolean + the (possibly empty)
+// base URL, and let App.tsx render a real, visible "app not configured"
+// screen via the new ConfigErrorScreen instead of the JS engine tearing
+// down the whole app. The axios instance is still constructed (with an
+// empty baseURL) so importing this module never throws; callers that
+// actually try to make a request while misconfigured will get a normal
+// rejected promise instead of a crash, which is recoverable by the UI.
 const API_BASE = Config.API_BASE_URL || (__DEV__ ? 'https://mahathithi-test.up.railway.app/api' : '');
 
-if (!API_BASE) {
-  throw new Error('[CONFIG] API_BASE_URL is not set. Set it via .env.production before building a release.');
+export const isApiConfigured = !!API_BASE;
+
+if (!isApiConfigured) {
+  // Log loudly (visible in `adb logcat`) instead of crashing. This is still
+  // a real misconfiguration that must be fixed before shipping — see
+  // mobile/.env.example — but it should never be the thing that makes the
+  // app vanish on a user's device with no diagnosis path.
+  console.error(
+    '[CONFIG] API_BASE_URL is not set. The app will not be able to reach the server. ' +
+    'Set it in mobile/.env (see mobile/.env.example) before building a release.'
+  );
 }
 
 const api = axios.create({
