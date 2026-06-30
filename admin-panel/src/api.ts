@@ -8,13 +8,22 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// Handle 401 responses
+// BUGFIX: the previous interceptor did `window.location.href = '/login'` on
+// every 401. There is no `/login` route in the app — LoginPage is rendered
+// in-place by App.tsx whenever `user` is null. So a 401 (e.g. from the
+// `getProfile()` check on first load when the user isn't authenticated)
+// triggered a *hard* browser navigation to `/login`. Vercel's SPA rewrite
+// serves index.html for that path, which re-mounts the app, re-fires
+// `getProfile()`, gets another 401, and redirects again — an infinite
+// reload loop (visible as the browser tab spinner never stopping).
+//
+// 401s are already handled by the caller: App.tsx's getProfile().catch()
+// simply leaves `user` as null, and StakeholdersPage/EnumeratorsPage/etc.
+// surface their own request errors. No global redirect is needed — just
+// let the rejection propagate.
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      window.location.href = '/login';
-    }
     return Promise.reject(error);
   }
 );
