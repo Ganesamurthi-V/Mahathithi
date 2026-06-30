@@ -22,6 +22,12 @@ interface CreateSurveyData {
   gstNumber?: string;
   organizationType?: string;
   remarks?: string;
+  // SYNC FIX: were accepted by the sync-queue path (syncSurveyItemSchema's
+  // passthrough) but never made it into the online-save path or persistence
+  // here — silently dropped even when the request succeeded. See matching
+  // comment in request-schemas.ts.
+  nearestPoliceStation?: string;
+  nearestHealthcareCenter?: string;
   latitude?: number;
   longitude?: number;
   gpsAccuracy?: number;
@@ -73,6 +79,8 @@ export class SurveyService {
         gstNumber: data.gstNumber,
         organizationType: data.organizationType,
         remarks: data.remarks,
+        nearestPoliceStation: data.nearestPoliceStation,
+        nearestHealthcareCenter: data.nearestHealthcareCenter,
         latitude: data.latitude,
         longitude: data.longitude,
         gpsAccuracy: data.gpsAccuracy,
@@ -94,6 +102,8 @@ export class SurveyService {
         gstNumber: data.gstNumber,
         organizationType: data.organizationType,
         remarks: data.remarks,
+        nearestPoliceStation: data.nearestPoliceStation,
+        nearestHealthcareCenter: data.nearestHealthcareCenter,
         latitude: data.latitude,
         longitude: data.longitude,
         gpsAccuracy: data.gpsAccuracy,

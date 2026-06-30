@@ -766,11 +766,23 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       if (netState.isConnected) {
         try {
           setUploadText('Uploading to server...');
+          // SYNC FIX: createSurveySchema on the backend is .strict() — it
+          // rejects any key it doesn't explicitly define. `surveyPayload`
+          // includes `id` (the mobile app's local-only row id, not a real
+          // server survey id) and `enumeratorId` (derived server-side from
+          // the auth token, never client-supplied) because that same object
+          // also doubles as the shape written to local SQLite a few lines
+          // above. Sending it straight through made every "online" save
+          // 400 unconditionally, even on a perfect connection — the offline
+          // sync-queue path didn't hit this because its item schema uses
+          // .passthrough() instead of .strict(). Build a clean payload with
+          // only the fields the backend schema actually accepts.
+          const { id: _localId, enumeratorId: _enumeratorId, ...onlineSurveyPayload } = surveyPayload;
           // NEW-3 FIX: PII payload — debug builds only, never in release logs.
           if (__DEV__) {
-            console.log('📤 [Survey Online] Uploading text payload:', JSON.stringify(surveyPayload, null, 2));
+            console.log('📤 [Survey Online] Uploading text payload:', JSON.stringify(onlineSurveyPayload, null, 2));
           }
-          const response = await surveyService.createOrUpdate(surveyPayload);
+          const response = await surveyService.createOrUpdate(onlineSurveyPayload);
           const realSurveyId = response.data?.data?.id || surveyId;
 
           // Upload media sequentially

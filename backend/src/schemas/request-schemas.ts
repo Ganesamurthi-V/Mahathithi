@@ -70,6 +70,16 @@ export const createSurveySchema = z.object({
   gstNumber: optText(15),
   organizationType: optText(200),
   remarks: optText(2000),
+  // SYNC FIX: these two fields are real Survey columns (nearest_police_station,
+  // nearest_healthcare_center) and were already covered by syncSurveyItemSchema
+  // (which uses .passthrough() so they slipped through unvalidated), but were
+  // never added here. createSurveySchema is .strict(), so the mobile app's
+  // *online* save path (SurveyFormScreen.tsx, distinct from the offline sync
+  // queue) sent these fields and got an unconditional 400 on every submit —
+  // even with a perfect network connection — since .strict() rejects any key
+  // the schema doesn't know about.
+  nearestPoliceStation: optText(300),
+  nearestHealthcareCenter: optText(300),
   latitude: latitude.optional(),
   longitude: longitude.optional(),
   gpsAccuracy: z.number().min(0).max(10000).optional(),
