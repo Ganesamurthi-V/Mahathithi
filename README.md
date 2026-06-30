@@ -161,3 +161,7 @@ These are seed-script defaults for local development and should never be the liv
 ## 12. Quick Mental Model Summary
 
 If you only remember one thing about this project: **it's a three-app system (offline-capable Android field app, Express/Postgres backend, React admin dashboard) built to let government field staff verify 313K+ tourism-related businesses across Maharashtra, where every piece of collected data — survey answers, GPS coordinates, photos, phone verifications — flows from an offline-first SQLite cache on the enumerator's phone, through a batched sync API, into a PostgreSQL database with strict district-based access control, with media files living in S3 and the whole operation overseen through a web admin panel.**
+
+cd "c:\test file\Manasa project\mobile\android"
+.\gradlew clean
+.\gradlew assembleRelease

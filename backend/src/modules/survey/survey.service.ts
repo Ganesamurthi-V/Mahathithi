@@ -147,8 +147,8 @@ export class SurveyService {
     const survey = await prisma.survey.findFirst({
       where: {
         stakeholderId,
-        // B2 FIX: only return the caller's own survey for this stakeholder
-        enumeratorId,
+        // B2 FIX: only return the caller's own survey for this stakeholder, unless admin
+        ...(isAdmin ? {} : { enumeratorId }),
       },
       include: {
         // NEW-1 FIX: don't surface tombstoned media in survey detail
