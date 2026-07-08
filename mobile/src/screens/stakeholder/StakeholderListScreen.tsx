@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Animated, Easing } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Animated, Easing, DeviceEventEmitter } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -128,6 +128,27 @@ export default function StakeholderListScreen({ navigation }: any) {
       loadStakeholders(1, false); // Silent background refresh on focus
     }, [])
   );
+
+  // Realtime: update the list instantly when another enumerator locks a
+  // stakeholder or an admin unlocks a batch — no manual pull-to-refresh needed.
+  useEffect(() => {
+    const onLocked = ({ stakeholderId }: { stakeholderId: string }) => {
+      setStakeholders(prev => prev.filter(s => s.id !== stakeholderId));
+    };
+
+    const onUnlocked = () => {
+      // A stakeholder was unlocked (e.g. enumerator deactivated), reload
+      // from SQLite so the restored records appear in the list.
+      loadStakeholders(1, false);
+    };
+
+    const lockedSub = DeviceEventEmitter.addListener('stakeholder:locked', onLocked);
+    const unlockedSub = DeviceEventEmitter.addListener('stakeholder:unlocked', onUnlocked);
+    return () => {
+      lockedSub.remove();
+      unlockedSub.remove();
+    };
+  }, []);
 
   const renderItem = useCallback(({ item, index }: { item: any, index: number }) => (
     <StakeholderCard 

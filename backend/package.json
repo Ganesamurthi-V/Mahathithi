@@ -13,6 +13,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "db:cleanup-sessions": "tsx src/scripts/cleanupSessions.ts",
+    "import:excel": "tsx scripts/import-excel.ts",
     "import:csv": "tsx scripts/import-csv.ts",
     "import:health": "tsx scripts/import-health-facilities.ts",
     "lint": "eslint src/",
@@ -61,6 +62,7 @@
     "@types/uuid": "^10.0.0",
     "prisma": "^6.9.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "xlsx": "^0.18.5"
   }
 }

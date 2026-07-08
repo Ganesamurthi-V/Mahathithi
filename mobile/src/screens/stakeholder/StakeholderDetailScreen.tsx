@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Animated, LayoutAnimation, UIManager, Platform, Modal, TextInput } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Animated, LayoutAnimation, UIManager, Platform, Modal, TextInput, DeviceEventEmitter } from 'react-native';
 import { stakeholderService, surveyService } from '../../services/api';
 import { stakeholderDao, syncQueueDao, surveyDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
@@ -109,6 +109,26 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
   useEffect(() => {
     loadData();
   }, [stakeholderId]);
+
+  // Realtime: if another enumerator completes this exact stakeholder while
+  // this screen is open, navigate back immediately so the user isn't left
+  // staring at a record that no longer exists locally.
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(
+      'stakeholder:locked',
+      ({ stakeholderId: lockedId }: { stakeholderId: string }) => {
+        if (lockedId === stakeholderId) {
+          Alert.alert(
+            'Stakeholder Completed',
+            'This stakeholder was just completed by another enumerator.',
+            [{ text: 'OK', onPress: () => navigation.goBack() }],
+            { cancelable: false }
+          );
+        }
+      }
+    );
+    return () => sub.remove();
+  }, [stakeholderId, navigation]);
 
   const loadData = async () => {
     try {

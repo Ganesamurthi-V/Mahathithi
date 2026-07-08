@@ -1,8 +1,10 @@
 import { io, Socket } from 'socket.io-client';
+import { DeviceEventEmitter } from 'react-native';
 import EncryptedStorage from 'react-native-encrypted-storage';
 import Config from 'react-native-config';
 import { store } from '../store';
 import { stakeholderDao } from '../database';
+import { removeStakeholder } from '../store/slices/stakeholderSlice';
 import { refreshSyncCountsThunk } from '../store/slices/syncThunks';
 
 // Reuse the exact same base resolution logic as services/api.ts
@@ -46,9 +48,16 @@ export async function connectRealtime(): Promise<void> {
     console.log('[realtime] connect_error', err.message);
   });
 
-  socket.on('stakeholder:locked', async (payload: { stakeholderId: string }) => {
+  socket.on('stakeholder:locked', async (payload: { stakeholderId: string; lockedById?: string }) => {
     try {
       await stakeholderDao.removeLockedStakeholders([payload.stakeholderId]);
+
+      // 1. Remove from Redux search results so StakeholderListScreen updates instantly
+      store.dispatch(removeStakeholder(payload.stakeholderId));
+
+      // 2. Notify any mounted screen (e.g. StakeholderDetailScreen) so it can
+      //    navigate away or refresh without waiting for the next focus event.
+      DeviceEventEmitter.emit('stakeholder:locked', { stakeholderId: payload.stakeholderId });
     } catch (e) {
       console.warn('[realtime] failed to apply stakeholder:locked locally', e);
     }
@@ -56,6 +65,9 @@ export async function connectRealtime(): Promise<void> {
 
   socket.on('stakeholder:unlocked', async (payload: { stakeholderIds: string[] }) => {
     store.dispatch(refreshSyncCountsThunk() as any);
+
+    // Notify list screen to reload so newly unlocked stakeholders become visible
+    DeviceEventEmitter.emit('stakeholder:unlocked', { stakeholderIds: payload.stakeholderIds });
   });
 
   socket.on('disconnect', (reason) => {
