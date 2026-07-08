@@ -21,6 +21,7 @@ import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import syncRoutes from './modules/sync/sync.routes';
 import phoneValidationRoutes from './modules/phone-validation/phone-validation.routes';
 import adminRoutes from './modules/admin/admin.routes';
+import digipinRoutes from './modules/digipin/digipin.routes';
 
 const app = express();
 
@@ -103,6 +104,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/sync', syncRoutes);
 app.use('/api/phone-validation', phoneValidationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/digipin', digipinRoutes);
 
 // 404 handler
 app.use((req, res) => {

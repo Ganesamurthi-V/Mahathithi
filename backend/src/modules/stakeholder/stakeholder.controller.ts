@@ -11,7 +11,7 @@ export class StakeholderController {
     try {
       const {
         name, org, state, district, pinCode, category,
-        nicCode, gst, status, page = '1', limit = '20'
+        nicCode, gst, status, digipin, page = '1', limit = '20'
       } = req.query;
 
       const result = await stakeholderService.search({
@@ -24,6 +24,7 @@ export class StakeholderController {
         nicCode: nicCode as string,
         gst: gst as string,
         status: status as string,
+        digipin: digipin as string,
         page: parseInt(page as string, 10) || 1,
         limit: Math.min(parseInt(limit as string, 10) || 20, 100),
         assignedDistricts: req.enumerator!.districts,

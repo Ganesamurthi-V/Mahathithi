@@ -118,6 +118,9 @@ export const updateStakeholderSchema = z.object({
   village: optText(200),
   pinCode: optText(10),
   category: optText(200),
+  latitude: latitude.optional(),
+  longitude: longitude.optional(),
+  digipin: optText(10),
 }).strict();
 
 // ────────────────────────────────────────────────────────────────────────────

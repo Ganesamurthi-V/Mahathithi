@@ -12,7 +12,7 @@
     "resolveJsonModule": true,
     "moduleResolution": "node",
     "outDir": "./dist-scripts",
-    "rootDir": "./scripts"
+    "rootDir": "."
   },
-  "include": ["scripts/**/*"]
+  "include": ["scripts/**/*", "src/**/*"]
 }

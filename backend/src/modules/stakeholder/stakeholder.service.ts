@@ -15,6 +15,7 @@ interface SearchParams {
   taluka?: string;
   city?: string;
   status?: string;
+  digipin?: string;
   page: number;
   limit: number;
   assignedDistricts: string[];
@@ -30,7 +31,7 @@ export class StakeholderService {
   async search(params: SearchParams) {
     const {
       name, org, state, district, pinCode, category,
-      nicCode, gst, status, taluka, city, page, limit, assignedDistricts, isAdmin
+      nicCode, gst, status, taluka, city, digipin, page, limit, assignedDistricts, isAdmin
     } = params;
 
     const where: Prisma.StakeholderWhereInput = {};
@@ -118,6 +119,11 @@ export class StakeholderService {
       conditions.push({ status: status as any });
     }
 
+    // DIGIPIN filter
+    if (digipin) {
+      conditions.push({ digipin: { equals: digipin, mode: 'insensitive' } });
+    }
+
     if (!isAdmin) {
       conditions.push({ status: { not: 'CLOSED' } });
     }
@@ -149,6 +155,7 @@ export class StakeholderService {
           gstNumber: true,
           companyStatus: true,
           status: true,
+          digipin: true,
           lockedById: true,
           _count: {
             select: { surveys: true }
@@ -359,6 +366,7 @@ export class StakeholderService {
     const allowedFields = [
       'companyNameStandardized', 'addressLine1', 'addressLine2',
       'city', 'taluka', 'village', 'pinCode', 'category',
+      'latitude', 'longitude', 'digipin'
     ];
     
     const updateData: any = {};

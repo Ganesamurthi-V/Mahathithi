@@ -3,6 +3,7 @@ import { NotFoundError, ValidationError, ConflictError } from '../../utils/error
 import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
+import { getDigiPin } from '../../utils/digipin';
 // B7 FIX: removed unused StakeholderService import/instance — it was never
 // referenced and risked a circular dependency between the survey and
 // stakeholder services.
@@ -58,6 +59,13 @@ export class SurveyService {
       throw new ConflictError('This stakeholder has been completed by another enumerator');
     }
 
+    let digipin = null;
+    if (data.latitude != null && data.longitude != null) {
+      try {
+        digipin = getDigiPin(data.latitude, data.longitude);
+      } catch (e) {}
+    }
+
     // Upsert survey (one survey per stakeholder per enumerator)
     const survey = await prisma.survey.upsert({
       where: {
@@ -85,6 +93,7 @@ export class SurveyService {
         latitude: data.latitude,
         longitude: data.longitude,
         gpsAccuracy: data.gpsAccuracy,
+        digipin,
         isDraft: true,
       },
       create: {
@@ -108,6 +117,7 @@ export class SurveyService {
         latitude: data.latitude,
         longitude: data.longitude,
         gpsAccuracy: data.gpsAccuracy,
+        digipin,
         localId: data.localId,
         isDraft: true,
       },

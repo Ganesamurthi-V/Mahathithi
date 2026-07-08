@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import { PrismaClient } from '@prisma/client';
+import { getDigiPin } from '../src/utils/digipin';
 
 // stream-json v3+ uses kebab-case file names and requires .js extension for Node 24 exports map
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -24,6 +25,7 @@ interface FacilityRecord {
   state: string | null;
   latitude: number;
   longitude: number;
+  digipin: string | null;
 }
 
 async function processBatch(batch: FacilityRecord[]): Promise<number> {
@@ -87,6 +89,10 @@ async function main(): Promise<void> {
 
       const finalLat = typeof lat === 'number' ? lat : 0;
       const finalLon = typeof lon === 'number' ? lon : 0;
+      let digipin = null;
+      if (finalLat !== 0 && finalLon !== 0) {
+        try { digipin = getDigiPin(finalLat, finalLon); } catch (e) {}
+      }
 
       batch.push({
         name: facilityName,
@@ -95,6 +101,7 @@ async function main(): Promise<void> {
         state,
         latitude: finalLat,
         longitude: finalLon,
+        digipin,
       });
 
       if (batch.length >= BATCH_SIZE) {

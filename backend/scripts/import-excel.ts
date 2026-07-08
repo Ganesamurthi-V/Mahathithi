@@ -36,6 +36,7 @@ import * as path from 'path';
 import xlsx from 'xlsx';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
+import { getDigiPin } from '../src/utils/digipin';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
@@ -213,6 +214,17 @@ function mapRow(row: Record<string, unknown>, lineNum: number): Record<string, u
 
   const district = toStr(row['District']);
 
+  const latitude = toNum(row['Latitude']) ?? null;
+  const longitude = toNum(row['Longitude']) ?? null;
+  let digipin = null;
+  if (latitude !== null && longitude !== null) {
+    try {
+      digipin = getDigiPin(latitude, longitude);
+    } catch (e) {
+      console.warn(`  ⚠️  Line ${lineNum}: DIGIPIN generation failed for coords (${latitude}, ${longitude})`);
+    }
+  }
+
   return {
     primaryKeyId,
     uin:                     toStr(row['UIN']),
@@ -249,6 +261,9 @@ function mapRow(row: Record<string, unknown>, lineNum: number): Record<string, u
     dedupMatchStatus:        toStr(row['Dedup_Match_Status']) ?? null,
     sourceLineageNotes:      toStr(row['Source_Lineage_Notes']) ?? null,
     status:                  'OPEN' as const,
+    latitude,
+    longitude,
+    digipin,
   };
 }
 

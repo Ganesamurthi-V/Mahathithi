@@ -131,6 +131,11 @@ model Stakeholder {
   dedupMatchStatus         String?           @map("dedup_match_status")
   sourceLineageNotes       String?           @map("source_lineage_notes")
 
+  // Location Data
+  latitude                 Float?            @map("latitude")
+  longitude                Float?            @map("longitude")
+  digipin                  String?           @map("digipin")
+
   // Application-level fields
   status                   StakeholderStatus @default(OPEN) @map("status")
   lockedById               String?           @map("locked_by_id")
@@ -208,6 +213,7 @@ model Survey {
   latitude        Float?   @map("latitude")
   longitude       Float?   @map("longitude")
   gpsAccuracy     Float?   @map("gps_accuracy")
+  digipin         String?  @map("digipin")
 
   nearestPoliceStation    String?  @map("nearest_police_station")
   nearestHealthcareCenter String?  @map("nearest_healthcare_center")
@@ -269,6 +275,7 @@ model Media {
   latitude        Float?        @map("latitude")
   longitude       Float?        @map("longitude")
   gpsAccuracy     Float?        @map("gps_accuracy")
+  digipin         String?       @map("digipin")
   capturedAt      DateTime      @map("captured_at")
   duration        Int?          @map("duration")    // seconds, for video
   thumbnailPath   String?       @map("thumbnail_path") // for video
@@ -408,6 +415,7 @@ model Facility {
   state     String?
   latitude  Float
   longitude Float
+  digipin   String?
   
   @@index([type])
   @@index([district])

@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database';
 import { logger } from '../../utils/logger';
 import { ValidationError } from '../../utils/errors';
+import { getDigiPin } from '../../utils/digipin';
 
 const MAX_BATCH_ITEMS = 200;
 
@@ -80,6 +81,13 @@ export class SyncService {
           continue;
         }
 
+        let digipin = null;
+        if (surveyData.latitude != null && surveyData.longitude != null) {
+          try {
+            digipin = getDigiPin(surveyData.latitude, surveyData.longitude);
+          } catch (e) {}
+        }
+
         await prisma.survey.upsert({
           where: {
             stakeholderId_enumeratorId: {
@@ -107,6 +115,7 @@ export class SyncService {
             latitude: surveyData.latitude,
             longitude: surveyData.longitude,
             gpsAccuracy: surveyData.gpsAccuracy,
+            digipin,
             isSynced: true,
             syncedAt: new Date(),
           },
@@ -130,6 +139,7 @@ export class SyncService {
             latitude: surveyData.latitude,
             longitude: surveyData.longitude,
             gpsAccuracy: surveyData.gpsAccuracy,
+            digipin,
             localId: surveyData.localId,
             isSynced: true,
             syncedAt: new Date(),

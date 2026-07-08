@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
 import path from 'path';
+import { getDigiPin } from '../src/utils/digipin';
 
 const prisma = new PrismaClient();
 
@@ -13,14 +14,21 @@ async function main() {
   
   const policeStations = policeData.features
     .filter((f: any) => f.latitude != null && f.longitude != null)
-    .map((f: any) => ({
-      name: f.name || 'Unknown Police Station',
-      type: 'POLICE_STATION',
-      district: f.district || null,
-      state: f.state || null,
-      latitude: parseFloat(f.latitude),
-      longitude: parseFloat(f.longitude),
-    }));
+    .map((f: any) => {
+      const lat = parseFloat(f.latitude);
+      const lon = parseFloat(f.longitude);
+      let digipin = null;
+      try { digipin = getDigiPin(lat, lon); } catch (e) {}
+      return {
+        name: f.name || 'Unknown Police Station',
+        type: 'POLICE_STATION',
+        district: f.district || null,
+        state: f.state || null,
+        latitude: lat,
+        longitude: lon,
+        digipin,
+      };
+    });
 
   console.log(`Prepared ${policeStations.length} police stations.`);
   
@@ -30,14 +38,21 @@ async function main() {
 
   const healthFacilities = healthData.features
     .filter((f: any) => f.latitude != null && f.longitude != null)
-    .map((f: any) => ({
-      name: f.facilityname || 'Unknown Health Facility',
-      type: 'HEALTHCARE',
-      district: f.district || null,
-      state: f.state || null,
-      latitude: parseFloat(f.latitude),
-      longitude: parseFloat(f.longitude),
-    }));
+    .map((f: any) => {
+      const lat = parseFloat(f.latitude);
+      const lon = parseFloat(f.longitude);
+      let digipin = null;
+      try { digipin = getDigiPin(lat, lon); } catch (e) {}
+      return {
+        name: f.facilityname || 'Unknown Health Facility',
+        type: 'HEALTHCARE',
+        district: f.district || null,
+        state: f.state || null,
+        latitude: lat,
+        longitude: lon,
+        digipin,
+      };
+    });
 
   console.log(`Prepared ${healthFacilities.length} health facilities.`);
 

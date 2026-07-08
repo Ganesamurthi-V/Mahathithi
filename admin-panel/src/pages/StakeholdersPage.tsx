@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { searchStakeholders, updateStakeholder, getSurveyByStakeholder, getMediaBySurvey } from '../api';
+import { getDigiPin } from '../utils/digipin';
 
 // PERF: pure helper hoisted to module scope so it isn't re-created each render
 // and a memoized row can reference it without breaking memoization.
@@ -20,6 +21,7 @@ const StakeholderRow = memo(function StakeholderRow({ s, onSelect }: { s: any; o
       <td>{s.district || '—'}</td>
       <td style={{ fontSize: '13px' }}>{s.city || s.taluka || '—'}</td>
       <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.pinCode || '—'}</code></td>
+      <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.digipin || '—'}</code></td>
       <td style={{ fontSize: '12px' }}>{s.category || '—'}</td>
       <td><span className={`badge ${getStatusBadge(s.status)}`}>{(s.status || 'PENDING').replace('_', ' ')}</span></td>
       <td>
@@ -32,7 +34,7 @@ const StakeholderRow = memo(function StakeholderRow({ s, onSelect }: { s: any; o
 });
 
 export default function StakeholdersPage() {
-  const [filters, setFilters] = useState({ name: '', district: '', pinCode: '', category: '', status: '' });
+  const [filters, setFilters] = useState({ name: '', district: '', pinCode: '', digipin: '', category: '', status: '' });
   const [debouncedFilters, setDebouncedFilters] = useState(filters);
   const [page, setPage] = useState(1);
   const [selectedStakeholder, setSelectedStakeholder] = useState<any>(null);
@@ -53,6 +55,7 @@ export default function StakeholdersPage() {
       if (debouncedFilters.name) params.name = debouncedFilters.name;
       if (debouncedFilters.district) params.district = debouncedFilters.district;
       if (debouncedFilters.pinCode) params.pinCode = debouncedFilters.pinCode;
+      if (debouncedFilters.digipin) params.digipin = debouncedFilters.digipin;
       if (debouncedFilters.category) params.category = debouncedFilters.category;
       if (debouncedFilters.status) params.status = debouncedFilters.status;
       return searchStakeholders(params);
@@ -94,6 +97,10 @@ export default function StakeholdersPage() {
             <input className="form-input" placeholder="PIN Code" value={filters.pinCode} onChange={(e) => setFilters({ ...filters, pinCode: e.target.value })} />
           </div>
           <div style={{ flex: '1', minWidth: '120px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>DIGIPIN</label>
+            <input className="form-input" placeholder="DIGIPIN" value={filters.digipin} onChange={(e) => setFilters({ ...filters, digipin: e.target.value })} />
+          </div>
+          <div style={{ flex: '1', minWidth: '120px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Status</label>
             <select className="form-input" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
               <option value="">All</option>
@@ -119,6 +126,7 @@ export default function StakeholdersPage() {
               <th>District</th>
               <th>City / Taluka</th>
               <th>PIN Code</th>
+              <th>DIGIPIN</th>
               <th>Category</th>
               <th>Status</th>
               <th>Actions</th>
@@ -170,6 +178,9 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
     state: stakeholder.state || '',
     pinCode: stakeholder.pinCode || '',
     category: stakeholder.category || '',
+    latitude: stakeholder.latitude || '',
+    longitude: stakeholder.longitude || '',
+    digipin: stakeholder.digipin || '',
   });
 
   const { data: surveyData, isLoading: isSurveyLoading } = useQuery({
@@ -263,7 +274,47 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                     <div className="form-group" style={{ flex: 1, marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>State</label><input className="form-input" value={editData.state} onChange={(e) => setEditData({...editData, state: e.target.value})} /></div>
                     <div className="form-group" style={{ flex: 1, marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>PIN Code</label><input className="form-input" value={editData.pinCode} onChange={(e) => setEditData({...editData, pinCode: e.target.value})} /></div>
                   </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Category</label><input className="form-input" value={editData.category} onChange={(e) => setEditData({...editData, category: e.target.value})} /></div>
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Latitude</label>
+                      <input type="number" className="form-input" value={editData.latitude} onChange={(e) => {
+                        const lat = e.target.value;
+                        const numLat = parseFloat(lat);
+                        const numLon = parseFloat(editData.longitude);
+                        let digipin = editData.digipin;
+                        if (!isNaN(numLat) && !isNaN(numLon)) {
+                          digipin = getDigiPin(numLat, numLon) || digipin;
+                        }
+                        setEditData({...editData, latitude: lat, digipin});
+                      }} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Longitude</label>
+                      <input type="number" className="form-input" value={editData.longitude} onChange={(e) => {
+                        const lon = e.target.value;
+                        const numLat = parseFloat(editData.latitude);
+                        const numLon = parseFloat(lon);
+                        let digipin = editData.digipin;
+                        if (!isNaN(numLat) && !isNaN(numLon)) {
+                          digipin = getDigiPin(numLat, numLon) || digipin;
+                        }
+                        setEditData({...editData, longitude: lon, digipin});
+                      }} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Category</label>
+                      <input className="form-input" value={editData.category} onChange={(e) => setEditData({...editData, category: e.target.value})} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>DIGIPIN</label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <input className="form-input" value={editData.digipin} readOnly style={{ backgroundColor: 'var(--bg-surface)' }} />
+                        <button type="button" className="btn btn-secondary" onClick={() => navigator.clipboard.writeText(editData.digipin)}>Copy</button>
+                      </div>
+                    </div>
+                  </div>
                   <div style={{ marginTop: '12px', padding: '12px', backgroundColor: 'var(--bg-input)', borderRadius: '8px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>Locked Identifiers</div>
                     <div className="gallery-info-grid">
@@ -279,6 +330,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                     { label: 'Address', value: stakeholder.addressLine1 || stakeholder.fullAddressRaw },
                     { label: 'City', value: stakeholder.city }, { label: 'Taluka', value: stakeholder.taluka }, { label: 'Village', value: stakeholder.village },
                     { label: 'Category', value: stakeholder.category }, { label: 'GST', value: stakeholder.gstNumber }, { label: 'NIC Code', value: stakeholder.nicCode }, { label: 'NIC Description', value: stakeholder.nicDescription },
+                    { label: 'Latitude', value: stakeholder.latitude }, { label: 'Longitude', value: stakeholder.longitude }, { label: 'DIGIPIN', value: stakeholder.digipin }
                   ].filter(r => r.value).map((row, i) => (
                     <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
                   ))}
