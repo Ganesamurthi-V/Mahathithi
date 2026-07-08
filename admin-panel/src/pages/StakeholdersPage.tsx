@@ -351,6 +351,15 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                     <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
                   ))}
                 </div>
+                {(survey.digipin || stakeholder.digipin) && (
+                  <div style={{ marginTop: '16px', padding: '12px', backgroundColor: 'var(--bg-input)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>OFFICIAL DIGIPIN</span>
+                      <span style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--text-primary)', letterSpacing: '2px', fontFamily: 'monospace' }}>{survey.digipin || stakeholder.digipin}</span>
+                    </div>
+                    <button className="btn btn-secondary btn-sm" onClick={() => navigator.clipboard.writeText(survey.digipin || stakeholder.digipin)}>📋 Copy</button>
+                  </div>
+                )}
               </div>
             )}
             
