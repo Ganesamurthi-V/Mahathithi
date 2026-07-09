@@ -235,7 +235,8 @@ export class StakeholderService {
   }
 
   /**
-   * Get assigned stakeholders for offline sync
+   * Get assigned stakeholders for offline sync (legacy — returns all records in one shot).
+   * Kept for backward compatibility; prefer getAssignedPage for large datasets.
    */
   async getAssigned(enumeratorId: string, districts: string[], since?: string) {
     const where: Prisma.StakeholderWhereInput = {
@@ -271,6 +272,67 @@ export class StakeholderService {
       ...s,
       status: s.status === 'OPEN' && s._count?.surveys > 0 ? 'PARTIAL_COMPLETED' : s.status,
     }));
+  }
+
+  /**
+   * Paginated version of getAssigned — cursor-based, safe for 1 L+ rows.
+   *
+   * Uses `primaryKeyId` (the auto-increment PK) as a stable cursor so that:
+   *  • each page is a deterministic slice of the full result set
+   *  • inserting new rows during sync never causes a row to be skipped or
+   *    returned twice
+   *  • the query hits the PK index and stays fast regardless of table size
+   *
+   * @param after  cursor — the primaryKeyId of the last row from the
+   *               previous page (omit / 0 for the first page)
+   * @param pageSize rows per page (default 2 000, max 5 000)
+   */
+  async getAssignedPage(
+    enumeratorId: string,
+    districts: string[],
+    after: number = 0,
+    pageSize: number = 2000,
+    since?: string,
+  ) {
+    const clampedSize = Math.min(Math.max(pageSize, 1), 5000);
+
+    const where: Prisma.StakeholderWhereInput = {
+      district: { in: districts, mode: 'insensitive' },
+      status: 'OPEN',
+    };
+
+    if (since) {
+      where.updatedAt = { gt: new Date(since) };
+    }
+
+    // Cursor: only rows whose PK is strictly greater than the last seen cursor.
+    // For the first page `after` is 0, which is always less than any real PK.
+    where.primaryKeyId = { gt: after };
+
+    const stakeholders = await prisma.stakeholder.findMany({
+      where,
+      include: {
+        _count: { select: { surveys: true } },
+      },
+      orderBy: { primaryKeyId: 'asc' },
+      take: clampedSize,
+    });
+
+    const rows = stakeholders.map(s => ({
+      ...s,
+      status: s.status === 'OPEN' && s._count?.surveys > 0 ? 'PARTIAL_COMPLETED' : s.status,
+    }));
+
+    const nextCursor = rows.length === clampedSize
+      ? rows[rows.length - 1].primaryKeyId
+      : null; // null signals "no more pages"
+
+    return {
+      stakeholders: rows,
+      nextCursor,
+      pageSize: clampedSize,
+      count: rows.length,
+    };
   }
 
   /**

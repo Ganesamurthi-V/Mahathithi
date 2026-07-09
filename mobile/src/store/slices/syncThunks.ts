@@ -10,6 +10,11 @@ import {
 import { syncService, mediaService, surveyService, stakeholderService, facilityService } from '../../services/api';
 import { surveyDao, syncQueueDao, stakeholderDao, appStateDao, mediaDao, facilityDao } from '../../database';
 
+// Page size for the paginated stakeholder download.
+// 2 000 rows × ~1.5 KB average JSON per row ≈ 3 MB per page — comfortably
+// within what a budget Android device can hold in memory at once.
+const INITIAL_SYNC_PAGE_SIZE = 2000;
+
 export const runInitialSync = createAsyncThunk(
   'sync/runInitialSync',
   async (_, { dispatch, getState }) => {
@@ -30,27 +35,76 @@ export const runInitialSync = createAsyncThunk(
         throw new Error('No internet connection. Please connect to the internet to perform the initial setup.');
       }
 
-      // Step 1: Download Stakeholders
-      console.log('🔄 [Initial Sync] Fetching stakeholders from backend...');
+      // ── Step 1: Download Stakeholders (paginated) ──────────────────────────
+      // The old approach fetched ALL stakeholders in one HTTP call. With 1 L+
+      // records that single request:
+      //   • hits the 30-second axios timeout before the transfer completes
+      //   • may OOM the device trying to parse one giant JSON body in memory
+      //   • gives the user zero feedback for minutes, then fails with no progress saved
+      //
+      // The new approach:
+      //   1. Calls GET /stakeholders/assigned/paged?after=<cursor>&page_size=2000
+      //   2. Upserts each page into SQLite immediately — memory footprint is
+      //      always bounded to one page at a time
+      //   3. Advances the cursor via `nextCursor` from each response
+      //   4. Stops when `nextCursor` is null (server signals no more pages)
+      //
+      // Progress is shown as 10 % → 55 % proportional to pages downloaded.
+      // Because we don't know the total upfront we use an asymptotic approach:
+      // each page contributes half the remaining gap between current and 55 %.
+      // This keeps the bar moving continuously without ever hitting 55 % before
+      // we're actually done downloading.
+      console.log('🔄 [Initial Sync] Fetching stakeholders from backend (paginated)...');
       dispatch(updateInitialSyncProgress({ progress: 10, message: 'Downloading Stakeholders...' }));
-      const stakeholdersRes = await stakeholderService.getAssigned();
-      const stakeholders = stakeholdersRes.data?.data?.stakeholders || stakeholdersRes.data?.stakeholders || [];
-      
-      console.log(`✅ [Initial Sync] Received ${stakeholders.length} stakeholders from backend.`);
-      dispatch(updateInitialSyncProgress({ progress: 40, message: 'Saving Stakeholders to database...' }));
-      if (Array.isArray(stakeholders) && stakeholders.length > 0) {
-        console.log(`💾 [Initial Sync] Saving ${stakeholders.length} stakeholders into SQLite database...`);
-        await stakeholderDao.upsertMany(stakeholders, (inserted, total, percent) => {
-          const scaledProgress = 10 + Math.round(percent * 0.3); // Scale 0-100 to 10-40
-          dispatch(updateInitialSyncProgress({ 
-            progress: scaledProgress, 
-            message: `Saving Stakeholders... ${inserted} / ${total} (${percent}%)`
+
+      let cursor = 0;
+      let pageNumber = 0;
+      let totalDownloaded = 0;
+      let downloadProgress = 10; // starts at 10, approaches 55 asymptotically
+
+      while (true) {
+        pageNumber += 1;
+        console.log(`🔄 [Initial Sync] Requesting page ${pageNumber} (after cursor=${cursor})...`);
+
+        const pageRes = await stakeholderService.getAssignedPaged(cursor, INITIAL_SYNC_PAGE_SIZE);
+        const pageData = pageRes.data?.data;
+        const pageRows: any[] = pageData?.stakeholders ?? [];
+        const nextCursor: number | null = pageData?.nextCursor ?? null;
+
+        console.log(`✅ [Initial Sync] Page ${pageNumber}: received ${pageRows.length} stakeholders (nextCursor=${nextCursor}).`);
+
+        if (pageRows.length > 0) {
+          // Upsert this page immediately — don't accumulate all pages in memory
+          await stakeholderDao.upsertMany(pageRows, (inserted, total, percent) => {
+            // Each page's save progress is a small sub-slice; keep it subtle
+            const saveSlice = Math.round(percent * 0.02); // max 2 % per page save
+            dispatch(updateInitialSyncProgress({
+              progress: Math.min(downloadProgress + saveSlice, 54),
+              message: `Saving Stakeholders... page ${pageNumber} (${totalDownloaded + inserted} saved)`,
+            }));
+          });
+          totalDownloaded += pageRows.length;
+        }
+
+        // Advance cursor before updating progress so the message is accurate
+        if (nextCursor !== null) {
+          cursor = nextCursor;
+          // Asymptotic progress: close half the gap between current and 55 %
+          downloadProgress = Math.round(downloadProgress + (55 - downloadProgress) / 2);
+          dispatch(updateInitialSyncProgress({
+            progress: Math.min(downloadProgress, 54),
+            message: `Downloading Stakeholders... ${totalDownloaded} so far`,
           }));
-        });
-        console.log('✅ [Initial Sync] Stakeholders saved to SQLite successfully.');
+        } else {
+          // Last page — we're done downloading stakeholders
+          break;
+        }
       }
 
-      // Step 2: Download Facilities (Police Stations, Healthcare Centers)
+      console.log(`✅ [Initial Sync] All stakeholders downloaded and saved: ${totalDownloaded} total.`);
+      dispatch(updateInitialSyncProgress({ progress: 55, message: `Stakeholders ready (${totalDownloaded})` }));
+
+      // ── Step 2: Download Facilities (Police Stations, Healthcare Centers) ──
       console.log('🔄 [Initial Sync] Fetching facilities from backend...');
       dispatch(updateInitialSyncProgress({ progress: 60, message: 'Downloading Facilities...' }));
       const facilitiesRes = await facilityService.syncOffline();
@@ -64,13 +118,13 @@ export const runInitialSync = createAsyncThunk(
           const scaledProgress = 60 + Math.round(percent * 0.3); // Scale 0-100 to 60-90
           dispatch(updateInitialSyncProgress({ 
             progress: scaledProgress, 
-            message: `Saving Facilities... ${inserted} / ${total} (${percent}%)`
+            message: `Saving Facilities... ${inserted} / ${total} (${percent}%)`,
           }));
         });
         console.log('✅ [Initial Sync] Facilities saved to SQLite successfully.');
       }
 
-      // Step 3: Complete
+      // ── Step 3: Complete ────────────────────────────────────────────────────
       console.log('🎉 [Initial Sync] All data downloaded and saved to SQLite! Sync complete.');
       dispatch(updateInitialSyncProgress({ progress: 100, message: 'Finalizing setup...' }));
       await appStateDao.set('initial_sync_done', 'true');

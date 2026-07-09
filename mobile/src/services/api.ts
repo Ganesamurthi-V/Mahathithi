@@ -218,6 +218,23 @@ export const stakeholderService = {
     api.get(`/stakeholders/${id}`),
   getAssigned: (since?: string) =>
     api.get('/stakeholders/assigned', { params: { since } }),
+  /**
+   * Paginated sync — safe for 1 L+ records.
+   *
+   * Each page returns up to `pageSize` rows ordered by primaryKeyId.
+   * Pass `after` = the `nextCursor` value from the previous response to
+   * advance to the next page.  When the response `nextCursor` is null there
+   * are no more pages.
+   *
+   * Uses a 5-minute timeout: a single 2 000-row page of full stakeholder
+   * objects can be 3-4 MB of JSON on a slow mobile connection, and the
+   * default 30-second timeout would fire before the transfer completes.
+   */
+  getAssignedPaged: (after: number = 0, pageSize: number = 2000, since?: string) =>
+    api.get('/stakeholders/assigned/paged', {
+      params: { after, page_size: pageSize, since },
+      timeout: 300000, // 5 min — large page on a slow connection
+    }),
   updateStakeholder: (id: string, data: any) =>
     api.patch(`/stakeholders/${id}`, data),
 };

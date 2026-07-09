@@ -136,9 +136,10 @@ export default function SearchScreen({ navigation }: any) {
       //    This is the source of truth whenever it has an answer — fast,
       //    free, and works with zero connectivity.
       const localResults = await stakeholderDao.search(activeFilters, page);
+      const totalCount = await stakeholderDao.searchCount(activeFilters);
 
       let finalResults = localResults;
-      let pageInfo = { page, total: localResults.length, hasMore: localResults.length === 20 };
+      let pageInfo = { page, total: totalCount, hasMore: localResults.length === 20 };
 
       // 2. Only fall back to the network when SQLite came up empty for this
       //    page — either nothing has been synced for this area yet, or

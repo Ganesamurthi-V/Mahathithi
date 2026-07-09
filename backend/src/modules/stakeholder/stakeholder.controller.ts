@@ -68,6 +68,38 @@ export class StakeholderController {
     }
   }
 
+  /**
+   * Paginated sync endpoint — safe for 1 L+ rows.
+   *
+   * Query params:
+   *   after      – cursor (primaryKeyId of the last row received). Omit for first page.
+   *   page_size  – rows per page (default 2 000, max 5 000).
+   *   since      – ISO timestamp; when provided only rows updated after this time are returned.
+   *
+   * Response:
+   *   { success, data: { stakeholders[], nextCursor, pageSize, count } }
+   *   nextCursor is null when there are no more pages.
+   */
+  async getAssignedPaged(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { since, after, page_size } = req.query;
+      const afterCursor = after ? parseInt(after as string, 10) : 0;
+      const pageSize = page_size ? parseInt(page_size as string, 10) : 2000;
+
+      const result = await stakeholderService.getAssignedPage(
+        req.enumerator!.id,
+        req.enumerator!.districts,
+        isNaN(afterCursor) ? 0 : afterCursor,
+        isNaN(pageSize) ? 2000 : pageSize,
+        since as string,
+      );
+
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async lock(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const result = await stakeholderService.lockStakeholder(

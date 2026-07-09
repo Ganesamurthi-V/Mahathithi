@@ -10,7 +10,8 @@ const controller = new StakeholderController();
 router.use(authMiddleware);
 
 router.get('/search', controller.search);
-router.get('/assigned', controller.getAssigned);
+router.get('/assigned/paged', controller.getAssignedPaged); // paginated sync — safe for 1 L+ rows
+router.get('/assigned', controller.getAssigned);            // legacy — kept for backward compat
 router.get('/:id', districtGuard, controller.getById);
 router.patch('/:id/lock', districtGuard, controller.lock);
 // N3 FIX: status changes (OPEN/CLOSED) lock or reopen a record and bypass every

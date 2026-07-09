@@ -359,6 +359,62 @@ export const stakeholderDao = {
     return rows;
   },
 
+  async searchCount(filters: Record<string, string>): Promise<number> {
+    const database = await getDB();
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (filters.name) {
+      conditions.push(`(company_name_standardized LIKE ? OR company_name_original LIKE ?)`);
+      params.push(`%${filters.name}%`, `%${filters.name}%`);
+    }
+    if (filters.district) {
+      conditions.push(`district = ? COLLATE NOCASE`);
+      params.push(filters.district);
+    }
+    if (filters.pinCode) {
+      conditions.push(`pin_code LIKE ?`);
+      params.push(`${filters.pinCode}%`);
+    }
+    if (filters.taluka) {
+      conditions.push(`taluka = ? COLLATE NOCASE`);
+      params.push(filters.taluka);
+    }
+    if (filters.city) {
+      conditions.push(`(city LIKE ? COLLATE NOCASE OR village LIKE ? COLLATE NOCASE)`);
+      params.push(`%${filters.city}%`, `%${filters.city}%`);
+    }
+    if (filters.category) {
+      conditions.push(`category LIKE ? COLLATE NOCASE`);
+      params.push(`%${filters.category}%`);
+    }
+    if (filters.nicCode) {
+      conditions.push(`nic_code = ?`);
+      params.push(filters.nicCode);
+    }
+    if (filters.gst) {
+      conditions.push(`gst_number LIKE ? COLLATE NOCASE`);
+      params.push(`%${filters.gst}%`);
+    }
+    if (filters.state) {
+      conditions.push(`state = ? COLLATE NOCASE`);
+      params.push(filters.state);
+    }
+    if (filters.status) {
+      conditions.push(`status = ?`);
+      params.push(filters.status);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const [results] = await database.executeSql(
+      `SELECT COUNT(*) as count FROM stakeholders ${whereClause}`,
+      params
+    );
+
+    return results.rows.item(0).count ?? 0;
+  },
+
   async getById(id: string): Promise<any> {
     const database = await getDB();
     const [results] = await database.executeSql('SELECT * FROM stakeholders WHERE id = ?', [id]);
