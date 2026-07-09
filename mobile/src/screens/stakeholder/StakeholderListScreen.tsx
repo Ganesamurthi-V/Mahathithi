@@ -102,6 +102,7 @@ export default function StakeholderListScreen({ navigation }: any) {
   const [initialLoading, setInitialLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [totalCount, setTotalCount] = useState(0);
 
   const loadStakeholders = async (p = 1, isPullToRefresh = false) => {
     if (isPullToRefresh) setLoading(true);
@@ -110,6 +111,8 @@ export default function StakeholderListScreen({ navigation }: any) {
       const localData = await stakeholderDao.search({}, p);
       if (p === 1) {
         setStakeholders(localData);
+        const count = await stakeholderDao.searchCount({});
+        setTotalCount(count);
       } else {
         setStakeholders(prev => [...prev, ...localData]);
       }
@@ -165,7 +168,7 @@ export default function StakeholderListScreen({ navigation }: any) {
           <Text style={styles.title}>Stakeholders</Text>
           {!initialLoading && (
             <View style={styles.countBadge}>
-              <Text style={styles.countText}>{stakeholders.length} items</Text>
+              <Text style={styles.countText}>{totalCount} items</Text>
             </View>
           )}
         </View>

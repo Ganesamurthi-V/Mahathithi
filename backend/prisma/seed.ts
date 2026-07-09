@@ -33,8 +33,8 @@ async function main() {
   // Create sample enumerators
   console.log('👥 Creating sample enumerators...');
   const sampleEnumerators = [
-    { loginId: 'test', name: 'test', districts: ['NAVI MUMBAI'] },
-    { loginId: 'test1', name: 'test1', districts: ['NAVI MUMBAI'] },
+    { loginId: 'test', name: 'test', districts: ['NAGPUR', 'PUNE', 'THANE'] },
+    { loginId: 'test1', name: 'test1', districts: ['NAGPUR', 'PUNE', 'THANE'] },
     { loginId: 'enum_nagpur_01', name: 'Priya Sharma', districts: ['NAGPUR'] },
     { loginId: 'enum_multi_01', name: 'Amit Patel', districts: ['WARDHA', 'AMRAVATI'] },
     { loginId: 'enum_pune_01', name: 'Sneha Deshmukh', districts: ['PUNE'] },

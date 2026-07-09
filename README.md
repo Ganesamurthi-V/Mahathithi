@@ -162,9 +162,6 @@ These are seed-script defaults for local development and should never be the liv
 
 If you only remember one thing about this project: **it's a three-app system (offline-capable Android field app, Express/Postgres backend, React admin dashboard) built to let government field staff verify 313K+ tourism-related businesses across Maharashtra, where every piece of collected data — survey answers, GPS coordinates, photos, phone verifications — flows from an offline-first SQLite cache on the enumerator's phone, through a batched sync API, into a PostgreSQL database with strict district-based access control, with media files living in S3 and the whole operation overseen through a web admin panel.**
 
-cd "c:\test file\Manasa project\mobile\android"
-.\gradlew clean
-.\gradlew assembleRelease
 
 
 ## How to run 
@@ -201,4 +198,12 @@ For Android Emulator: API_BASE_URL=http://10.0.2.2:3000/api (The emulator uses 1
 For Physical Device: API_BASE_URL=http://<YOUR_LAPTOP_WIFI_IP>:3000/api
 Launch your Android Emulator via Android Studio (or plug in a physical Android device with USB debugging enabled).
 Run the app: npm run android (or npm start followed by pressing a for Android).
-Once the app launches on the device, log in with an enumerator account (e.g., enum_wardha_01 / enum@123).
+Once the app launches on the device, log in with an enumerator account (e.g., test / enum@123).
+
+cd "c:\test file\Manasa project\mobile\android"
+.\gradlew clean
+.\gradlew assembleRelease
+
+npx tsx scripts/import-excel.ts
+npx tsx scripts/truncate.ts
+
