@@ -215,6 +215,8 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
 
   const categoryLabels: Record<string, string> = {
     BUILDING_FRONT: '🏢 Building Front', SIGNBOARD: '🪧 Signboard', INTERIOR: '🏠 Interior', STAKEHOLDER: '👤 Stakeholder', ADDITIONAL: '📸 Additional',
+    DISPLAY_IMAGE: '🖼️ Display Image', HEADER_SLIDER: '🎠 Header Slider',
+    UDYOG_AADHAR_DOC: '📄 Udyog Aadhar', AADHAR_CARD_DOC: '📄 Aadhar Card', PAN_CARD_DOC: '📄 PAN Card', CANCELLED_CHEQUE_DOC: '📄 Cancelled Cheque', CUSTOM_DOC: '📄 Custom Doc',
   };
 
   const isLoading = isSurveyLoading || isMediaLoading;
@@ -351,6 +353,148 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                     <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
                   ))}
                 </div>
+
+                {/* ─── New Plan: Category & Sub-categories ─── */}
+                {survey.businessCategory && (
+                  <div style={{ marginTop: '16px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Business Category</div>
+                    <span className="badge badge-active">{survey.businessCategory}</span>
+                    {survey.subCategories && survey.subCategories.length > 0 && (
+                      <div style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {survey.subCategories.map((sc: string, i: number) => <span key={i} className="badge badge-pending">{sc}</span>)}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ─── New Plan: Business Info ─── */}
+                {(survey.businessName || survey.ownerName) && (
+                  <div style={{ marginTop: '16px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>Business Information</div>
+                    <div className="gallery-info-grid">
+                      {[
+                        { label: 'Business Name', value: survey.businessName },
+                        { label: 'Owner', value: survey.ownerName },
+                        { label: 'District', value: survey.district },
+                        { label: 'City', value: survey.city },
+                        { label: 'Taluka', value: survey.taluka },
+                        { label: 'Village', value: survey.village },
+                        { label: 'PIN Code', value: survey.pinCode },
+                        { label: 'Business Address', value: survey.businessAddress },
+                        { label: 'Working Address', value: survey.workingAddress },
+                        { label: 'Male Employees', value: survey.maleEmployees?.toString() },
+                        { label: 'Female Employees', value: survey.femaleEmployees?.toString() },
+                        { label: 'Landline', value: survey.landline },
+                        { label: 'Alternate Mobile', value: survey.alternateMobile },
+                        { label: 'Alternate Email', value: survey.alternateEmail },
+                        { label: 'Aadhar', value: survey.aadharNumber ? `XXXX-XXXX-${survey.aadharNumber.slice(-4)}` : undefined },
+                        { label: 'Udyam Aadhar', value: survey.udyamAadharRegNo },
+                        { label: 'GST Number', value: survey.gstNumber },
+                        { label: 'FSSAI Number', value: survey.fssaiNumber },
+                      ].filter(r => r.value).map((row, i) => (
+                        <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── New Plan: Details ─── */}
+                {survey.description && (
+                  <div style={{ marginTop: '16px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Description</div>
+                    <p style={{ color: 'var(--text-primary)', fontSize: '14px', lineHeight: '1.5' }}>{survey.description}</p>
+                  </div>
+                )}
+                {survey.accommodationFacilities && Array.isArray(survey.accommodationFacilities) && survey.accommodationFacilities.length > 0 && (
+                  <div style={{ marginTop: '12px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Facilities</div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {survey.accommodationFacilities.map((f: string, i: number) => <span key={i} className="badge badge-pending">{f}</span>)}
+                    </div>
+                  </div>
+                )}
+                {survey.workingHours && Array.isArray(survey.workingHours) && (
+                  <div style={{ marginTop: '12px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Working Hours</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '4px' }}>
+                      {survey.workingHours.map((wh: any, i: number) => (
+                        <div key={i} style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                          <strong>{wh.day?.slice(0, 3)}:</strong> {wh.type === 'open_all_day' ? 'Open' : wh.type === 'closed' ? 'Closed' : `${wh.from}–${wh.to}`}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {survey.faq && Array.isArray(survey.faq) && survey.faq.length > 0 && (
+                  <div style={{ marginTop: '12px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>FAQ</div>
+                    {survey.faq.map((f: any, i: number) => (
+                      <div key={i} style={{ marginBottom: '8px', padding: '8px', backgroundColor: 'var(--bg-input)', borderRadius: '6px' }}>
+                        <div style={{ fontWeight: '600', fontSize: '13px', color: 'var(--text-primary)' }}>Q: {f.question}</div>
+                        <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>A: {f.answer}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* ─── New Plan: Rooms & Pricing (Accommodations) ─── */}
+                {survey.rooms && Array.isArray(survey.rooms) && survey.rooms.length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Rooms & Pricing</div>
+                    <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
+                      <thead><tr style={{ borderBottom: '1px solid var(--border)' }}><th style={{ textAlign: 'left', padding: '4px' }}>Name</th><th>Type</th><th>Guests</th><th>Price/Night</th></tr></thead>
+                      <tbody>
+                        {survey.rooms.map((r: any, i: number) => (
+                          <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}><td style={{ padding: '4px' }}>{r.name}</td><td style={{ textAlign: 'center' }}>{r.type}</td><td style={{ textAlign: 'center' }}>{r.capacity}</td><td style={{ textAlign: 'center' }}>₹{r.price}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {survey.saleOff > 0 && <div style={{ marginTop: '8px', fontSize: '13px' }}>Sale Off: <strong>{survey.saleOff}%</strong></div>}
+                    {survey.bookingNote && <div style={{ marginTop: '4px', fontSize: '13px', color: 'var(--text-secondary)' }}>Booking Note: {survey.bookingNote}</div>}
+                  </div>
+                )}
+
+                {/* ─── New Plan: Social Links ─── */}
+                {survey.socialLinks && Array.isArray(survey.socialLinks) && survey.socialLinks.length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Social Links</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {survey.socialLinks.map((sl: any, i: number) => (
+                        <div key={i} style={{ fontSize: '13px' }}><strong>{sl.platform}:</strong> <a href={sl.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)' }}>{sl.url}</a></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── New Plan: Documents & Certifications ─── */}
+                {(survey.aboutBusiness || survey.registeredTravelForLife || survey.registeredGreenLeaf || survey.receivedTourismAward) && (
+                  <div style={{ marginTop: '16px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Business Documents</div>
+                    {survey.aboutBusiness && <p style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '8px' }}>{survey.aboutBusiness}</p>}
+                    <div className="gallery-info-grid">
+                      {[
+                        { label: 'Travel for Life', value: survey.registeredTravelForLife ? 'Yes' : 'No' },
+                        { label: 'Green Leaf Rating', value: survey.registeredGreenLeaf ? 'Yes' : 'No' },
+                        { label: 'Tourism Award', value: survey.receivedTourismAward ? 'Yes' : 'No' },
+                      ].map((row, i) => (
+                        <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── New Plan: Terms ─── */}
+                {(survey.agreedToTerms || survey.declaredInfoCorrect || survey.acknowledgedDotLiability) && (
+                  <div style={{ marginTop: '16px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Terms & Conditions</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px' }}>
+                      <div>{survey.agreedToTerms ? '✅' : '❌'} Agreed to Terms & Conditions</div>
+                      <div>{survey.declaredInfoCorrect ? '✅' : '❌'} Declared info correct</div>
+                      <div>{survey.acknowledgedDotLiability ? '✅' : '❌'} Acknowledged DOT liability</div>
+                    </div>
+                  </div>
+                )}
+
                 {(survey.digipin || stakeholder.digipin) && (
                   <div style={{ marginTop: '16px', padding: '12px', backgroundColor: 'var(--bg-input)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>

@@ -314,6 +314,51 @@ export const runAutoSync = createAsyncThunk(
               nearestPoliceStation: surveyLocal.nearest_police_station,
               nearestHealthcareCenter: surveyLocal.nearest_healthcare_center,
               localId: surveyLocal.id,
+              // ─── New Plan fields (Step 1-8) ────────────────────────────────
+              // Step 1
+              subCategories: surveyLocal.sub_categories ? JSON.parse(surveyLocal.sub_categories) : undefined,
+              // Step 2
+              businessName: surveyLocal.business_name || undefined,
+              ownerName: surveyLocal.owner_name || undefined,
+              district: surveyLocal.district || undefined,
+              city: surveyLocal.city || undefined,
+              taluka: surveyLocal.taluka || undefined,
+              village: surveyLocal.village || undefined,
+              pinCode: surveyLocal.pin_code || undefined,
+              businessAddress: surveyLocal.business_address || undefined,
+              workingAddress: surveyLocal.working_address || undefined,
+              maleEmployees: surveyLocal.male_employees ?? undefined,
+              femaleEmployees: surveyLocal.female_employees ?? undefined,
+              landline: surveyLocal.landline || undefined,
+              alternateMobile: surveyLocal.alternate_mobile || undefined,
+              alternateEmail: surveyLocal.alternate_email || undefined,
+              aadharNumber: surveyLocal.aadhar_number || undefined,
+              udyamAadharRegNo: surveyLocal.udyam_aadhar_reg_no || undefined,
+              fssaiNumber: surveyLocal.fssai_number || undefined,
+              // Step 4
+              description: surveyLocal.description || undefined,
+              accommodationFacilities: surveyLocal.accommodation_facilities ? JSON.parse(surveyLocal.accommodation_facilities) : undefined,
+              accommodationPolicies: surveyLocal.accommodation_policies || undefined,
+              workingHours: surveyLocal.working_hours ? JSON.parse(surveyLocal.working_hours) : undefined,
+              faq: surveyLocal.faq ? JSON.parse(surveyLocal.faq) : undefined,
+              // Step 5
+              rooms: surveyLocal.rooms ? JSON.parse(surveyLocal.rooms) : undefined,
+              couponCodes: surveyLocal.coupon_codes ? JSON.parse(surveyLocal.coupon_codes) : undefined,
+              saleOff: surveyLocal.sale_off ?? undefined,
+              additionalServiceFees: surveyLocal.additional_service_fees ? JSON.parse(surveyLocal.additional_service_fees) : undefined,
+              bookingNote: surveyLocal.booking_note || undefined,
+              // Step 6
+              socialLinks: surveyLocal.social_links ? JSON.parse(surveyLocal.social_links) : undefined,
+              // Step 7
+              aboutBusiness: surveyLocal.about_business || undefined,
+              registeredTravelForLife: !!surveyLocal.registered_travel_for_life,
+              registeredGreenLeaf: !!surveyLocal.registered_green_leaf,
+              receivedTourismAward: !!surveyLocal.received_tourism_award,
+              customDocuments: surveyLocal.custom_documents ? JSON.parse(surveyLocal.custom_documents) : undefined,
+              // Step 8
+              agreedToTerms: !!surveyLocal.agreed_to_terms,
+              declaredInfoCorrect: !!surveyLocal.declared_info_correct,
+              acknowledgedDotLiability: !!surveyLocal.acknowledged_dot_liability,
             };
 
             // NEW-3 FIX: never write full survey PII to device logs in release

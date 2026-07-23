@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, ScrollView, TouchableOpacity,
-  StyleSheet, Alert, ActivityIndicator, Platform, KeyboardAvoidingView, Animated, Image
+  StyleSheet, Alert, ActivityIndicator, Platform, KeyboardAvoidingView, Animated, Image, Switch
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import Geolocation from 'react-native-geolocation-service';
@@ -14,10 +14,15 @@ import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows, iconSizes } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
-import { launchCamera } from 'react-native-image-picker';
+import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { Video as VideoCompressor } from 'react-native-compressor';
 import Video from 'react-native-video';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { Picker } from '@react-native-picker/picker';
+import Toast from 'react-native-toast-message';
+
+// ─── Bundled Offline Reference Data ──────────────────────────────────────────
+const MAHARASHTRA_TALUKAS = require('../../assets/maharashtra_talukas.json');
 
 interface SurveyFormData {
   contactPerson: string;
@@ -33,9 +38,66 @@ interface SurveyFormData {
   remarks: string;
   nearestPoliceStation: string;
   nearestHealthcareCenter: string;
+  // Step 2 — Basic Information
+  businessName: string;
+  ownerName: string;
+  district: string;
+  city: string;
+  taluka: string;
+  village: string;
+  pinCode: string;
+  businessAddress: string;
+  workingAddress: string;
+  maleEmployees: string;
+  femaleEmployees: string;
+  landline: string;
+  alternateMobile: string;
+  alternateEmail: string;
+  aadharNumber: string;
+  udyamAadharRegNo: string;
+  fssaiNumber: string;
 }
 
+// ─── Business Category & Sub-category Constants ──────────────────────────────
+const BUSINESS_CATEGORIES = [
+  'Accommodations',
+  'Aqua Tourism',
+  'Cuisine',
+  'Events and Festivals',
+  'Experiences and Activities',
+  'Experiences and Activities Slots',
+  'Guided Tours',
+  'Handicrafts and Souvenirs',
+  'Tour Guide',
+  'Tour Operator / Travel Agent / DMC',
+];
+
+const SUB_CATEGORIES: Record<string, string[]> = {
+  'Accommodations': ['Hotel', 'Resort', 'Homestay', 'Guest House', 'Hostel'],
+  'Aqua Tourism': ['Scuba Diving', 'Snorkeling', 'Boat Cruise', 'Kayaking', 'Jet Ski / Water Sports'],
+  'Cuisine': ['Restaurant', 'Café', 'Street Food', 'Traditional Cuisine', 'Bakery & Sweets'],
+  'Events and Festivals': ['Cultural Festival', 'Religious Festival', 'Music & Dance Event', 'Food Festival', 'Seasonal Celebration'],
+  'Experiences and Activities': ['Adventure Activities', 'Cultural Experience', 'Wellness & Yoga', 'Nature Experience', 'Photography Experience'],
+  'Experiences and Activities Slots': ['Morning Slot', 'Afternoon Slot', 'Evening Slot', 'Full Day Experience', 'Multi-Day Experience'],
+  'Guided Tours': ['City Tour', 'Heritage Tour', 'Nature Tour', 'Food Tour', 'Walking Tour'],
+  'Handicrafts and Souvenirs': ['Handmade Crafts', 'Textiles & Apparel', 'Jewelry & Accessories', 'Home Décor', 'Local Souvenirs'],
+  'Tour Guide': ['Heritage Guide', 'Nature Guide', 'Adventure Guide', 'City Guide', 'Multilingual Guide'],
+  'Tour Operator / Travel Agent / DMC': ['Local Tour Operator', 'Domestic Travel Agency', 'International Travel Agency', 'Destination Management Company (DMC)', 'Custom Tour Planner'],
+};
+
+const ACCOMMODATION_FACILITIES = [
+  'WiFi', 'Pool', 'Spa', 'Pet Friendly', 'Parking', 'Restaurant', 'Bar',
+  'Gym', 'Laundry', 'Air Conditioning', 'Room Service', 'Conference Room', 'Airport Shuttle',
+];
+
+const SOCIAL_PLATFORMS = ['Facebook', 'Instagram', 'X (Twitter)', 'YouTube', 'LinkedIn', 'Website', 'WhatsApp', 'Other'];
+
+const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+const STEP_LABELS = ['Category', 'Business', 'Images', 'Details', 'Rooms', 'Socials', 'Docs', 'Terms'];
+
 const PHOTO_CATEGORIES = [
+  { key: 'DISPLAY_IMAGE', label: 'Display Image', icon: 'image-area', required: true },
   { key: 'BUILDING_FRONT', label: 'Building Front', icon: 'office-building', required: true },
   { key: 'SIGNBOARD', label: 'Signboard', icon: 'sign-direction', required: true },
   { key: 'INTERIOR', label: 'Interior', icon: 'home-variant-outline', required: true },
@@ -218,9 +280,64 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
   // Media State
   const [photos, setPhotos] = useState<Record<string, any>>({});
+  const [headerSliderPhotos, setHeaderSliderPhotos] = useState<any[]>([]);
   const [video, setVideo] = useState<any>(null);
   const [recording, setRecording] = useState(false);
   const [compressing, setCompressing] = useState(false);
+
+  // ─── Step 1: Category & Type ───────────────────────────────────────────────
+  const [selectedCategory, setSelectedCategory] = useState<string>(existingSurvey?.business_category || existingSurvey?.businessCategory || '');
+  const [selectedSubCategories, setSelectedSubCategories] = useState<string[]>(
+    existingSurvey?.sub_categories ? (typeof existingSurvey.sub_categories === 'string' ? JSON.parse(existingSurvey.sub_categories) : existingSurvey.sub_categories) : []
+  );
+
+  // ─── Step 2: Same-address switch ──────────────────────────────────────────
+  const [sameAsBusinessAddress, setSameAsBusinessAddress] = useState(false);
+
+  // ─── Step 4: Details ───────────────────────────────────────────────────────
+  const [description, setDescription] = useState(existingSurvey?.description || '');
+  const [accommodationFacilities, setAccommodationFacilities] = useState<string[]>(
+    existingSurvey?.accommodation_facilities ? (typeof existingSurvey.accommodation_facilities === 'string' ? JSON.parse(existingSurvey.accommodation_facilities) : existingSurvey.accommodation_facilities) : []
+  );
+  const [accommodationPolicies, setAccommodationPolicies] = useState(existingSurvey?.accommodation_policies || '');
+  const [workingHours, setWorkingHours] = useState<any[]>(
+    existingSurvey?.working_hours ? (typeof existingSurvey.working_hours === 'string' ? JSON.parse(existingSurvey.working_hours) : existingSurvey.working_hours) : DAYS_OF_WEEK.map(d => ({ day: d, type: 'open_all_day', from: '', to: '' }))
+  );
+  const [faqItems, setFaqItems] = useState<{ question: string; answer: string }[]>(
+    existingSurvey?.faq ? (typeof existingSurvey.faq === 'string' ? JSON.parse(existingSurvey.faq) : existingSurvey.faq) : []
+  );
+
+  // ─── Step 5: Rooms & Pricing ───────────────────────────────────────────────
+  const [rooms, setRooms] = useState<any[]>(
+    existingSurvey?.rooms ? (typeof existingSurvey.rooms === 'string' ? JSON.parse(existingSurvey.rooms) : existingSurvey.rooms) : []
+  );
+  const [couponCodes, setCouponCodes] = useState<any[]>(
+    existingSurvey?.coupon_codes ? (typeof existingSurvey.coupon_codes === 'string' ? JSON.parse(existingSurvey.coupon_codes) : existingSurvey.coupon_codes) : []
+  );
+  const [saleOff, setSaleOff] = useState(existingSurvey?.sale_off?.toString() || '0');
+  const [additionalServiceFees, setAdditionalServiceFees] = useState<any[]>(
+    existingSurvey?.additional_service_fees ? (typeof existingSurvey.additional_service_fees === 'string' ? JSON.parse(existingSurvey.additional_service_fees) : existingSurvey.additional_service_fees) : []
+  );
+  const [bookingNote, setBookingNote] = useState(existingSurvey?.booking_note || '');
+
+  // ─── Step 6: Social Links ──────────────────────────────────────────────────
+  const [socialLinks, setSocialLinks] = useState<{ platform: string; url: string }[]>(
+    existingSurvey?.social_links ? (typeof existingSurvey.social_links === 'string' ? JSON.parse(existingSurvey.social_links) : existingSurvey.social_links) : []
+  );
+
+  // ─── Step 7: Business Documents ────────────────────────────────────────────
+  const [aboutBusiness, setAboutBusiness] = useState(existingSurvey?.about_business || '');
+  const [registeredTravelForLife, setRegisteredTravelForLife] = useState(!!existingSurvey?.registered_travel_for_life);
+  const [registeredGreenLeaf, setRegisteredGreenLeaf] = useState(!!existingSurvey?.registered_green_leaf);
+  const [receivedTourismAward, setReceivedTourismAward] = useState(!!existingSurvey?.received_tourism_award);
+  const [customDocuments, setCustomDocuments] = useState<{ name: string; uri?: string }[]>(
+    existingSurvey?.custom_documents ? (typeof existingSurvey.custom_documents === 'string' ? JSON.parse(existingSurvey.custom_documents) : existingSurvey.custom_documents) : []
+  );
+
+  // ─── Step 8: Terms & Conditions ────────────────────────────────────────────
+  const [agreedToTerms, setAgreedToTerms] = useState(!!existingSurvey?.agreed_to_terms);
+  const [declaredInfoCorrect, setDeclaredInfoCorrect] = useState(!!existingSurvey?.declared_info_correct);
+  const [acknowledgedDotLiability, setAcknowledgedDotLiability] = useState(!!existingSurvey?.acknowledged_dot_liability);
   
   const scrollViewRef = useRef<ScrollView>(null);
   const isSubmitSuccessRef = useRef(false);
@@ -236,19 +353,37 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const { control, handleSubmit, formState: { errors, isDirty }, watch, setValue } = useForm<SurveyFormData>({
     mode: 'onChange',
     defaultValues: {
-      contactPerson: existingSurvey?.contactPerson || '',
+      contactPerson: existingSurvey?.contactPerson || existingSurvey?.contact_person || '',
       designation: existingSurvey?.designation || '',
-      mobileNumber: existingSurvey?.mobileNumber || '',
+      mobileNumber: existingSurvey?.mobileNumber || existingSurvey?.mobile_number || '',
       email: existingSurvey?.email || '',
       contactPerson2: existingSurvey?.contactPerson2 || existingSurvey?.contact_person_2 || '',
       mobileNumber2: existingSurvey?.mobileNumber2 || existingSurvey?.mobile_number_2 || '',
       email2: existingSurvey?.email2 || existingSurvey?.email_2 || '',
-      gstNumber: existingSurvey?.gstNumber || stakeholder?.gstNumber || '',
-      organizationType: existingSurvey?.organizationType || '',
+      gstNumber: existingSurvey?.gstNumber || existingSurvey?.gst_number || stakeholder?.gstNumber || '',
+      organizationType: existingSurvey?.organizationType || existingSurvey?.organization_type || '',
       website: existingSurvey?.website || '',
       remarks: existingSurvey?.remarks || '',
       nearestPoliceStation: existingSurvey?.nearestPoliceStation || existingSurvey?.nearest_police_station || '',
       nearestHealthcareCenter: existingSurvey?.nearestHealthcareCenter || existingSurvey?.nearest_healthcare_center || '',
+      // Step 2 — Basic Information
+      businessName: existingSurvey?.business_name || existingSurvey?.businessName || '',
+      ownerName: existingSurvey?.owner_name || existingSurvey?.ownerName || '',
+      district: existingSurvey?.district || stakeholder?.district || '',
+      city: existingSurvey?.city || '',
+      taluka: existingSurvey?.taluka || '',
+      village: existingSurvey?.village || '',
+      pinCode: existingSurvey?.pin_code || existingSurvey?.pinCode || '',
+      businessAddress: existingSurvey?.business_address || existingSurvey?.businessAddress || '',
+      workingAddress: existingSurvey?.working_address || existingSurvey?.workingAddress || '',
+      maleEmployees: existingSurvey?.male_employees?.toString() || existingSurvey?.maleEmployees?.toString() || '',
+      femaleEmployees: existingSurvey?.female_employees?.toString() || existingSurvey?.femaleEmployees?.toString() || '',
+      landline: existingSurvey?.landline || '',
+      alternateMobile: existingSurvey?.alternate_mobile || existingSurvey?.alternateMobile || '',
+      alternateEmail: existingSurvey?.alternate_email || existingSurvey?.alternateEmail || '',
+      aadharNumber: '', // Never pre-fill for security — only raw entry allowed
+      udyamAadharRegNo: existingSurvey?.udyam_aadhar_reg_no || existingSurvey?.udyamAadharRegNo || '',
+      fssaiNumber: existingSurvey?.fssai_number || existingSurvey?.fssaiNumber || '',
     },
   });
 
@@ -260,8 +395,8 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       if (isSubmitSuccessRef.current) return;
 
       // Check if user has made any changes
-      const hasMedia = Object.keys(photos).length > 0 || video !== null;
-      if (!isDirty && !hasMedia) return;
+      const hasMedia = Object.keys(photos).length > 0 || video !== null || headerSliderPhotos.length > 0;
+      if (!isDirty && !hasMedia && !selectedCategory) return;
 
       // Prevent default navigation
       e.preventDefault();
@@ -690,7 +825,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       const p = photos[key];
       await mediaDao.save({
         surveyId: newSurveyId,
-        stakeholderId,  // BUG 3 FIX: stored so auto-sync can resolve serverSurveyId on media-only runs
+        stakeholderId,
         type: 'PHOTO',
         photoCategory: key,
         filePath: p.uri,
@@ -704,10 +839,28 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         isSynced: false,
       });
     }
+    // Save Header Slider photos (multi-image)
+    for (const hp of headerSliderPhotos) {
+      await mediaDao.save({
+        surveyId: newSurveyId,
+        stakeholderId,
+        type: 'PHOTO',
+        photoCategory: 'HEADER_SLIDER',
+        filePath: hp.uri,
+        fileName: hp.fileName,
+        fileSize: hp.fileSize,
+        mimeType: hp.type,
+        latitude: hp.latitude,
+        longitude: hp.longitude,
+        gpsAccuracy: hp.gpsAccuracy,
+        capturedAt: hp.capturedAt,
+        isSynced: false,
+      });
+    }
     if (video) {
       await mediaDao.save({
         surveyId: newSurveyId,
-        stakeholderId,  // BUG 3 FIX: stored so auto-sync can resolve serverSurveyId on media-only runs
+        stakeholderId,
         type: 'VIDEO',
         filePath: video.uri,
         fileName: video.fileName,
@@ -729,6 +882,30 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       Alert.alert('Incomplete Survey', 'GPS Location is required to submit the survey.');
       return;
     }
+    if (!selectedCategory) {
+      Alert.alert('Incomplete Survey', 'Please select a Business Category in Step 1.');
+      return;
+    }
+    if (!photos['DISPLAY_IMAGE']) {
+      Alert.alert('Incomplete Survey', 'Display Image is required (Step 3).');
+      return;
+    }
+    if (headerSliderPhotos.length < 3) {
+      Alert.alert('Incomplete Survey', `Header Slider requires at least 3 images (currently: ${headerSliderPhotos.length}).`);
+      return;
+    }
+    if (description.trim().length < 50) {
+      Alert.alert('Incomplete Survey', 'Description must be at least 50 characters (Step 4).');
+      return;
+    }
+    if (selectedCategory === 'Accommodations' && rooms.length < 1) {
+      Alert.alert('Incomplete Survey', 'At least 1 room is required for Accommodation listings (Step 5).');
+      return;
+    }
+    if (!agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability) {
+      Alert.alert('Incomplete Survey', 'Please accept all Terms & Conditions in Step 8.');
+      return;
+    }
     const missingPhotos = PHOTO_CATEGORIES.filter(c => c.required && !photos[c.key]);
     if (missingPhotos.length > 0) {
       Alert.alert('Incomplete Survey', `Please capture the following required photos: ${missingPhotos.map(m => m.label).join(', ')}`);
@@ -747,9 +924,38 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       stakeholderId,
       enumeratorId: user!.id,
       ...data,
+      businessCategory: selectedCategory,
+      subCategories: selectedSubCategories,
       latitude: gps?.latitude,
       longitude: gps?.longitude,
       gpsAccuracy: gps?.accuracy,
+      // Step 2 numeric conversions
+      maleEmployees: data.maleEmployees ? parseInt(data.maleEmployees, 10) : undefined,
+      femaleEmployees: data.femaleEmployees ? parseInt(data.femaleEmployees, 10) : undefined,
+      // Step 4
+      description,
+      accommodationFacilities: selectedCategory === 'Accommodations' ? accommodationFacilities : undefined,
+      accommodationPolicies: selectedCategory === 'Accommodations' ? accommodationPolicies : undefined,
+      workingHours,
+      faq: faqItems.length > 0 ? faqItems : undefined,
+      // Step 5
+      rooms: selectedCategory === 'Accommodations' ? rooms : undefined,
+      couponCodes: selectedCategory === 'Accommodations' && couponCodes.length > 0 ? couponCodes : undefined,
+      saleOff: selectedCategory === 'Accommodations' ? parseFloat(saleOff) || 0 : undefined,
+      additionalServiceFees: selectedCategory === 'Accommodations' && additionalServiceFees.length > 0 ? additionalServiceFees : undefined,
+      bookingNote: selectedCategory === 'Accommodations' ? bookingNote : undefined,
+      // Step 6
+      socialLinks: socialLinks.length > 0 ? socialLinks : undefined,
+      // Step 7
+      aboutBusiness,
+      registeredTravelForLife,
+      registeredGreenLeaf,
+      receivedTourismAward,
+      customDocuments: customDocuments.length > 0 ? customDocuments : undefined,
+      // Step 8
+      agreedToTerms,
+      declaredInfoCorrect,
+      acknowledgedDotLiability,
     };
 
     try {
@@ -872,17 +1078,89 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     { name: 'contactPerson', label: 'Contact Person Name *', placeholder: 'Full name of contact person', required: true },
     { name: 'designation', label: 'Designation', placeholder: 'e.g., Manager, Owner' },
     { name: 'mobileNumber', label: 'Mobile Number *', placeholder: '10-digit mobile number', required: true, keyboardType: 'phone-pad', maxLength: 10, pattern: { value: /^[0-9]{10}$/, message: 'Invalid number' } },
-    { name: 'email', label: 'Email', placeholder: 'email@example.com', keyboardType: 'email-address' },
+    { name: 'email', label: 'Email *', placeholder: 'email@example.com', keyboardType: 'email-address', required: true },
     { name: 'contactPerson2', label: 'Secondary Contact Name', placeholder: 'Optional secondary contact' },
     { name: 'mobileNumber2', label: 'Secondary Mobile Number', placeholder: '10-digit mobile number', keyboardType: 'phone-pad', maxLength: 10, pattern: { value: /^[0-9]{10}$/, message: 'Invalid number' } },
     { name: 'email2', label: 'Secondary Email', placeholder: 'email@example.com', keyboardType: 'email-address' },
     { name: 'nearestPoliceStation', label: 'Nearest Police Station', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading, isAutocomplete: true, facilityType: 'POLICE_STATION' },
     { name: 'nearestHealthcareCenter', label: 'Nearest Healthcare Center', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading, isAutocomplete: true, facilityType: 'HEALTHCARE' },
-    { name: 'gstNumber', label: 'GST Number', placeholder: 'GST Number' },
+    { name: 'gstNumber', label: 'GST Number', placeholder: 'GST Number', maxLength: 15 },
     { name: 'organizationType', label: 'Organization Type', placeholder: 'e.g., LLC, Pvt Ltd' },
     { name: 'website', label: 'Website', placeholder: 'https://example.com' },
     { name: 'remarks', label: 'Remarks', placeholder: 'Any additional notes' },
   ];
+
+  // Helper: get visible steps (skip step 5 for non-Accommodation)
+  const getVisibleSteps = () => {
+    if (selectedCategory === 'Accommodations') return [1, 2, 3, 4, 5, 6, 7, 8];
+    return [1, 2, 3, 4, 6, 7, 8]; // skip 5
+  };
+
+  const visibleSteps = getVisibleSteps();
+  const currentStepIndex = visibleSteps.indexOf(currentStep);
+
+  const goToNextStep = () => {
+    const idx = visibleSteps.indexOf(currentStep);
+    if (idx < visibleSteps.length - 1) setCurrentStep(visibleSteps[idx + 1]);
+  };
+
+  const goToPrevStep = () => {
+    const idx = visibleSteps.indexOf(currentStep);
+    if (idx > 0) setCurrentStep(visibleSteps[idx - 1]);
+  };
+
+  // Header slider photo capture
+  const captureHeaderSliderPhoto = async () => {
+    const location = await getLocationForMedia();
+    if (!location) {
+      Alert.alert('Still Acquiring Location', 'GPS hasn\'t locked on yet. Wait for the green checkmark.');
+      return;
+    }
+    const result = await launchImageLibrary({ mediaType: 'photo', quality: 0.8, selectionLimit: 5 });
+    if (result.assets) {
+      const newPhotos = result.assets.map(asset => ({
+        uri: asset.uri,
+        fileName: asset.fileName,
+        fileSize: asset.fileSize,
+        type: asset.type,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        gpsAccuracy: location.accuracy,
+        capturedAt: new Date().toISOString(),
+      }));
+      setHeaderSliderPhotos(prev => [...prev, ...newPhotos]);
+    }
+  };
+
+  // Document picker (reuses image picker with mixed types)
+  const pickDocument = async (category: string) => {
+    const result = await launchImageLibrary({ mediaType: 'mixed', quality: 0.8 });
+    if (result.assets && result.assets[0]) {
+      const asset = result.assets[0];
+      const location = gps || { latitude: 0, longitude: 0, accuracy: 0 };
+      setPhotos(prev => ({
+        ...prev,
+        [category]: {
+          uri: asset.uri,
+          fileName: asset.fileName,
+          fileSize: asset.fileSize,
+          type: asset.type,
+          latitude: location.latitude,
+          longitude: location.longitude,
+          gpsAccuracy: location.accuracy,
+          capturedAt: new Date().toISOString(),
+        },
+      }));
+    }
+  };
+
+  // Taluka options filtered by selected district
+  const talukaOptions = (() => {
+    const dist = watch('district');
+    if (!dist) return [];
+    const found = MAHARASHTRA_TALUKAS.filter((t: any) => t.district?.toLowerCase() === dist.toLowerCase());
+    return found.map((t: any) => t.taluka || t.name);
+  })();
 
   return (
     <KeyboardAvoidingView
@@ -894,22 +1172,22 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         <View style={[styles.progressBar, { width: `${completionPercent}%`, backgroundColor: completionPercent === 100 ? colors.success : colors.primary }]} />
       </View>
 
-      {/* Breadcrumbs */}
-      <View style={styles.breadcrumbsContainer}>
-        {[1, 2, 3].map((step) => (
+      {/* Breadcrumbs — 8 steps */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.breadcrumbsContainer} contentContainerStyle={{ alignItems: 'center', paddingHorizontal: spacing.sm }}>
+        {visibleSteps.map((step, idx) => (
           <React.Fragment key={step}>
             <TouchableOpacity 
-              style={[styles.stepIndicator, currentStep >= step ? styles.stepActive : styles.stepInactive]}
+              style={[styles.stepIndicator, currentStep === step ? styles.stepActive : styles.stepInactive]}
               onPress={() => setCurrentStep(step)}
             >
-              <Text style={[styles.stepText, currentStep >= step ? styles.stepTextActive : styles.stepTextInactive]}>
-                {step === 1 ? '1. Details' : step === 2 ? '2. Media' : '3. Review'}
+              <Text style={[styles.stepText, currentStep === step ? styles.stepTextActive : styles.stepTextInactive]}>
+                {step}.{STEP_LABELS[step - 1]}
               </Text>
             </TouchableOpacity>
-            {step < 3 && <Icon name="chevron-right" size={16} color={colors.textMuted} style={{ marginHorizontal: spacing.xs }} />}
+            {idx < visibleSteps.length - 1 && <Icon name="chevron-right" size={14} color={colors.textMuted} style={{ marginHorizontal: 2 }} />}
           </React.Fragment>
         ))}
-      </View>
+      </ScrollView>
 
       <ScrollView ref={scrollViewRef} style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.stakeholderInfo}>
@@ -919,6 +1197,61 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
         {currentStep === 1 && (
           <View>
+            {/* Step 1: Category & Type */}
+            <View style={styles.formSection}>
+              <Text style={styles.sectionHeader}>Business Category *</Text>
+              <Text style={{ ...typography.caption, color: colors.textMuted, marginBottom: spacing.md }}>Select one category that best describes your business</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
+                {BUSINESS_CATEGORIES.map(cat => (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[styles.chipBtn, selectedCategory === cat && styles.chipBtnActive]}
+                    onPress={() => {
+                      setSelectedCategory(cat);
+                      setSelectedSubCategories([]);
+                    }}
+                  >
+                    <Text style={[styles.chipText, selectedCategory === cat && styles.chipTextActive]}>{cat}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {selectedCategory !== '' && (
+                <>
+                  <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Sub Categories * (max 3)</Text>
+                  <Text style={{ ...typography.caption, color: colors.textMuted, marginBottom: spacing.md }}>Select up to 3 sub-categories</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
+                    {(SUB_CATEGORIES[selectedCategory] || []).map(sub => {
+                      const isSelected = selectedSubCategories.includes(sub);
+                      return (
+                        <TouchableOpacity
+                          key={sub}
+                          style={[styles.chipBtn, isSelected && styles.chipBtnActive]}
+                          onPress={() => {
+                            if (isSelected) {
+                              setSelectedSubCategories(prev => prev.filter(s => s !== sub));
+                            } else if (selectedSubCategories.length < 3) {
+                              setSelectedSubCategories(prev => [...prev, sub]);
+                            } else {
+                              Toast?.show?.({ type: 'info', text1: 'Max 3 sub-categories', position: 'bottom', visibilityTime: 2000 });
+                              Alert.alert('Limit Reached', 'Maximum 3 sub-categories allowed.');
+                            }
+                          }}
+                        >
+                          <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>{sub}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        )}
+
+        {currentStep === 2 && (
+          <View>
+            {/* Step 2: Basic Information */}
             {/* GPS Section */}
             <View style={styles.gpsCard}>
               <View style={styles.gpsHeader}>
@@ -950,27 +1283,141 @@ export default function SurveyFormScreen({ route, navigation }: any) {
               )}
             </View>
 
-            {/* Form Fields */}
+            {/* Business Name & Owner */}
             <View style={styles.formSection}>
-              <Text style={styles.sectionHeader}>Contact Information</Text>
-              {fields.slice(0, 4).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
-              
-              <Text style={styles.sectionHeader}>Organization Details</Text>
-              {fields.slice(4).map(f => f.isAutocomplete ? (
+              <Text style={styles.sectionHeader}>Business Information</Text>
+              <AnimatedInput field={{ name: 'businessName', label: 'Name of Your Business *', placeholder: 'Business name', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'ownerName', label: 'Owner / Proprietor / Director Name *', placeholder: 'Full name', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+
+              {/* Country & State (read-only) */}
+              <View style={{ flexDirection: 'row', gap: spacing.md, marginBottom: spacing.lg }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Country</Text>
+                  <View style={[styles.inputWrapper, { backgroundColor: colors.bgInput, borderColor: colors.border }]}>
+                    <Text style={[styles.input, { color: colors.textMuted }]}>India</Text>
+                  </View>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>State</Text>
+                  <View style={[styles.inputWrapper, { backgroundColor: colors.bgInput, borderColor: colors.border }]}>
+                    <Text style={[styles.input, { color: colors.textMuted }]}>Maharashtra</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* District Picker */}
+              <AnimatedInput field={{ name: 'district', label: 'District *', placeholder: 'Select district', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'city', label: 'City *', placeholder: 'City name', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+
+              {/* Taluka */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Taluka</Text>
+                <View style={[styles.inputWrapper, { borderColor: colors.border }]}>
+                  <Controller
+                    control={control}
+                    name="taluka"
+                    render={({ field: { onChange, value } }) => (
+                      <Picker
+                        selectedValue={value}
+                        onValueChange={onChange}
+                        enabled={!!watch('district')}
+                        style={{ color: colors.textPrimary }}
+                      >
+                        <Picker.Item label="Select Taluka" value="" />
+                        {talukaOptions.map((t: string) => <Picker.Item key={t} label={t} value={t} />)}
+                      </Picker>
+                    )}
+                  />
+                </View>
+              </View>
+
+              <AnimatedInput field={{ name: 'village', label: 'Village', placeholder: 'Village name' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'pinCode', label: 'Pin / Zip Code *', placeholder: '6-digit pin code', required: true, keyboardType: 'numeric', maxLength: 6 }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'businessAddress', label: 'Business Address *', placeholder: 'Full business address', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+
+              {/* Working Address with "Same as" switch */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm }}>
+                <Text style={[styles.label, { flex: 1, marginBottom: 0 }]}>Working Address</Text>
+                <Text style={{ ...typography.caption, color: colors.textMuted, marginRight: spacing.sm }}>Same as Business</Text>
+                <Switch
+                  value={sameAsBusinessAddress}
+                  onValueChange={(val) => {
+                    setSameAsBusinessAddress(val);
+                    if (val) setValue('workingAddress', watch('businessAddress'));
+                  }}
+                />
+              </View>
+              {!sameAsBusinessAddress && (
+                <AnimatedInput field={{ name: 'workingAddress', label: '', placeholder: 'Working address' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              )}
+
+              <Text style={styles.sectionHeader}>Employee Information</Text>
+              <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                <View style={{ flex: 1 }}><AnimatedInput field={{ name: 'maleEmployees', label: 'Male Employees', placeholder: '0', keyboardType: 'numeric' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} /></View>
+                <View style={{ flex: 1 }}><AnimatedInput field={{ name: 'femaleEmployees', label: 'Female Employees', placeholder: '0', keyboardType: 'numeric' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} /></View>
+              </View>
+
+              <Text style={styles.sectionHeader}>Contact Details</Text>
+              {fields.slice(0, 7).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
+              <AnimatedInput field={{ name: 'landline', label: 'Landline', placeholder: 'With STD code', keyboardType: 'phone-pad' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'alternateMobile', label: 'Alternate Mobile', placeholder: 'Alternate number', keyboardType: 'phone-pad' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'alternateEmail', label: 'Alternate Email', placeholder: 'alternate@email.com', keyboardType: 'email-address' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+
+              <Text style={styles.sectionHeader}>Government IDs & Registrations</Text>
+              <AnimatedInput field={{ name: 'aadharNumber', label: 'Aadhar Number *', placeholder: '12-digit number', required: true, keyboardType: 'numeric', maxLength: 12, pattern: { value: /^\d{12}$/, message: 'Must be 12 digits' } }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'udyamAadharRegNo', label: 'Udyam Aadhar Reg. No. *', placeholder: 'Registration number', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              {fields.slice(9, 10).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
+              <AnimatedInput field={{ name: 'fssaiNumber', label: 'FSSAI Number', placeholder: 'FSSAI license number' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+
+              <Text style={styles.sectionHeader}>Nearest Facilities</Text>
+              {fields.slice(7, 9).map(f => f.isAutocomplete ? (
                 <AutocompleteInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} setValue={setValue} />
               ) : (
                 <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
               ))}
+              {fields.slice(10, 13).map(f => <AnimatedInput key={f.name} field={f} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />)}
             </View>
           </View>
         )}
 
-        {currentStep === 2 && (
+        {currentStep === 3 && (
           <View>
-            {/* Media Capture Section */}
+            {/* Step 3: Images & Media */}
             <View style={styles.formSection}>
-              <Text style={styles.sectionHeader}>Photos</Text>
-              {PHOTO_CATEGORIES.map((cat) => {
+              <Text style={styles.sectionHeader}>Display Image (Required - Square)</Text>
+              {photos['DISPLAY_IMAGE'] ? (
+                <View style={styles.photoSlot}>
+                  <Image source={{ uri: photos['DISPLAY_IMAGE'].uri }} style={styles.photoPreview} />
+                  <View style={styles.photoActions}>
+                    <TouchableOpacity style={styles.retakeBtn} onPress={() => capturePhoto('DISPLAY_IMAGE')}><Icon name="camera-retake" size={16} color={colors.textSecondary} /><Text style={styles.retakeBtnText}>Retake</Text></TouchableOpacity>
+                    <TouchableOpacity style={styles.removeBtn} onPress={() => setPhotos(p => { const np = {...p}; delete np['DISPLAY_IMAGE']; return np; })}><Icon name="delete" size={16} color={colors.error} /><Text style={styles.removeBtnText}>Remove</Text></TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity style={[styles.captureBtn, !gps && styles.captureBtnDisabled]} onPress={() => capturePhoto('DISPLAY_IMAGE')} disabled={!gps}>
+                  <Icon name="image-area" size={24} color={colors.textSecondary} />
+                  <Text style={styles.captureBtnText}>{gps ? 'Capture Display Image' : 'Waiting for GPS...'}</Text>
+                </TouchableOpacity>
+              )}
+
+              <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Header Slider (Required - Min 3, Landscape)</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: spacing.md }}>
+                {headerSliderPhotos.map((hp, idx) => (
+                  <View key={idx} style={{ marginRight: spacing.sm, position: 'relative' }}>
+                    <Image source={{ uri: hp.uri }} style={{ width: 120, height: 80, borderRadius: borderRadius.md }} />
+                    <TouchableOpacity style={{ position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, padding: 2 }} onPress={() => setHeaderSliderPhotos(prev => prev.filter((_, i) => i !== idx))}>
+                      <Icon name="close" size={14} color="#FFF" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+              <TouchableOpacity style={[styles.captureBtn, !gps && styles.captureBtnDisabled]} onPress={captureHeaderSliderPhoto} disabled={!gps}>
+                <Icon name="image-multiple" size={24} color={colors.textSecondary} />
+                <Text style={styles.captureBtnText}>{`Add Images (${headerSliderPhotos.length}/3 min)`}</Text>
+              </TouchableOpacity>
+
+              <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Photos</Text>
+              {PHOTO_CATEGORIES.filter(c => c.key !== 'DISPLAY_IMAGE').map((cat) => {
                 const photo = photos[cat.key];
                 return (
                   <View key={cat.key} style={styles.photoSlot}>
@@ -1079,47 +1526,136 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           </View>
         )}
 
-        {currentStep === 3 && (
+        {currentStep === 4 && (
           <View style={styles.formSection}>
-            <Text style={styles.sectionHeader}>Review & Submit</Text>
-            <View style={styles.reviewCard}>
-              <Text style={styles.reviewTitle}>Overall Completion: {completionPercent}%</Text>
-              
-              {!gps && <Text style={styles.reviewError}>• GPS Location is missing.</Text>}
-              
-              {fields.filter(f => f.required && (!watchAllFields[f.name] || String(watchAllFields[f.name]).trim() === '')).map(f => (
-                <Text key={f.name} style={styles.reviewError}>• Missing Required Info: {f.label.replace(' *', '')}</Text>
-              ))}
+            <Text style={styles.sectionHeader}>Description * (min 50 chars)</Text>
+            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={description} onChangeText={setDescription} placeholder="Describe your business (min 50 characters)" placeholderTextColor={colors.textMuted} />
+            <Text style={{ ...typography.caption, color: description.length >= 50 ? colors.success : colors.textMuted, marginTop: spacing.xs }}>{description.length}/50 min</Text>
+            {selectedCategory === 'Accommodations' && (
+              <>
+                <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Facilities</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
+                  {ACCOMMODATION_FACILITIES.map(fac => { const isChecked = accommodationFacilities.includes(fac); return (
+                    <TouchableOpacity key={fac} style={[styles.chipBtn, isChecked && styles.chipBtnActive]} onPress={() => setAccommodationFacilities(prev => isChecked ? prev.filter(f => f !== fac) : [...prev, fac])}>
+                      <Text style={[styles.chipText, isChecked && styles.chipTextActive]}>{fac}</Text>
+                    </TouchableOpacity>); })}
+                </View>
+                <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Policies</Text>
+                <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 100, textAlignVertical: 'top', padding: spacing.md }]} multiline value={accommodationPolicies} onChangeText={setAccommodationPolicies} placeholder="Check-in/out, cancellation, refund policies..." placeholderTextColor={colors.textMuted} />
+              </>
+            )}
+            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Working Hours</Text>
+            {workingHours.map((wh, idx) => (
+              <View key={wh.day} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm, gap: spacing.sm, flexWrap: 'wrap' }}>
+                <Text style={{ width: 70, ...typography.bodySmall, color: colors.textPrimary }}>{wh.day.slice(0, 3)}</Text>
+                {(['open_all_day', 'closed', 'hours'] as const).map(type => (
+                  <TouchableOpacity key={type} style={[styles.chipBtn, { paddingHorizontal: 8, paddingVertical: 4 }, wh.type === type && styles.chipBtnActive]} onPress={() => setWorkingHours(prev => prev.map((w, i) => i === idx ? { ...w, type } : w))}>
+                    <Text style={[styles.chipText, { fontSize: 11 }, wh.type === type && styles.chipTextActive]}>{type === 'open_all_day' ? 'Open' : type === 'closed' ? 'Closed' : 'Hours'}</Text>
+                  </TouchableOpacity>))}
+                {wh.type === 'hours' && (<View style={{ flexDirection: 'row', gap: 4 }}>
+                  <TextInput style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 4, width: 55, padding: 4, fontSize: 12, color: colors.textPrimary }} placeholder="09:00" value={wh.from} onChangeText={t => setWorkingHours(prev => prev.map((w, i) => i === idx ? { ...w, from: t } : w))} />
+                  <TextInput style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 4, width: 55, padding: 4, fontSize: 12, color: colors.textPrimary }} placeholder="17:00" value={wh.to} onChangeText={t => setWorkingHours(prev => prev.map((w, i) => i === idx ? { ...w, to: t } : w))} />
+                </View>)}
+              </View>))}
+            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>FAQ (Optional)</Text>
+            {faqItems.map((faq, idx) => (
+              <View key={idx} style={{ marginBottom: spacing.md, backgroundColor: colors.bgCard, padding: spacing.md, borderRadius: borderRadius.md, borderWidth: 1, borderColor: colors.border }}>
+                <TextInput style={[styles.input, { borderBottomWidth: 1, borderBottomColor: colors.border, marginBottom: spacing.sm }]} placeholder="Question" value={faq.question} onChangeText={t => setFaqItems(prev => prev.map((f, i) => i === idx ? { ...f, question: t } : f))} placeholderTextColor={colors.textMuted} />
+                <TextInput style={styles.input} placeholder="Answer" value={faq.answer} onChangeText={t => setFaqItems(prev => prev.map((f, i) => i === idx ? { ...f, answer: t } : f))} placeholderTextColor={colors.textMuted} multiline />
+                <TouchableOpacity onPress={() => setFaqItems(prev => prev.filter((_, i) => i !== idx))} style={{ alignSelf: 'flex-end', marginTop: spacing.xs }}><Icon name="delete" size={18} color={colors.error} /></TouchableOpacity>
+              </View>))}
+            <TouchableOpacity style={[styles.captureBtn, { marginTop: spacing.sm }]} onPress={() => setFaqItems(prev => [...prev, { question: '', answer: '' }])}><Icon name="plus" size={20} color={colors.textSecondary} /><Text style={styles.captureBtnText}>Add FAQ</Text></TouchableOpacity>
+          </View>
+        )}
 
-              {PHOTO_CATEGORIES.filter(c => c.required && !photos[c.key]).map(c => (
-                <Text key={c.key} style={styles.reviewError}>• Missing Required Photo: {c.label}</Text>
-              ))}
+        {currentStep === 5 && selectedCategory === 'Accommodations' && (
+          <View style={styles.formSection}>
+            <Text style={styles.sectionHeader}>Rooms (min 1 required)</Text>
+            {rooms.map((room, idx) => (
+              <View key={idx} style={{ marginBottom: spacing.lg, backgroundColor: colors.bgCard, padding: spacing.md, borderRadius: borderRadius.md, borderWidth: 1, borderColor: colors.border }}>
+                <TextInput style={[styles.input, { borderBottomWidth: 1, borderBottomColor: colors.border, marginBottom: spacing.sm }]} placeholder="Room Name" value={room.name || ''} onChangeText={t => setRooms(prev => prev.map((r, i) => i === idx ? { ...r, name: t } : r))} placeholderTextColor={colors.textMuted} />
+                <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm, flexWrap: 'wrap' }}>
+                  {['Single', 'Double', 'Suite', 'Dormitory'].map(type => (
+                    <TouchableOpacity key={type} style={[styles.chipBtn, { paddingHorizontal: 8, paddingVertical: 4 }, room.type === type && styles.chipBtnActive]} onPress={() => setRooms(prev => prev.map((r, i) => i === idx ? { ...r, type } : r))}><Text style={[styles.chipText, { fontSize: 11 }, room.type === type && styles.chipTextActive]}>{type}</Text></TouchableOpacity>))}
+                </View>
+                <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                  <TextInput style={[styles.input, { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 4 }]} placeholder="Guests" keyboardType="numeric" value={room.capacity?.toString() || ''} onChangeText={t => setRooms(prev => prev.map((r, i) => i === idx ? { ...r, capacity: parseInt(t) || 0 } : r))} placeholderTextColor={colors.textMuted} />
+                  <TextInput style={[styles.input, { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 4 }]} placeholder="Price/Night" keyboardType="numeric" value={room.price?.toString() || ''} onChangeText={t => setRooms(prev => prev.map((r, i) => i === idx ? { ...r, price: parseFloat(t) || 0 } : r))} placeholderTextColor={colors.textMuted} />
+                </View>
+                <TouchableOpacity onPress={() => setRooms(prev => prev.filter((_, i) => i !== idx))} style={{ alignSelf: 'flex-end', marginTop: spacing.sm }}><Icon name="delete" size={18} color={colors.error} /></TouchableOpacity>
+              </View>))}
+            <TouchableOpacity style={styles.captureBtn} onPress={() => setRooms(prev => [...prev, { name: '', type: 'Double', capacity: 2, price: 0 }])}><Icon name="plus" size={20} color={colors.textSecondary} /><Text style={styles.captureBtnText}>Add Room</Text></TouchableOpacity>
+            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Sale Off (%)</Text>
+            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, padding: spacing.md }]} keyboardType="numeric" value={saleOff} onChangeText={setSaleOff} placeholder="0" placeholderTextColor={colors.textMuted} />
+            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Booking Note</Text>
+            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 80, textAlignVertical: 'top', padding: spacing.md }]} multiline value={bookingNote} onChangeText={setBookingNote} placeholder="Extra notes for guests..." placeholderTextColor={colors.textMuted} />
+          </View>
+        )}
 
-              {!video && <Text style={styles.reviewError}>• Walkthrough Video is missing.</Text>}
+        {currentStep === 6 && (
+          <View style={styles.formSection}>
+            <Text style={styles.sectionHeader}>Social Links</Text>
+            {socialLinks.map((sl, idx) => (
+              <View key={idx} style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md, alignItems: 'center' }}>
+                <View style={{ flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md }}>
+                  <Picker selectedValue={sl.platform} onValueChange={v => setSocialLinks(prev => prev.map((s, i) => i === idx ? { ...s, platform: v } : s))} style={{ color: colors.textPrimary }}><Picker.Item label="Platform" value="" />{SOCIAL_PLATFORMS.map(p => <Picker.Item key={p} label={p} value={p} />)}</Picker>
+                </View>
+                <TextInput style={[styles.input, { flex: 2, borderWidth: 1, borderColor: colors.border, borderRadius: 4 }]} placeholder="URL" value={sl.url} onChangeText={t => setSocialLinks(prev => prev.map((s, i) => i === idx ? { ...s, url: t } : s))} placeholderTextColor={colors.textMuted} />
+                <TouchableOpacity onPress={() => setSocialLinks(prev => prev.filter((_, i) => i !== idx))}><Icon name="close-circle" size={20} color={colors.error} /></TouchableOpacity>
+              </View>))}
+            <TouchableOpacity style={styles.captureBtn} onPress={() => setSocialLinks(prev => [...prev, { platform: '', url: '' }])}><Icon name="plus" size={20} color={colors.textSecondary} /><Text style={styles.captureBtnText}>Add Social Link</Text></TouchableOpacity>
+          </View>
+        )}
 
-              <Text style={styles.reviewNote}>
-                Please ensure all required information is captured before saving. Offline surveys will be synced when internet is available.
-              </Text>
-            </View>
-
-            {/* Submit Button */}
-            <Animated.View style={{ transform: [{ scale: buttonScaleAnim }], marginTop: spacing.xxl }}>
-              <TouchableOpacity
-                style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
-                onPress={handleSubmit(onSubmit)}
-                disabled={saving}
-              >
-                {saving ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ActivityIndicator color="#FFF" />
-                    {uploadText ? <Text style={[styles.submitText, { marginLeft: spacing.md }]}>{uploadText}</Text> : null}
-                  </View>
+        {currentStep === 7 && (
+          <View style={styles.formSection}>
+            <Text style={styles.sectionHeader}>About Business *</Text>
+            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={aboutBusiness} onChangeText={setAboutBusiness} placeholder="History, achievements, brief profile..." placeholderTextColor={colors.textMuted} />
+            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Certifications</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}><Text style={{ ...typography.body, color: colors.textPrimary }}>Registered for "Travel for Life"?</Text><Switch value={registeredTravelForLife} onValueChange={setRegisteredTravelForLife} /></View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}><Text style={{ ...typography.body, color: colors.textPrimary }}>Registered for Green Leaf Rating?</Text><Switch value={registeredGreenLeaf} onValueChange={setRegisteredGreenLeaf} /></View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}><Text style={{ ...typography.body, color: colors.textPrimary }}>Received a Tourism Sector Award?</Text><Switch value={receivedTourismAward} onValueChange={setReceivedTourismAward} /></View>
+            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Required Documents</Text>
+            {[{ key: 'UDYOG_AADHAR_DOC', label: 'Udyog Aadhar Card' }, { key: 'AADHAR_CARD_DOC', label: 'Aadhar Card' }, { key: 'PAN_CARD_DOC', label: 'PAN Card' }, { key: 'CANCELLED_CHEQUE_DOC', label: 'Cancelled Cheque' }].map(doc => (
+              <View key={doc.key} style={{ marginBottom: spacing.md }}>
+                <Text style={{ ...typography.body, color: colors.textPrimary, marginBottom: spacing.xs }}>{doc.label} *</Text>
+                {photos[doc.key] ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}><Icon name="check-circle" size={20} color={colors.success} /><Text style={{ ...typography.bodySmall, color: colors.success, flex: 1 }}>{photos[doc.key].fileName || 'Uploaded'}</Text><TouchableOpacity onPress={() => setPhotos(p => { const np = {...p}; delete np[doc.key]; return np; })}><Icon name="close-circle" size={18} color={colors.error} /></TouchableOpacity></View>
                 ) : (
-                  <>
-                    <Icon name="content-save-outline" size={20} color="#FFF" />
-                    <Text style={styles.submitText}>Save Survey</Text>
-                  </>
+                  <TouchableOpacity style={[styles.captureBtn, { paddingVertical: spacing.md }]} onPress={() => pickDocument(doc.key)}><Icon name="file-upload" size={20} color={colors.textSecondary} /><Text style={styles.captureBtnText}>Upload {doc.label}</Text></TouchableOpacity>
                 )}
+              </View>))}
+            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Custom Documents (Optional)</Text>
+            {customDocuments.map((cd, idx) => (
+              <View key={idx} style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md, alignItems: 'center' }}>
+                <TextInput style={[styles.input, { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 4 }]} placeholder="Document Name" value={cd.name} onChangeText={t => setCustomDocuments(prev => prev.map((d, i) => i === idx ? { ...d, name: t } : d))} placeholderTextColor={colors.textMuted} />
+                <TouchableOpacity style={{ padding: spacing.sm, backgroundColor: colors.bgInput, borderRadius: borderRadius.md }} onPress={() => pickDocument(`CUSTOM_DOC_${idx}`)}><Icon name="file-upload" size={18} color={colors.textSecondary} /></TouchableOpacity>
+                <TouchableOpacity onPress={() => setCustomDocuments(prev => prev.filter((_, i) => i !== idx))}><Icon name="close-circle" size={20} color={colors.error} /></TouchableOpacity>
+              </View>))}
+            <TouchableOpacity style={[styles.captureBtn, { marginTop: spacing.sm }]} onPress={() => setCustomDocuments(prev => [...prev, { name: '' }])}><Icon name="plus" size={20} color={colors.textSecondary} /><Text style={styles.captureBtnText}>Add Custom Document</Text></TouchableOpacity>
+          </View>
+        )}
+
+        {currentStep === 8 && (
+          <View style={styles.formSection}>
+            <Text style={styles.sectionHeader}>Terms & Conditions</Text>
+            <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setAgreedToTerms(!agreedToTerms)}><Icon name={agreedToTerms ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={agreedToTerms ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I agree to the Terms & Conditions</Text></TouchableOpacity>
+            <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setDeclaredInfoCorrect(!declaredInfoCorrect)}><Icon name={declaredInfoCorrect ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={declaredInfoCorrect ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I declare that all information provided is true and correct</Text></TouchableOpacity>
+            <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setAcknowledgedDotLiability(!acknowledgedDotLiability)}><Icon name={acknowledgedDotLiability ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={acknowledgedDotLiability ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I acknowledge that the Department of Tourism (DOT) is not liable for any financial losses</Text></TouchableOpacity>
+            <View style={styles.reviewCard}>
+              <Text style={styles.reviewTitle}>Completion Review</Text>
+              {!gps && <Text style={styles.reviewError}>• GPS Location is missing</Text>}
+              {!selectedCategory && <Text style={styles.reviewError}>• Business Category not selected</Text>}
+              {!photos['DISPLAY_IMAGE'] && <Text style={styles.reviewError}>• Display Image is missing</Text>}
+              {headerSliderPhotos.length < 3 && <Text style={styles.reviewError}>• Header Slider needs {3 - headerSliderPhotos.length} more images</Text>}
+              {description.trim().length < 50 && <Text style={styles.reviewError}>• Description too short ({description.length}/50 min)</Text>}
+              {selectedCategory === 'Accommodations' && rooms.length < 1 && <Text style={styles.reviewError}>• At least 1 room required</Text>}
+              {!video && <Text style={styles.reviewError}>• Walkthrough Video is missing</Text>}
+              {!aboutBusiness && <Text style={styles.reviewError}>• About Business is empty</Text>}
+            </View>
+            <Animated.View style={{ transform: [{ scale: buttonScaleAnim }], marginTop: spacing.xxl }}>
+              <TouchableOpacity style={[styles.submitBtn, (saving || !agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability) && styles.submitBtnDisabled]} onPress={handleSubmit(onSubmit)} disabled={saving || !agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability}>
+                {saving ? (<View style={{ flexDirection: 'row', alignItems: 'center' }}><ActivityIndicator color="#FFF" />{uploadText ? <Text style={[styles.submitText, { marginLeft: spacing.md }]}>{uploadText}</Text> : null}</View>) : (<><Icon name="content-save-outline" size={20} color="#FFF" /><Text style={styles.submitText}>Save Survey</Text></>)}
               </TouchableOpacity>
             </Animated.View>
           </View>
@@ -1129,18 +1665,18 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       {/* Bottom Action Bar for Next/Prev */}
       <View style={styles.bottomActionBar}>
         <TouchableOpacity 
-          style={[styles.navButton, currentStep === 1 && { opacity: 0 }]} 
-          onPress={() => currentStep > 1 && setCurrentStep(currentStep - 1)}
-          disabled={currentStep === 1}
+          style={[styles.navButton, currentStepIndex === 0 && { opacity: 0 }]} 
+          onPress={goToPrevStep}
+          disabled={currentStepIndex === 0}
         >
           <Icon name="chevron-left" size={24} color={colors.primary} />
           <Text style={styles.navButtonText}>Back</Text>
         </TouchableOpacity>
 
-        {currentStep < 3 ? (
+        {currentStepIndex < visibleSteps.length - 1 ? (
           <TouchableOpacity 
             style={[styles.navButton, styles.navButtonNext]} 
-            onPress={() => setCurrentStep(currentStep + 1)}
+            onPress={goToNextStep}
           >
             <Text style={styles.navButtonNextText}>Next</Text>
             <Icon name="chevron-right" size={24} color="#FFF" />
@@ -1298,5 +1834,19 @@ const styles = StyleSheet.create({
   },
   reviewNote: {
     ...typography.caption, color: colors.textSecondary, marginTop: spacing.lg, fontStyle: 'italic',
+  },
+  chipBtn: {
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.bgInput,
+  },
+  chipBtnActive: {
+    backgroundColor: colors.primaryBg, borderColor: colors.primary,
+  },
+  chipText: {
+    ...typography.bodySmall, color: colors.textSecondary,
+  },
+  chipTextActive: {
+    color: colors.primary, fontWeight: '600',
   },
 });

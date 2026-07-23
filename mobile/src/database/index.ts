@@ -112,6 +112,57 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN mobile_number_2 TEXT;'); } catch (e) { /* ignore if column already exists */ }
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN email_2 TEXT;'); } catch (e) { /* ignore if column already exists */ }
 
+  // ─── New Plan: Step 1 — Category & Type ────────────────────────────────────
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN sub_categories TEXT;'); } catch(e){}
+
+  // ─── New Plan: Step 2 — Basic Information ──────────────────────────────────
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN business_name TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN owner_name TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN district TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN city TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN taluka TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN village TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN pin_code TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN business_address TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN working_address TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN male_employees INTEGER;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN female_employees INTEGER;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN landline TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN alternate_mobile TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN alternate_email TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN aadhar_number TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN udyam_aadhar_reg_no TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN fssai_number TEXT;'); } catch(e){}
+
+  // ─── New Plan: Step 4 — Details ────────────────────────────────────────────
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN description TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN accommodation_facilities TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN accommodation_policies TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN working_hours TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN faq TEXT;'); } catch(e){}
+
+  // ─── New Plan: Step 5 — Rooms & Pricing ────────────────────────────────────
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN rooms TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN coupon_codes TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN sale_off REAL;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN additional_service_fees TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN booking_note TEXT;'); } catch(e){}
+
+  // ─── New Plan: Step 6 — Your Socials ───────────────────────────────────────
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN social_links TEXT;'); } catch(e){}
+
+  // ─── New Plan: Step 7 — Business Documents ─────────────────────────────────
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN about_business TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN registered_travel_for_life INTEGER DEFAULT 0;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN registered_green_leaf INTEGER DEFAULT 0;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN received_tourism_award INTEGER DEFAULT 0;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN custom_documents TEXT;'); } catch(e){}
+
+  // ─── New Plan: Step 8 — Terms & Conditions ─────────────────────────────────
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN agreed_to_terms INTEGER DEFAULT 0;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN declared_info_correct INTEGER DEFAULT 0;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN acknowledged_dot_liability INTEGER DEFAULT 0;'); } catch(e){}
+
   await database.executeSql(`
     CREATE TABLE IF NOT EXISTS media (
       id TEXT PRIMARY KEY,
@@ -520,15 +571,55 @@ export const surveyDao = {
       `INSERT OR REPLACE INTO surveys (id, stakeholder_id, enumerator_id, contact_person,
         designation, mobile_number, email, contact_person_2, mobile_number_2, email_2, website, business_category, notes, gst_number,
         organization_type, remarks, latitude, longitude, gps_accuracy, nearest_police_station, 
-        nearest_healthcare_center, is_draft, is_completed, is_synced, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+        nearest_healthcare_center, is_draft, is_completed, is_synced,
+        sub_categories, business_name, owner_name, district, city, taluka, village, pin_code,
+        business_address, working_address, male_employees, female_employees, landline,
+        alternate_mobile, alternate_email, aadhar_number, udyam_aadhar_reg_no, fssai_number,
+        description, accommodation_facilities, accommodation_policies, working_hours, faq,
+        rooms, coupon_codes, sale_off, additional_service_fees, booking_note,
+        social_links, about_business, registered_travel_for_life, registered_green_leaf,
+        received_tourism_award, custom_documents, agreed_to_terms, declared_info_correct,
+        acknowledged_dot_liability, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [id, survey.stakeholderId, survey.enumeratorId, survey.contactPerson,
        survey.designation, survey.mobileNumber, survey.email, survey.contactPerson2, survey.mobileNumber2, survey.email2, survey.website,
        survey.businessCategory, survey.notes, survey.gstNumber,
        survey.organizationType, survey.remarks, survey.latitude, survey.longitude,
        survey.gpsAccuracy, survey.nearestPoliceStation, survey.nearestHealthcareCenter,
-       survey.isDraft ? 1 : 0, survey.isCompleted ? 1 : 0,
-       survey.isSynced ? 1 : 0]
+       survey.isDraft ? 1 : 0, survey.isCompleted ? 1 : 0, survey.isSynced ? 1 : 0,
+       // Step 1
+       survey.subCategories ? JSON.stringify(survey.subCategories) : null,
+       // Step 2
+       survey.businessName || null, survey.ownerName || null, survey.district || null,
+       survey.city || null, survey.taluka || null, survey.village || null, survey.pinCode || null,
+       survey.businessAddress || null, survey.workingAddress || null,
+       survey.maleEmployees ?? null, survey.femaleEmployees ?? null,
+       survey.landline || null, survey.alternateMobile || null, survey.alternateEmail || null,
+       survey.aadharNumber || null, survey.udyamAadharRegNo || null, survey.fssaiNumber || null,
+       // Step 4
+       survey.description || null,
+       survey.accommodationFacilities ? JSON.stringify(survey.accommodationFacilities) : null,
+       survey.accommodationPolicies || null,
+       survey.workingHours ? JSON.stringify(survey.workingHours) : null,
+       survey.faq ? JSON.stringify(survey.faq) : null,
+       // Step 5
+       survey.rooms ? JSON.stringify(survey.rooms) : null,
+       survey.couponCodes ? JSON.stringify(survey.couponCodes) : null,
+       survey.saleOff ?? null,
+       survey.additionalServiceFees ? JSON.stringify(survey.additionalServiceFees) : null,
+       survey.bookingNote || null,
+       // Step 6
+       survey.socialLinks ? JSON.stringify(survey.socialLinks) : null,
+       // Step 7
+       survey.aboutBusiness || null,
+       survey.registeredTravelForLife ? 1 : 0,
+       survey.registeredGreenLeaf ? 1 : 0,
+       survey.receivedTourismAward ? 1 : 0,
+       survey.customDocuments ? JSON.stringify(survey.customDocuments) : null,
+       // Step 8
+       survey.agreedToTerms ? 1 : 0,
+       survey.declaredInfoCorrect ? 1 : 0,
+       survey.acknowledgedDotLiability ? 1 : 0]
     );
   },
 

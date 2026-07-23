@@ -4,9 +4,27 @@ import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { getDigiPin } from '../../utils/digipin';
+import crypto from 'crypto';
 // B7 FIX: removed unused StakeholderService import/instance — it was never
 // referenced and risked a circular dependency between the survey and
 // stakeholder services.
+
+// ─── Aadhar AES-256-GCM Encryption ──────────────────────────────────────────
+const AADHAR_KEY = process.env.AADHAR_ENCRYPTION_KEY
+  ? Buffer.from(process.env.AADHAR_ENCRYPTION_KEY, 'hex')
+  : null;
+
+function encryptAadhar(plaintext: string): string {
+  if (!AADHAR_KEY) {
+    throw new Error('AADHAR_ENCRYPTION_KEY environment variable is not set');
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', AADHAR_KEY, iv);
+  let encrypted = cipher.update(plaintext, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const authTag = cipher.getAuthTag().toString('hex');
+  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+}
 
 interface CreateSurveyData {
   stakeholderId: string;
@@ -34,6 +52,57 @@ interface CreateSurveyData {
   longitude?: number;
   gpsAccuracy?: number;
   localId?: string;
+
+  // ─── Step 1 ────────────────────────────────────────────────────────────────
+  subCategories?: string[];
+
+  // ─── Step 2 ────────────────────────────────────────────────────────────────
+  businessName?: string;
+  ownerName?: string;
+  district?: string;
+  city?: string;
+  taluka?: string;
+  village?: string;
+  pinCode?: string;
+  businessAddress?: string;
+  workingAddress?: string;
+  maleEmployees?: number;
+  femaleEmployees?: number;
+  landline?: string;
+  alternateMobile?: string;
+  alternateEmail?: string;
+  aadharNumber?: string;
+  udyamAadharRegNo?: string;
+  fssaiNumber?: string;
+
+  // ─── Step 4 ────────────────────────────────────────────────────────────────
+  description?: string;
+  accommodationFacilities?: any;
+  accommodationPolicies?: string;
+  workingHours?: any;
+  faq?: any;
+
+  // ─── Step 5 ────────────────────────────────────────────────────────────────
+  rooms?: any;
+  couponCodes?: any;
+  saleOff?: number;
+  additionalServiceFees?: any;
+  bookingNote?: string;
+
+  // ─── Step 6 ────────────────────────────────────────────────────────────────
+  socialLinks?: any;
+
+  // ─── Step 7 ────────────────────────────────────────────────────────────────
+  aboutBusiness?: string;
+  registeredTravelForLife?: boolean;
+  registeredGreenLeaf?: boolean;
+  receivedTourismAward?: boolean;
+  customDocuments?: any;
+
+  // ─── Step 8 ────────────────────────────────────────────────────────────────
+  agreedToTerms?: boolean;
+  declaredInfoCorrect?: boolean;
+  acknowledgedDotLiability?: boolean;
 }
 
 export class SurveyService {
@@ -66,6 +135,73 @@ export class SurveyService {
       } catch (e) {}
     }
 
+    // ─── GST Uniqueness Check ────────────────────────────────────────────────
+    // A GST number must be unique per listing (not per user). If the incoming
+    // gstNumber is non-empty, check no OTHER survey already uses it.
+    if (data.gstNumber && data.gstNumber.trim() !== '') {
+      const existingGst = await prisma.survey.findFirst({
+        where: {
+          gstNumber: data.gstNumber,
+          stakeholderId: { not: data.stakeholderId },
+        },
+        select: { id: true },
+      });
+      if (existingGst) {
+        throw new ConflictError('This GST Number is already associated with another listing.');
+      }
+    }
+
+    // ─── Aadhar Encryption ───────────────────────────────────────────────────
+    // Encrypt raw Aadhar number before persistence. If the value is already
+    // encrypted (contains ':' separators from a previous save), skip re-encryption.
+    let encryptedAadhar = data.aadharNumber;
+    if (encryptedAadhar && !encryptedAadhar.includes(':')) {
+      encryptedAadhar = encryptAadhar(encryptedAadhar);
+    }
+
+    // ─── Build new-plan fields payload ───────────────────────────────────────
+    // Strip rooms/accommodation fields when category is not Accommodations
+    const isAccommodation = data.businessCategory === 'Accommodations';
+    const newPlanFields = {
+      subCategories: data.subCategories ?? [],
+      businessName: data.businessName,
+      ownerName: data.ownerName,
+      district: data.district,
+      city: data.city,
+      taluka: data.taluka,
+      village: data.village,
+      pinCode: data.pinCode,
+      businessAddress: data.businessAddress,
+      workingAddress: data.workingAddress,
+      maleEmployees: data.maleEmployees,
+      femaleEmployees: data.femaleEmployees,
+      landline: data.landline,
+      alternateMobile: data.alternateMobile,
+      alternateEmail: data.alternateEmail,
+      aadharNumber: encryptedAadhar,
+      udyamAadharRegNo: data.udyamAadharRegNo,
+      fssaiNumber: data.fssaiNumber,
+      description: data.description,
+      accommodationFacilities: isAccommodation ? data.accommodationFacilities : undefined,
+      accommodationPolicies: isAccommodation ? data.accommodationPolicies : undefined,
+      workingHours: data.workingHours,
+      faq: data.faq,
+      rooms: isAccommodation ? data.rooms : undefined,
+      couponCodes: isAccommodation ? data.couponCodes : undefined,
+      saleOff: isAccommodation ? data.saleOff : undefined,
+      additionalServiceFees: isAccommodation ? data.additionalServiceFees : undefined,
+      bookingNote: isAccommodation ? data.bookingNote : undefined,
+      socialLinks: data.socialLinks,
+      aboutBusiness: data.aboutBusiness,
+      registeredTravelForLife: data.registeredTravelForLife ?? false,
+      registeredGreenLeaf: data.registeredGreenLeaf ?? false,
+      receivedTourismAward: data.receivedTourismAward ?? false,
+      customDocuments: data.customDocuments,
+      agreedToTerms: data.agreedToTerms ?? false,
+      declaredInfoCorrect: data.declaredInfoCorrect ?? false,
+      acknowledgedDotLiability: data.acknowledgedDotLiability ?? false,
+    };
+
     // Upsert survey (one survey per stakeholder per enumerator)
     const survey = await prisma.survey.upsert({
       where: {
@@ -94,6 +230,7 @@ export class SurveyService {
         longitude: data.longitude,
         gpsAccuracy: data.gpsAccuracy,
         digipin,
+        ...newPlanFields,
         isDraft: true,
       },
       create: {
@@ -118,6 +255,7 @@ export class SurveyService {
         longitude: data.longitude,
         gpsAccuracy: data.gpsAccuracy,
         digipin,
+        ...newPlanFields,
         localId: data.localId,
         isDraft: true,
       },
@@ -268,6 +406,37 @@ export class SurveyService {
     // if (!verifiedPhone) {
     //   validationErrors.push('Phone verification must be completed');
     // }
+
+    // ─── New Plan: additional completion validations ─────────────────────────
+    // 7. Display Image required
+    const displayImages = survey.media.filter(m => m.photoCategory === 'DISPLAY_IMAGE');
+    if (displayImages.length < 1) {
+      validationErrors.push('Display Image is required');
+    }
+
+    // 8. Header Slider ≥ 3 images
+    const headerSliders = survey.media.filter(m => m.photoCategory === 'HEADER_SLIDER');
+    if (headerSliders.length < 3) {
+      validationErrors.push(`Header Slider requires at least 3 images (currently: ${headerSliders.length})`);
+    }
+
+    // 9. Description ≥ 50 chars
+    if (!survey.description || survey.description.trim().length < 50) {
+      validationErrors.push('Description must be at least 50 characters');
+    }
+
+    // 10. Accommodations: at least 1 room
+    if (survey.businessCategory === 'Accommodations') {
+      const roomsData = survey.rooms as any[] | null;
+      if (!roomsData || !Array.isArray(roomsData) || roomsData.length < 1) {
+        validationErrors.push('At least 1 room is required for Accommodation listings');
+      }
+    }
+
+    // 11. Terms & Conditions
+    if (!survey.agreedToTerms || !survey.declaredInfoCorrect || !survey.acknowledgedDotLiability) {
+      validationErrors.push('All Terms & Conditions checkboxes must be accepted');
+    }
 
     // === DETERMINE STATUS ===
     // B6 FIX: an incomplete survey is a failed completion, not a success.

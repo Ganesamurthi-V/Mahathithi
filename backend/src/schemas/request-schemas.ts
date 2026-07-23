@@ -84,6 +84,68 @@ export const createSurveySchema = z.object({
   longitude: longitude.optional(),
   gpsAccuracy: z.number().min(0).max(10000).optional(),
   localId: optText(100),
+
+  // ─── Step 1: Category & Type ─────────────────────────────────────────────
+  subCategories: z.array(z.string().max(100)).max(3).optional(),
+
+  // ─── Step 2: Basic Information ───────────────────────────────────────────
+  businessName: optText(500),
+  ownerName: optText(200),
+  district: optText(200),
+  city: optText(200),
+  taluka: optText(200),
+  village: optText(200),
+  pinCode: optText(10),
+  businessAddress: optText(1000),
+  workingAddress: optText(1000),
+  maleEmployees: z.number().int().min(0).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  femaleEmployees: z.number().int().min(0).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  landline: optText(20),
+  alternateMobile: optText(20),
+  alternateEmail: optText(200),
+  aadharNumber: optText(500),  // ciphertext — longer than 12 chars after encryption
+  udyamAadharRegNo: optText(50),
+  fssaiNumber: optText(50),
+
+  // ─── Step 4: Details ─────────────────────────────────────────────────────
+  description: optText(5000),
+  accommodationFacilities: z.array(z.string().max(100)).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  accommodationPolicies: optText(5000),
+  workingHours: z.array(z.object({
+    day: z.string().max(20),
+    type: z.enum(['open_all_day', 'closed', 'hours']),
+    from: z.string().max(10).optional(),
+    to: z.string().max(10).optional(),
+  })).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  faq: z.array(z.object({
+    question: z.string().max(500),
+    answer: z.string().max(2000),
+  })).optional().nullable().transform((v) => (v === null ? undefined : v)),
+
+  // ─── Step 5: Rooms & Pricing (Accommodations only) ───────────────────────
+  rooms: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  couponCodes: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  saleOff: z.number().min(0).max(100).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  additionalServiceFees: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  bookingNote: optText(2000),
+
+  // ─── Step 6: Your Socials ────────────────────────────────────────────────
+  socialLinks: z.array(z.object({
+    platform: z.string().max(50),
+    url: z.string().max(500),
+  })).optional().nullable().transform((v) => (v === null ? undefined : v)),
+
+  // ─── Step 7: Business Documents ──────────────────────────────────────────
+  aboutBusiness: optText(5000),
+  registeredTravelForLife: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
+  registeredGreenLeaf: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
+  receivedTourismAward: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
+  customDocuments: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
+
+  // ─── Step 8: Terms & Conditions ──────────────────────────────────────────
+  agreedToTerms: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
+  declaredInfoCorrect: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
+  acknowledgedDotLiability: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
 }).strict();
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -150,6 +212,68 @@ export const syncSurveyItemSchema = z.object({
   longitude: longitude.optional(),
   gpsAccuracy: z.number().min(0).max(10000).optional(),
   localId: optText(100),
+
+  // ─── Step 1: Category & Type ─────────────────────────────────────────────
+  subCategories: z.array(z.string().max(100)).max(3).optional(),
+
+  // ─── Step 2: Basic Information ───────────────────────────────────────────
+  businessName: optText(500),
+  ownerName: optText(200),
+  district: optText(200),
+  city: optText(200),
+  taluka: optText(200),
+  village: optText(200),
+  pinCode: optText(10),
+  businessAddress: optText(1000),
+  workingAddress: optText(1000),
+  maleEmployees: z.number().int().min(0).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  femaleEmployees: z.number().int().min(0).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  landline: optText(20),
+  alternateMobile: optText(20),
+  alternateEmail: optText(200),
+  aadharNumber: optText(500),
+  udyamAadharRegNo: optText(50),
+  fssaiNumber: optText(50),
+
+  // ─── Step 4: Details ─────────────────────────────────────────────────────
+  description: optText(5000),
+  accommodationFacilities: z.array(z.string().max(100)).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  accommodationPolicies: optText(5000),
+  workingHours: z.array(z.object({
+    day: z.string().max(20),
+    type: z.enum(['open_all_day', 'closed', 'hours']),
+    from: z.string().max(10).optional(),
+    to: z.string().max(10).optional(),
+  })).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  faq: z.array(z.object({
+    question: z.string().max(500),
+    answer: z.string().max(2000),
+  })).optional().nullable().transform((v) => (v === null ? undefined : v)),
+
+  // ─── Step 5: Rooms & Pricing ─────────────────────────────────────────────
+  rooms: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  couponCodes: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  saleOff: z.number().min(0).max(100).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  additionalServiceFees: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
+  bookingNote: optText(2000),
+
+  // ─── Step 6: Your Socials ────────────────────────────────────────────────
+  socialLinks: z.array(z.object({
+    platform: z.string().max(50),
+    url: z.string().max(500),
+  })).optional().nullable().transform((v) => (v === null ? undefined : v)),
+
+  // ─── Step 7: Business Documents ──────────────────────────────────────────
+  aboutBusiness: optText(5000),
+  registeredTravelForLife: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
+  registeredGreenLeaf: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
+  receivedTourismAward: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
+  customDocuments: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
+
+  // ─── Step 8: Terms & Conditions ──────────────────────────────────────────
+  agreedToTerms: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
+  declaredInfoCorrect: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
+  acknowledgedDotLiability: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
 }).passthrough(); // allow extra mobile-specific fields to pass through
 
 export const syncPhoneValidationItemSchema = z.object({

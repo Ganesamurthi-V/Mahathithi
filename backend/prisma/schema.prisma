@@ -218,6 +218,57 @@ model Survey {
   nearestPoliceStation    String?  @map("nearest_police_station")
   nearestHealthcareCenter String?  @map("nearest_healthcare_center")
 
+  // ─── Step 1: Category & Type ───────────────────────────────────────────────
+  subCategories             String[]  @map("sub_categories")
+
+  // ─── Step 2: Basic Information ─────────────────────────────────────────────
+  businessName              String?   @map("business_name")
+  ownerName                 String?   @map("owner_name")
+  district                  String?   @map("district")
+  city                      String?   @map("city")
+  taluka                    String?   @map("taluka")
+  village                   String?   @map("village")
+  pinCode                   String?   @map("pin_code")
+  businessAddress           String?   @map("business_address")
+  workingAddress            String?   @map("working_address")
+  maleEmployees             Int?      @map("male_employees")
+  femaleEmployees           Int?      @map("female_employees")
+  landline                  String?   @map("landline")
+  alternateMobile           String?   @map("alternate_mobile")
+  alternateEmail            String?   @map("alternate_email")
+  aadharNumber              String?   @map("aadhar_number")       // AES-256-GCM encrypted
+  udyamAadharRegNo          String?   @map("udyam_aadhar_reg_no")
+  fssaiNumber               String?   @map("fssai_number")
+
+  // ─── Step 4: Details ───────────────────────────────────────────────────────
+  description               String?   @map("description")
+  accommodationFacilities   Json?     @map("accommodation_facilities")
+  accommodationPolicies     String?   @map("accommodation_policies")
+  workingHours              Json?     @map("working_hours")
+  faq                       Json?     @map("faq")
+
+  // ─── Step 5: Rooms & Pricing (Accommodations only) ─────────────────────────
+  rooms                     Json?     @map("rooms")
+  couponCodes               Json?     @map("coupon_codes")
+  saleOff                   Float?    @map("sale_off")
+  additionalServiceFees     Json?     @map("additional_service_fees")
+  bookingNote               String?   @map("booking_note")
+
+  // ─── Step 6: Your Socials ──────────────────────────────────────────────────
+  socialLinks               Json?     @map("social_links")
+
+  // ─── Step 7: Business Documents ────────────────────────────────────────────
+  aboutBusiness             String?   @map("about_business")
+  registeredTravelForLife   Boolean   @default(false) @map("registered_travel_for_life")
+  registeredGreenLeaf       Boolean   @default(false) @map("registered_green_leaf")
+  receivedTourismAward      Boolean   @default(false) @map("received_tourism_award")
+  customDocuments           Json?     @map("custom_documents")
+
+  // ─── Step 8: Terms & Conditions ────────────────────────────────────────────
+  agreedToTerms             Boolean   @default(false) @map("agreed_to_terms")
+  declaredInfoCorrect       Boolean   @default(false) @map("declared_info_correct")
+  acknowledgedDotLiability  Boolean   @default(false) @map("acknowledged_dot_liability")
+
   // Status & Sync
   isDraft         Boolean  @default(true) @map("is_draft")
   isCompleted     Boolean  @default(false) @map("is_completed")
@@ -256,6 +307,13 @@ enum PhotoCategory {
   INTERIOR
   STAKEHOLDER
   ADDITIONAL
+  DISPLAY_IMAGE
+  HEADER_SLIDER
+  UDYOG_AADHAR_DOC
+  AADHAR_CARD_DOC
+  PAN_CARD_DOC
+  CANCELLED_CHEQUE_DOC
+  CUSTOM_DOC
 }
 
 model Media {
