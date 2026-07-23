@@ -209,4 +209,4 @@ npx tsx scripts/truncate.ts
 
 cd "C:\Gym Management system\gymflow\gymflow-mobile\android"
 .\gradlew clean
-.\gradlew assembleRelease
+.\gradlew assembleRelease ..
