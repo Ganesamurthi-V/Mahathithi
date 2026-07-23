@@ -369,9 +369,20 @@ export class SurveyService {
     // === VALIDATION CHECKS ===
     const validationErrors: string[] = [];
 
-    // 1. Business Name (replaces old contactPerson requirement)
-    if (!survey.businessName || survey.businessName.trim() === '') {
-      validationErrors.push('Business name is required');
+    // Detect if this survey was submitted with the new 8-step form (has businessName)
+    // or the old 3-step form (has contactPerson). Apply validation accordingly.
+    const isNewForm = !!survey.businessName;
+
+    if (isNewForm) {
+      // New form validations
+      if (!survey.businessName || survey.businessName.trim() === '') {
+        validationErrors.push('Business name is required');
+      }
+    } else {
+      // Legacy form: contactPerson was required
+      if (!survey.contactPerson || survey.contactPerson.trim() === '') {
+        validationErrors.push('Contact person name is required');
+      }
     }
 
     // 2. Phone
@@ -380,9 +391,6 @@ export class SurveyService {
     }
 
     // 3. GPS
-    // B3 FIX: use explicit null checks, not truthiness — lat/lon of 0 (the
-    // equator / prime meridian) are valid coordinates and must not be treated
-    // as "missing".
     if (survey.latitude == null || survey.longitude == null) {
       validationErrors.push('GPS coordinates are required');
     }
@@ -399,22 +407,20 @@ export class SurveyService {
       validationErrors.push('At least 1 verification video is required');
     }
 
-    // 6. Description ≥ 50 chars
-    if (!survey.description || survey.description.trim().length < 50) {
-      validationErrors.push('Description must be at least 50 characters');
-    }
-
-    // 7. Accommodations: at least 1 room
-    if (survey.businessCategory === 'Accommodations') {
-      const roomsData = survey.rooms as any[] | null;
-      if (!roomsData || !Array.isArray(roomsData) || roomsData.length < 1) {
-        validationErrors.push('At least 1 room is required for Accommodation listings');
+    // New-form-only validations (skip for legacy surveys)
+    if (isNewForm) {
+      if (!survey.description || survey.description.trim().length < 50) {
+        validationErrors.push('Description must be at least 50 characters');
       }
-    }
-
-    // 8. Terms & Conditions
-    if (!survey.agreedToTerms || !survey.declaredInfoCorrect || !survey.acknowledgedDotLiability) {
-      validationErrors.push('All Terms & Conditions checkboxes must be accepted');
+      if (survey.businessCategory === 'Accommodations') {
+        const roomsData = survey.rooms as any[] | null;
+        if (!roomsData || !Array.isArray(roomsData) || roomsData.length < 1) {
+          validationErrors.push('At least 1 room is required for Accommodation listings');
+        }
+      }
+      if (!survey.agreedToTerms || !survey.declaredInfoCorrect || !survey.acknowledgedDotLiability) {
+        validationErrors.push('All Terms & Conditions checkboxes must be accepted');
+      }
     }
 
     // === DETERMINE STATUS ===
