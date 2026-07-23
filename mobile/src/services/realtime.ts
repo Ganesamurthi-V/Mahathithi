@@ -8,7 +8,7 @@ import { removeStakeholder } from '../store/slices/stakeholderSlice';
 import { refreshSyncCountsThunk } from '../store/slices/syncThunks';
 
 // Reuse the exact same base resolution logic as services/api.ts
-const API_BASE = Config.API_BASE_URL || (__DEV__ ? 'https://mahathithi-test.up.railway.app/api' : '');
+const API_BASE = Config.API_BASE_URL || (__DEV__ ? 'https://mahathithi-production.up.railway.app/api' : '');
 // Socket.IO connects to the server root, not the /api prefix — strip it.
 const SOCKET_BASE = API_BASE.replace(/\/api\/?$/, '');
 

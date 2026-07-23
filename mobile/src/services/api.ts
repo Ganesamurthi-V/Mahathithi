@@ -25,7 +25,7 @@ import Config from 'react-native-config';
 // empty baseURL) so importing this module never throws; callers that
 // actually try to make a request while misconfigured will get a normal
 // rejected promise instead of a crash, which is recoverable by the UI.
-const API_BASE = Config.API_BASE_URL || (__DEV__ ? 'https://mahathithi-test.up.railway.app/api' : '');
+const API_BASE = Config.API_BASE_URL || (__DEV__ ? 'https://mahathithi-production.up.railway.app/api' : '');
 
 export const isApiConfigured = !!API_BASE;
 
