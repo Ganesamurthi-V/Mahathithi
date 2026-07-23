@@ -369,9 +369,9 @@ export class SurveyService {
     // === VALIDATION CHECKS ===
     const validationErrors: string[] = [];
 
-    // 1. Contact Person
-    if (!survey.contactPerson || survey.contactPerson.trim() === '') {
-      validationErrors.push('Contact person name is required');
+    // 1. Business Name (replaces old contactPerson requirement)
+    if (!survey.businessName || survey.businessName.trim() === '') {
+      validationErrors.push('Business name is required');
     }
 
     // 2. Phone
@@ -387,7 +387,7 @@ export class SurveyService {
       validationErrors.push('GPS coordinates are required');
     }
 
-    // 4. Minimum 1 photo (relaxed for testing)
+    // 4. Minimum 1 photo
     const photos = survey.media.filter(m => m.type === 'PHOTO');
     if (photos.length < 1) {
       validationErrors.push(`Minimum 1 photo required (currently: ${photos.length})`);
@@ -399,33 +399,12 @@ export class SurveyService {
       validationErrors.push('At least 1 verification video is required');
     }
 
-    // 6. Phone verification (bypassed for now since mobile UI isn't built)
-    // const verifiedPhone = survey.stakeholder.phoneValidations.find(
-    //   pv => pv.status === 'VERIFIED'
-    // );
-    // if (!verifiedPhone) {
-    //   validationErrors.push('Phone verification must be completed');
-    // }
-
-    // ─── New Plan: additional completion validations ─────────────────────────
-    // 7. Display Image required
-    const displayImages = survey.media.filter(m => m.photoCategory === 'DISPLAY_IMAGE');
-    if (displayImages.length < 1) {
-      validationErrors.push('Display Image is required');
-    }
-
-    // 8. Header Slider ≥ 3 images
-    const headerSliders = survey.media.filter(m => m.photoCategory === 'HEADER_SLIDER');
-    if (headerSliders.length < 3) {
-      validationErrors.push(`Header Slider requires at least 3 images (currently: ${headerSliders.length})`);
-    }
-
-    // 9. Description ≥ 50 chars
+    // 6. Description ≥ 50 chars
     if (!survey.description || survey.description.trim().length < 50) {
       validationErrors.push('Description must be at least 50 characters');
     }
 
-    // 10. Accommodations: at least 1 room
+    // 7. Accommodations: at least 1 room
     if (survey.businessCategory === 'Accommodations') {
       const roomsData = survey.rooms as any[] | null;
       if (!roomsData || !Array.isArray(roomsData) || roomsData.length < 1) {
@@ -433,7 +412,7 @@ export class SurveyService {
       }
     }
 
-    // 11. Terms & Conditions
+    // 8. Terms & Conditions
     if (!survey.agreedToTerms || !survey.declaredInfoCorrect || !survey.acknowledgedDotLiability) {
       validationErrors.push('All Terms & Conditions checkboxes must be accepted');
     }

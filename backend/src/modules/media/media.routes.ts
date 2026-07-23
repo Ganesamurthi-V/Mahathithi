@@ -30,6 +30,15 @@ function detectMimeFromBytes(buffer: Buffer): string | null {
     buffer[4] === 0x0d && buffer[5] === 0x0a && buffer[6] === 0x1a && buffer[7] === 0x0a
   ) return 'image/png';
 
+  // PDF: 25 50 44 46 (%PDF)
+  if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return 'application/pdf';
+
+  // MS Office / DOCX (ZIP-based): 50 4B 03 04 (PK..)
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+  // Legacy MS Word (.doc): D0 CF 11 E0
+  if (buffer[0] === 0xd0 && buffer[1] === 0xcf && buffer[2] === 0x11 && buffer[3] === 0xe0) return 'application/msword';
+
   // ISO Base Media File Format (ftyp box at byte 4-7): covers MP4, MOV, HEIC, HEIF, 3GPP
   if (buffer[4] === 0x66 && buffer[5] === 0x74 && buffer[6] === 0x79 && buffer[7] === 0x70) {
     // Read the 4-byte brand at offset 8
@@ -48,6 +57,10 @@ function detectMimeFromBytes(buffer: Buffer): string | null {
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg', 'image/png', 'image/heic', 'image/heif',
   'video/mp4', 'video/3gpp', 'video/quicktime',
+  // Document types for business document uploads (Step 7)
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 
 // H4 FIX: store file in memory temporarily so we can check magic bytes in fileFilter

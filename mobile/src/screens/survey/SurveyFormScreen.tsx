@@ -7,14 +7,13 @@ import { useForm, Controller } from 'react-hook-form';
 import Geolocation from 'react-native-geolocation-service';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
-import { surveyService, mediaService } from '../../services/api';
-import { surveyDao, syncQueueDao, mediaDao, facilityDao, stakeholderDao } from '../../database';
+import { surveyDao, mediaDao, facilityDao } from '../../database';
 import { refreshSyncCountsThunk } from '../../store/slices/syncThunks';
-import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
-import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import { launchCamera } from 'react-native-image-picker';
+import DocumentPicker from 'react-native-document-picker';
 import { Video as VideoCompressor } from 'react-native-compressor';
 import Video from 'react-native-video';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -253,7 +252,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   // drain battery indefinitely after the user leaves this screen.
   const gpsWatchId = useRef<number | null>(null);
   const [saving, setSaving] = useState(false);
-  const [uploadText, setUploadText] = useState('');
   const [completionPercent, setCompletionPercent] = useState(0);
   const [currentStep, setCurrentStep] = useState(1);
 
@@ -824,7 +822,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       return;
     }
     setSaving(true);
-    setUploadText('Saving survey data...');
     const surveyId = existingSurvey?.id || `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const surveyPayload = {
       id: surveyId,
@@ -849,122 +846,39 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       agreedToTerms,
       declaredInfoCorrect,
       acknowledgedDotLiability,
+      // Sync metadata
+      localId: surveyId,
+      isDraft: true,
+      isCompleted: false,
+      isSynced: false,
     };
 
     try {
-      // Step 1: ALWAYS save to local SQLite first (offline-first)
+      // Save to local SQLite first (offline-first) — this is instant
       await surveyDao.save(surveyPayload);
       await saveMediaToDb(surveyId);
       console.log('💾 [Survey] Saved locally to SQLite.');
-      
-      // Update local stakeholder status so UI reflects completion immediately
-      await stakeholderDao.update(stakeholderId, { status: 'CLOSED' });
 
-      // Step 2: Try to sync to server if online
-      const netState = await NetInfo.fetch();
-      if (netState.isConnected) {
-        try {
-          setUploadText('Uploading to server...');
-          // SYNC FIX: createSurveySchema on the backend is .strict() — it
-          // rejects any key it doesn't explicitly define. `surveyPayload`
-          // includes `id` (the mobile app's local-only row id, not a real
-          // server survey id) and `enumeratorId` (derived server-side from
-          // the auth token, never client-supplied) because that same object
-          // also doubles as the shape written to local SQLite a few lines
-          // above. Sending it straight through made every "online" save
-          // 400 unconditionally, even on a perfect connection — the offline
-          // sync-queue path didn't hit this because its item schema uses
-          // .passthrough() instead of .strict(). Build a clean payload with
-          // only the fields the backend schema actually accepts.
-          const { id: _localId, enumeratorId: _enumeratorId, ...onlineSurveyPayload } = surveyPayload;
-          // NEW-3 FIX: PII payload — debug builds only, never in release logs.
-          if (__DEV__) {
-            console.log('📤 [Survey Online] Uploading text payload:', JSON.stringify(onlineSurveyPayload, null, 2));
-          }
-          const response = await surveyService.createOrUpdate(onlineSurveyPayload);
-          const realSurveyId = response.data?.data?.id || surveyId;
+      // DON'T mark stakeholder as CLOSED here — that only happens after the
+      // server successfully processes complete(). The background sync pipeline
+      // (syncThunks → Step C → complete() → removeLockedStakeholders) handles
+      // this. Marking it CLOSED prematurely causes mobile/server status mismatch
+      // when uploads fail midway.
 
-          // Upload media sequentially
-          let uploadCount = 0;
-          const totalMedia = Object.keys(photos).length + (video ? 1 : 0);
-
-          for (const key in photos) {
-            uploadCount++;
-            setUploadText(`Uploading Photo ${uploadCount}/${totalMedia}...`);
-            const p = photos[key];
-            const formData = new FormData();
-            formData.append('surveyId', realSurveyId);
-            formData.append('type', 'PHOTO');
-            formData.append('photoCategory', key);
-            if (p.latitude) formData.append('latitude', String(p.latitude));
-            if (p.longitude) formData.append('longitude', String(p.longitude));
-            if (p.gpsAccuracy) formData.append('gpsAccuracy', String(p.gpsAccuracy));
-            formData.append('file', {
-              uri: p.uri,
-              name: p.fileName,
-              type: p.type,
-            } as any);
-            if (__DEV__) { console.log(`📤 [Survey Online] Uploading photo ${key}...`); }
-            await mediaService.upload(formData);
-          }
-
-          if (video) {
-            uploadCount++;
-            setUploadText(`Uploading Video ${uploadCount}/${totalMedia}...`);
-            const formData = new FormData();
-            formData.append('surveyId', realSurveyId);
-            formData.append('type', 'VIDEO');
-            if (video.latitude) formData.append('latitude', String(video.latitude));
-            if (video.longitude) formData.append('longitude', String(video.longitude));
-            if (video.gpsAccuracy) formData.append('gpsAccuracy', String(video.gpsAccuracy));
-            if (video.duration) formData.append('duration', String(video.duration));
-            formData.append('file', {
-              uri: video.uri,
-              name: video.fileName,
-              type: video.type || 'video/mp4',
-            } as any);
-            if (__DEV__) { console.log(`📤 [Survey Online] Uploading video...`); }
-            await mediaService.upload(formData);
-          }
-
-          setUploadText('Finalizing survey...');
-          if (__DEV__) { console.log(`🏁 [Survey Online] Calling complete() on server for survey ${realSurveyId}`); }
-          await surveyService.complete(realSurveyId);
-          await surveyDao.markSynced(surveyId);
-          // BUG 4 FIX: mark all media rows as synced so auto-sync doesn't re-attempt them
-          const allSavedMedia = await mediaDao.getBySurveyLocal(surveyId);
-          for (const m of allSavedMedia) {
-            await mediaDao.markSynced(m.id);
-          }
-          if (__DEV__) { console.log('✅ [Survey] Synced to server successfully.'); }
-
-          // Remove from local database immediately after successful sync
-          await stakeholderDao.removeLockedStakeholders([stakeholderId]);
-          if (__DEV__) { console.log(`🗑️ Removed completed survey and stakeholder ${stakeholderId} from local DB`); }
-
-          Alert.alert('Saved', 'Survey and media uploaded successfully');
-        } catch (uploadError) {
-          // Network upload failed — data is safe locally, queue for background sync
-          console.warn('⚠️ [Survey] Server upload failed, queued for background sync.', uploadError);
-          await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
-          dispatch(refreshSyncCountsThunk() as any);
-          Alert.alert('Saved Locally', 'Survey saved to your device. It will sync automatically when internet is available.');
-        }
-      } else {
-        // Offline — queue for background sync
-        await syncQueueDao.add('survey', stakeholderId, 'CREATE', surveyPayload);
-        dispatch(refreshSyncCountsThunk() as any);
-        Alert.alert('Saved Offline', 'Survey and media saved locally. They will sync when you are back online.');
-      }
+      // Trigger background sync — don't wait for it, navigate immediately
+      dispatch(refreshSyncCountsThunk() as any);
+      // The existing runAutoSync pipeline (triggered by AppNavigator's NetInfo
+      // listener or the Sync Center) will pick up the unsynced survey + media
+      // and upload everything in the background. No need to block the UI.
 
       isSubmitSuccessRef.current = true;
       navigation.navigate('Main', { screen: 'Stakeholders' });
+      Alert.alert('Survey Saved', 'Your survey has been saved. It will upload automatically in the background.');
     } catch (e: any) {
       console.error('❌ [Survey] Failed to save locally:', e);
       Alert.alert('Error', 'Failed to save survey. Please try again.');
     }
     setSaving(false);
-    setUploadText('');
   };
 
   const nearestFacilityFields = [
@@ -991,25 +905,36 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     if (idx > 0) setCurrentStep(visibleSteps[idx - 1]);
   };
 
-  // Document picker (reuses image picker with mixed types)
+  // Document picker — supports PDF, Word, images, and other document types
   const pickDocument = async (category: string) => {
-    const result = await launchImageLibrary({ mediaType: 'mixed', quality: 0.8 });
-    if (result.assets && result.assets[0]) {
-      const asset = result.assets[0];
+    try {
+      const result = await DocumentPicker.pickSingle({
+        type: [
+          DocumentPicker.types.pdf,
+          DocumentPicker.types.images,
+          DocumentPicker.types.doc,
+          DocumentPicker.types.docx,
+        ],
+        copyTo: 'cachesDirectory',
+      });
       const location = gps || { latitude: 0, longitude: 0, accuracy: 0 };
       setPhotos(prev => ({
         ...prev,
         [category]: {
-          uri: asset.uri,
-          fileName: asset.fileName,
-          fileSize: asset.fileSize,
-          type: asset.type,
+          uri: result.fileCopyUri || result.uri,
+          fileName: result.name,
+          fileSize: result.size,
+          type: result.type,
           latitude: location.latitude,
           longitude: location.longitude,
           gpsAccuracy: location.accuracy,
           capturedAt: new Date().toISOString(),
         },
       }));
+    } catch (err: any) {
+      if (!DocumentPicker.isCancel(err)) {
+        Alert.alert('Error', 'Failed to pick document. Please try again.');
+      }
     }
   };
 
@@ -1343,7 +1268,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             </View>
             <Animated.View style={{ transform: [{ scale: buttonScaleAnim }], marginTop: spacing.xxl }}>
               <TouchableOpacity style={[styles.submitBtn, (saving || !agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability) && styles.submitBtnDisabled]} onPress={handleSubmit(onSubmit)} disabled={saving || !agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability}>
-                {saving ? (<View style={{ flexDirection: 'row', alignItems: 'center' }}><ActivityIndicator color="#FFF" />{uploadText ? <Text style={[styles.submitText, { marginLeft: spacing.md }]}>{uploadText}</Text> : null}</View>) : (<><Icon name="content-save-outline" size={20} color="#FFF" /><Text style={styles.submitText}>Save Survey</Text></>)}
+                {saving ? (<View style={{ flexDirection: 'row', alignItems: 'center' }}><ActivityIndicator color="#FFF" /><Text style={[styles.submitText, { marginLeft: spacing.md }]}>Saving...</Text></View>) : (<><Icon name="content-save-outline" size={20} color="#FFF" /><Text style={styles.submitText}>Save Survey</Text></>)}
               </TouchableOpacity>
             </Animated.View>
           </View>
