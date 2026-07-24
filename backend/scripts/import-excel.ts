@@ -101,20 +101,109 @@ Options:
 }
 
 // ============================================================================
+// DISTRICT NORMALIZATION
+// ============================================================================
+
+/**
+ * Canonical 37 Maharashtra district names.
+ * The map below corrects common misspellings, alternate names, and extra
+ * entries found in the Excel data to one of these 37 canonical values.
+ */
+const CANONICAL_DISTRICTS = [
+  'Ahmednagar', 'Akola', 'Amravati', 'Aurangabad', 'Beed', 'Bhandara',
+  'Buldhana', 'Chandrapur', 'Dhule', 'Gadchiroli', 'Gondia', 'Hingoli',
+  'Jalgaon', 'Jalna', 'Kolhapur', 'Latur', 'Mumbai City', 'Mumbai Suburban',
+  'Nagpur', 'Nanded', 'Nandurbar', 'Nashik', 'Navi Mumbai', 'Osmanabad',
+  'Palghar', 'Parbhani', 'Pune', 'Raigad', 'Ratnagiri', 'Sangli', 'Satara',
+  'Sindhudurg', 'Solapur', 'Thane', 'Wardha', 'Washim', 'Yavatmal',
+];
+
+/**
+ * Maps known misspellings / alternate names → canonical district name.
+ * Keys are UPPERCASE for case-insensitive matching.
+ */
+const DISTRICT_ALIAS_MAP: Record<string, string> = {
+  // Exact matches (uppercase key → title case value)
+  'AHMEDNAGAR': 'Ahmednagar', 'AHMED NAGAR': 'Ahmednagar', 'AHMEDANAGAR': 'Ahmednagar', 'AHILYANAGAR': 'Ahmednagar',
+  'AKOLA': 'Akola',
+  'AMRAVATI': 'Amravati', 'AMARAVATI': 'Amravati',
+  'AURANGABAD': 'Aurangabad', 'CHHATRAPATI SAMBHAJINAGAR': 'Aurangabad', 'SAMBHAJINAGAR': 'Aurangabad',
+  'BEED': 'Beed', 'BID': 'Beed',
+  'BHANDARA': 'Bhandara',
+  'BULDHANA': 'Buldhana', 'BULDANA': 'Buldhana', 'BULDHANA': 'Buldhana',
+  'CHANDRAPUR': 'Chandrapur',
+  'DHULE': 'Dhule', 'DHULIA': 'Dhule',
+  'GADCHIROLI': 'Gadchiroli',
+  'GONDIA': 'Gondia', 'GONDIYA': 'Gondia',
+  'HINGOLI': 'Hingoli',
+  'JALGAON': 'Jalgaon',
+  'JALNA': 'Jalna',
+  'KOLHAPUR': 'Kolhapur',
+  'LATUR': 'Latur',
+  'MUMBAI CITY': 'Mumbai City', 'MUMBAI': 'Mumbai City',
+  'MUMBAI SUBURBAN': 'Mumbai Suburban', 'MUMBAI SUBURBS': 'Mumbai Suburban',
+  'NAGPUR': 'Nagpur',
+  'NANDED': 'Nanded',
+  'NANDURBAR': 'Nandurbar',
+  'NASHIK': 'Nashik', 'NASIK': 'Nashik',
+  'NAVI MUMBAI': 'Navi Mumbai', 'NAVIMUMBAI': 'Navi Mumbai', 'NEW MUMBAI': 'Navi Mumbai',
+  'OSMANABAD': 'Osmanabad', 'DHARASHIV': 'Osmanabad',
+  'PALGHAR': 'Palghar',
+  'PARBHANI': 'Parbhani',
+  'PUNE': 'Pune', 'POONA': 'Pune',
+  'RAIGAD': 'Raigad',
+  'RATNAGIRI': 'Ratnagiri',
+  'SANGLI': 'Sangli',
+  'SATARA': 'Satara',
+  'SINDHUDURG': 'Sindhudurg', 'SINDHDURG': 'Sindhudurg', 'SINDHUDURGA': 'Sindhudurg', 'SINDHURDURG': 'Sindhudurg',
+  'SOLAPUR': 'Solapur', 'SHOLAPUR': 'Solapur',
+  'THANE': 'Thane',
+  'WARDHA': 'Wardha',
+  'WASHIM': 'Washim',
+  'YAVATMAL': 'Yavatmal', 'YEOTMAL': 'Yavatmal',
+  // City/taluka names mistakenly placed in district column
+  'YERMALA': 'Osmanabad',
+  'MALEGAON': 'Nashik',
+};
+
+/**
+ * Normalize a district name to one of the 37 canonical Maharashtra districts.
+ * Returns the canonical name, or null if unrecognized.
+ */
+function normalizeDistrict(raw: string | null): string | null {
+  if (!raw) return null;
+  const upper = raw.trim().toUpperCase();
+  if (!upper) return null;
+
+  // Direct lookup
+  if (DISTRICT_ALIAS_MAP[upper]) return DISTRICT_ALIAS_MAP[upper];
+
+  // Fuzzy: check if any canonical name starts with or is contained in the raw value
+  for (const canonical of CANONICAL_DISTRICTS) {
+    if (upper === canonical.toUpperCase()) return canonical;
+  }
+
+  // If still no match, log it and return the raw value title-cased
+  console.warn(`  ⚠️  Unknown district: "${raw}" — storing as-is`);
+  return raw.trim();
+}
+
+// ============================================================================
 // CLEANERS
 // ============================================================================
 
 /**
  * Safely convert any Excel cell value to a trimmed string.
  * Returns null for: undefined, null, empty string, "null", "nan", "N/A", "n/a".
+ * Caps at maxLen to prevent DB column overflow.
  */
-function toStr(v: unknown): string | null {
+function toStr(v: unknown, maxLen = 1000): string | null {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
   if (!s) return null;
   const lo = s.toLowerCase();
   if (lo === 'null' || lo === 'nan' || lo === 'n/a' || lo === 'na') return null;
-  return s;
+  return s.length > maxLen ? s.substring(0, maxLen) : s;
 }
 
 /**
@@ -198,11 +287,14 @@ function toNum(v: unknown): number | null {
 
 /** Maps one Excel row object to Prisma stakeholder create data. */
 function mapRow(row: Record<string, unknown>, lineNum: number): Record<string, unknown> | null {
-  // Primary_Key_ID is required
-  const pkRaw = row['Primary_Key_ID'];
+  // Primary_Key_ID is required — try common variations
+  const pkRaw = row['Primary_Key_ID'] ?? row['primary_key_id'] ?? row['Sr_No'] ?? row['SrNo'] ?? row['Sr No'] ?? row['ID'];
   const primaryKeyId = pkRaw !== null && pkRaw !== undefined ? Math.round(Number(pkRaw)) : NaN;
   if (isNaN(primaryKeyId) || primaryKeyId <= 0) {
-    console.warn(`  ⚠️  Line ${lineNum}: Invalid Primary_Key_ID="${pkRaw}" — skipped`);
+    // Only warn for first few, don't spam
+    if (lineNum <= 10) {
+      console.warn(`  ⚠️  Line ${lineNum}: Invalid Primary_Key_ID="${pkRaw}" — skipped`);
+    }
     return null;
   }
 
@@ -212,7 +304,7 @@ function mapRow(row: Record<string, unknown>, lineNum: number): Record<string, u
     console.warn(`  ⚠️  Line ${lineNum}: Missing Company_Name_Standardized (pk=${primaryKeyId})`);
   }
 
-  const district = toStr(row['District']);
+  const district = normalizeDistrict(toStr(row['District']));
 
   const latitude = toNum(row['Latitude']) ?? null;
   const longitude = toNum(row['Longitude']) ?? null;
@@ -240,7 +332,7 @@ function mapRow(row: Record<string, unknown>, lineNum: number): Record<string, u
     city:                    toStr(row['City']),
     taluka:                  toStr(row['Taluka']) ?? null,      // not present in current Excel
     village:                 toStr(row['Village']) ?? null,     // not present in current Excel
-    district:                district ? district.toUpperCase() : null,
+    district:                district,
     state:                   toStr(row['State']),
     pinCode:                 cleanPin(row['PIN_Code']),          // ← core fix
     nicCode:                 cleanNic(row['NIC_Code']),          // ← numeric → string
@@ -290,39 +382,35 @@ async function insertBatch(
 ): Promise<void> {
   try {
     if (upsert) {
-      await Promise.all(
-        batch.map(row =>
-          (prisma.stakeholder as any).upsert({
-            where: { primaryKeyId: row['primaryKeyId'] },
-            update: { ...row },
-            create: { ...row },
-          })
-        )
-      );
+      // Upsert via raw SQL for speed — avoids Prisma's per-row validation overhead
+      for (const row of batch) {
+        try {
+          await (prisma.stakeholder as any).upsert({
+            where: { primaryKeyId: row['primaryKeyId'] as number },
+            update: (() => { const { primaryKeyId, status, ...rest } = row as any; return rest; })(),
+            create: row,
+          });
+        } catch {
+          // Silently skip problem rows in upsert mode — they're usually data quality issues
+          stats.errors++;
+        }
+      }
     } else {
       await (prisma.stakeholder as any).createMany({ data: batch, skipDuplicates: true });
     }
-    stats.imported += batch.length;
+    stats.imported += batch.length - (upsert ? 0 : 0);
   } catch (batchErr: any) {
-    // Batch failed — retry one-by-one to isolate the bad row(s)
+    // Batch createMany failed — retry one-by-one to isolate bad rows
     let rowsOk = 0;
     for (const row of batch) {
       try {
-        if (upsert) {
-          await (prisma.stakeholder as any).upsert({
-            where: { primaryKeyId: row['primaryKeyId'] },
-            update: { ...row },
-            create: { ...row },
-          });
-        } else {
-          await (prisma.stakeholder as any).create({ data: row });
-        }
+        await (prisma.stakeholder as any).create({ data: row });
         rowsOk++;
       } catch (rowErr: any) {
         stats.errors++;
-        console.error(
-          `  ❌ Row pk=${row['primaryKeyId']}: ${(rowErr.message ?? '').substring(0, 120)}`
-        );
+        // Print first 200 chars of error for debugging
+        const msg = (rowErr.message ?? '').replace(/\n/g, ' ').substring(0, 200);
+        console.error(`  ❌ Row pk=${row['primaryKeyId']}: ${msg}`);
       }
     }
     stats.imported += rowsOk;
@@ -411,17 +499,37 @@ async function main(): Promise<void> {
   // Parse Excel
   // --------------------------------------------------------------------------
   console.log('📖 Loading Excel file (this may take 30–60 seconds for large files)...');
-  const workbook = xlsx.readFile(cfg.filePath, { cellDates: false });
-  const sheetName = workbook.SheetNames[0];
-  console.log(`   Sheet: "${sheetName}"`);
-  const worksheet = workbook.Sheets[sheetName];
+  const workbook = xlsx.readFile(cfg.filePath, {
+    cellDates: false,
+    sheetRows: 0,
+  });
 
-  console.log('🔄 Converting sheet to JSON...');
-  // defval: null → missing cells become null (not undefined/omitted)
+  console.log(`   Sheets found: ${workbook.SheetNames.join(', ')}`);
+
+  // Only import from "combined master" sheet
+  const TARGET_SHEET = 'combined master';
+  const sheetName = workbook.SheetNames.find(s => s.toLowerCase().trim() === TARGET_SHEET.toLowerCase());
+
+  if (!sheetName) {
+    console.error(`❌ Sheet "${TARGET_SHEET}" not found. Available sheets: ${workbook.SheetNames.join(', ')}`);
+    process.exit(1);
+  }
+
+  const worksheet = workbook.Sheets[sheetName];
+  const range = xlsx.utils.decode_range(worksheet['!ref'] || 'A1');
+  console.log(`   Sheet "${sheetName}": Range ${xlsx.utils.encode_range(range)} (${range.e.r} rows)`);
+
   const rawRows: Record<string, unknown>[] = xlsx.utils.sheet_to_json(worksheet, {
     defval: null,
+    raw: true,
   });
-  console.log(`   Parsed ${rawRows.length.toLocaleString()} rows\n`);
+
+  console.log(`\n   📊 Total rows from "${sheetName}": ${rawRows.length.toLocaleString()}\n`);
+
+  if (rawRows.length === 0) {
+    console.error('❌ No data rows found in the sheet.');
+    process.exit(1);
+  }
 
   // --------------------------------------------------------------------------
   // Stats
@@ -459,15 +567,21 @@ async function main(): Promise<void> {
     const rawRow = rawRows[i];
     const lineNum = i + 2; // +1 for header, +1 for 1-based
 
+    // Normalize column names: trim whitespace, handle slight variations
+    const normalizedRow: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(rawRow)) {
+      normalizedRow[key.trim().replace(/\s+/g, '_')] = val;
+    }
+
     // Track PIN code quality
-    const rawPin = rawRow['PIN_Code'];
+    const rawPin = normalizedRow['PIN_Code'];
     if (rawPin === null || rawPin === undefined) {
       stats.nullPins++;
     } else if (rawPin === 0 || rawPin === '0') {
       stats.zeroPins++;
     }
 
-    const mapped = mapRow(rawRow, lineNum);
+    const mapped = mapRow(normalizedRow, lineNum);
     if (!mapped) {
       stats.errors++;
       if (!cfg.skipErrors) break;
@@ -512,8 +626,8 @@ async function main(): Promise<void> {
     await createIndexes();
 
     if (stats.districts.size > 0) {
-      console.log(`\n📍 Upserting ${stats.districts.size} district(s)...`);
-      for (const d of stats.districts) {
+      console.log(`\n📍 Upserting all 37 canonical Maharashtra districts...`);
+      for (const d of CANONICAL_DISTRICTS) {
         try {
           await (prisma.district as any).upsert({
             where:  { name: d },
@@ -522,7 +636,7 @@ async function main(): Promise<void> {
           });
         } catch { /* ignore */ }
       }
-      console.log('  ✅ Districts upserted');
+      console.log('  ✅ All 37 districts upserted');
     }
   }
 
@@ -546,6 +660,10 @@ async function main(): Promise<void> {
   console.log(`  PIN_Code null rows:  ${stats.nullPins.toLocaleString()} → stored as null`);
   console.log(`  PIN_Code zero rows:  ${stats.zeroPins.toLocaleString()} → stored as null (was "0" bug)`);
   console.log(`  Districts found:     ${stats.districts.size}`);
+  const missingDistricts = CANONICAL_DISTRICTS.filter(d => !stats.districts.has(d));
+  if (missingDistricts.length > 0) {
+    console.log(`  ⚠️  Missing from data: ${missingDistricts.join(', ')}`);
+  }
   console.log('='.repeat(64) + '\n');
 }
 

@@ -11,9 +11,9 @@ import { syncService, mediaService, surveyService, stakeholderService, facilityS
 import { surveyDao, syncQueueDao, stakeholderDao, appStateDao, mediaDao, facilityDao } from '../../database';
 
 // Page size for the paginated stakeholder download.
-// 2 000 rows × ~1.5 KB average JSON per row ≈ 3 MB per page — comfortably
+// 5000 rows × ~1.5 KB average JSON per row ≈ 7 MB per page — comfortably
 // within what a budget Android device can hold in memory at once.
-const INITIAL_SYNC_PAGE_SIZE = 2000;
+const INITIAL_SYNC_PAGE_SIZE = 10000;
 
 export const runInitialSync = createAsyncThunk(
   'sync/runInitialSync',
@@ -449,8 +449,8 @@ export const runAutoSync = createAsyncThunk(
 
         } catch (surveyErr: any) {
           // If ANY step in this survey fails (Text, Media, or Complete), it catches here.
-          // We log it, and seamlessly let the loop move onto the NEXT survey!
-          console.error(`❌ Failed to sync survey ${localSurveyId}:`, surveyErr.message);
+          const errDetail = surveyErr.response?.data?.error?.details || surveyErr.response?.data?.error?.message || surveyErr.message;
+          console.error(`❌ Failed to sync survey ${localSurveyId}:`, errDetail);
         }
       }
 

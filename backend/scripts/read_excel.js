@@ -1,7 +1,7 @@
 const xlsx = require('xlsx');
 const path = require('path');
 
-const filePath = 'C:\\test file\\Manasa project\\Final_Mahaathithi.xlsx';
+const filePath = 'C:\\test file\\Manasa project\\Final_Mahaathithi (1).xlsx';
 const workbook = xlsx.readFile(filePath);
 
 console.log('Sheet Names:', workbook.SheetNames);
