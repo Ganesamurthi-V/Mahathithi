@@ -254,7 +254,7 @@ export const mediaService = {
   upload: (formData: FormData) =>
     api.post('/media/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120000, // 2 min for large uploads
+      timeout: 180000, // 3 min max per file — prevents infinite hang on network drop
     }),
   getBySurvey: (surveyId: string) =>
     api.get(`/media/survey/${surveyId}`),

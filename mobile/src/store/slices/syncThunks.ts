@@ -409,6 +409,10 @@ export const runAutoSync = createAsyncThunk(
           const surveyMedia = unsyncedMedia.filter((m: any) => m.survey_id === localSurveyId);
           const MEDIA_UPLOAD_CONCURRENCY = 3;
           const uploadOne = async (media: any) => {
+            // Fail fast if network dropped during sync
+            const net = await NetInfo.fetch();
+            if (!net.isConnected) throw new Error('Network lost during upload');
+
             const formData = new FormData();
             formData.append('surveyId', serverSurveyId);
             formData.append('type', media.type);
