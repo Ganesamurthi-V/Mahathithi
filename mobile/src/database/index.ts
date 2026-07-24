@@ -12,7 +12,38 @@ export async function initDatabase(): Promise<SQLite.SQLiteDatabase> {
     location: 'default',
   });
 
+  // PERF: SQLite pragmas tuned for a large (295K-row) read-heavy dataset.
+  // - WAL: concurrent reads while a write (sync) is in progress, far fewer fsyncs
+  // - synchronous NORMAL: safe with WAL, avoids fsync on every transaction
+  // - cache_size negative = KB; -8000 = ~8MB page cache keeps hot index pages in RAM
+  // - temp_store MEMORY: sorts/temp b-trees (ORDER BY) built in RAM not on disk
+  // - mmap_size: memory-map up to 128MB of the DB file for zero-copy reads
+  try {
+    await db.executeSql('PRAGMA journal_mode = WAL;');
+    await db.executeSql('PRAGMA synchronous = NORMAL;');
+    await db.executeSql('PRAGMA cache_size = -8000;');
+    await db.executeSql('PRAGMA temp_store = MEMORY;');
+    await db.executeSql('PRAGMA mmap_size = 134217728;');
+  } catch (e) { /* pragmas are best-effort */ }
+
   await runMigrations(db);
+
+  // PERF: refresh the query planner's statistics so it picks the right index
+  // for the ORDER BY priority_weight + filter combos on 295K rows. Run only
+  // once after the new perf indexes are created (not every launch) — ANALYZE
+  // over 295K rows on every cold start would itself add startup latency.
+  try {
+    const [res] = await db.executeSql(
+      "SELECT value FROM app_state WHERE key = 'analyze_done_v2'"
+    );
+    if (res.rows.length === 0) {
+      await db.executeSql('ANALYZE;');
+      await db.executeSql(
+        "INSERT OR REPLACE INTO app_state (key, value) VALUES ('analyze_done_v2', 'true')"
+      );
+    }
+  } catch (e) { /* best-effort */ }
+
   return db;
 }
 
@@ -260,6 +291,20 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_facilities_type ON facilities(type);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_facilities_name ON facilities(name COLLATE NOCASE);`);
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_facilities_district ON facilities(district COLLATE NOCASE);`);
+
+  // PERF (critical): the default list + every search ORDERs BY
+  // priority_weight DESC, company_name_standardized ASC. With no matching
+  // index SQLite scanned all 295K rows and did a filesort on every open —
+  // the dominant cause of the 4-5s load. This composite index lets SQLite
+  // walk rows in already-sorted order and stop after LIMIT (20), turning a
+  // full scan+sort into an index range read.
+  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_sort ON stakeholders(priority_weight DESC, company_name_standardized ASC);`);
+  // PERF: the most common filtered browse is by district, still sorted by
+  // priority. This composite serves "district = ? ORDER BY priority_weight".
+  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_district_sort ON stakeholders(district COLLATE NOCASE, priority_weight DESC);`);
+  // PERF: cascade dropdown getUniquePins(city) filters by city alone; the
+  // existing composite leads with district so a city-only predicate scanned.
+  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_city_only ON stakeholders(city COLLATE NOCASE);`);
 }
 
 export async function getDB(): Promise<SQLite.SQLiteDatabase> {

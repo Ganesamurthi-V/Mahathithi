@@ -176,6 +176,12 @@ model Stakeholder {
   // and sync getChanges filters stakeholders by updatedAt > since.
   @@index([status, district])
   @@index([updatedAt])
+  // PERF: the default list + search order by priorityWeight desc, name asc.
+  // Without this the DB sorts the whole filtered set on every request.
+  // (Trigram GIN indexes for ILIKE search are added via raw SQL migration
+  // 20250724_perf_indexes since Prisma can't express gin_trgm_ops natively.)
+  @@index([priorityWeight])
+  @@index([district, priorityWeight])
 
   @@map("stakeholders")
 }

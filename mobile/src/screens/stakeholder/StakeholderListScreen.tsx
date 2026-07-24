@@ -111,8 +111,10 @@ export default function StakeholderListScreen({ navigation }: any) {
       const localData = await stakeholderDao.search({}, p);
       if (p === 1) {
         setStakeholders(localData);
-        const count = await stakeholderDao.searchCount({});
-        setTotalCount(count);
+        // PERF: don't block the list render on the COUNT(*) over 295K rows.
+        // Fetch the badge count separately without awaiting so the cards
+        // paint immediately; the badge fills in a beat later.
+        stakeholderDao.searchCount({}).then(setTotalCount).catch(() => {});
       } else {
         setStakeholders(prev => [...prev, ...localData]);
       }

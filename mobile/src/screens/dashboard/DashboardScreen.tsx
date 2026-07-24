@@ -90,20 +90,24 @@ export default function DashboardScreen({ navigation }: any) {
     else setGreeting('Good evening,');
   }, []);
 
-  const loadStats = useCallback(async () => {
-    dispatch(setLoading(true));
+  // manualRefresh=true only for pull-to-refresh; focus refreshes are silent so
+  // the dashboard never appears to "load" — it shows cached stats from Redux
+  // and updates them in the background when the network responds.
+  const loadStats = useCallback(async (manualRefresh = false) => {
+    if (manualRefresh) dispatch(setLoading(true));
     try {
       const res = await dashboardService.getStats();
       dispatch(setStats(res.data.data.stakeholders));
     } catch (e) {
-      // Use cached stats if offline
+      // Keep showing cached stats if offline / server slow
+    } finally {
+      if (manualRefresh) dispatch(setLoading(false));
     }
-    dispatch(setLoading(false));
   }, [dispatch]);
 
   useFocusEffect(
     useCallback(() => {
-      loadStats();
+      loadStats(false); // silent background refresh — never blocks the UI
     }, [loadStats])
   );
 
@@ -128,7 +132,7 @@ export default function DashboardScreen({ navigation }: any) {
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={loadStats} tintColor={colors.primary} />}
+        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={() => loadStats(true)} tintColor={colors.primary} />}
       >
       {/* Header */}
       <View style={styles.header}>
