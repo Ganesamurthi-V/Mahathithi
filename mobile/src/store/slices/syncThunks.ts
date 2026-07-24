@@ -210,6 +210,20 @@ export const runAutoSync = createAsyncThunk(
       const unsyncedSurveys = await surveyDao.getUnsynced();
       const unsyncedMedia = await mediaDao.getUnsynced();
 
+      // Calculate total work items for accurate progress
+      // Text uploads + media uploads + complete calls = total steps
+      const totalTextUploads = unsyncedSurveys.length;
+      const totalMediaUploads = unsyncedMedia.length;
+      const totalWorkItems = totalTextUploads + totalMediaUploads + totalTextUploads; // text + media + complete per survey
+      let completedWorkItems = 0;
+
+      const updateProgress = () => {
+        if (totalWorkItems === 0) return;
+        // Scale progress from 10% to 90% based on work completed
+        const pct = 10 + Math.floor((completedWorkItems / totalWorkItems) * 80);
+        dispatch(updateSyncProgress(Math.min(pct, 90)));
+      };
+
       // Group by local survey ID to process 1-by-1
       const surveyIdsToProcess = new Set<string>();
       unsyncedSurveys.forEach((s: any) => surveyIdsToProcess.add(s.id));
@@ -281,7 +295,6 @@ export const runAutoSync = createAsyncThunk(
       // === 1-by-1 Pipeline ===
       for (const localSurveyId of surveyIdsToProcess) {
         processedCount++;
-        dispatch(updateSyncProgress(10 + Math.floor((processedCount / total) * 70))); // Scales 10% to 80%
 
         try {
           const surveyLocal = unsyncedSurveys.find((s: any) => s.id === localSurveyId);
@@ -372,6 +385,8 @@ export const runAutoSync = createAsyncThunk(
               mediaMetadata: [],
             });
             await surveyDao.markSynced(localSurveyId);
+            completedWorkItems++;
+            updateProgress();
           }
 
           // Step B: Resolve serverSurveyId from Stakeholder
@@ -413,6 +428,8 @@ export const runAutoSync = createAsyncThunk(
             console.log(`📤 [Sync] Uploading media ${media.id} (type: ${media.type}) for survey ${serverSurveyId}`);
             await mediaService.upload(formData);
             await mediaDao.markSynced(media.id);
+            completedWorkItems++;
+            updateProgress();
             console.log(`✅ [Sync] Media ${media.id} uploaded successfully`);
           };
 
@@ -437,6 +454,8 @@ export const runAutoSync = createAsyncThunk(
           // Step D: Complete Survey
           console.log(`🏁 [Sync] Calling complete() on server for survey ${serverSurveyId}`);
           await surveyService.complete(serverSurveyId);
+          completedWorkItems++;
+          updateProgress();
           // Scenario E FIX: mark locally completed so a future sync doesn't lose this
           await surveyDao.markCompleted(localSurveyId);
           console.log(`✅ Fully synced survey ${localSurveyId}`);

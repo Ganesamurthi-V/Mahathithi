@@ -14,7 +14,6 @@ import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
 import { launchCamera } from 'react-native-image-picker';
 import DocumentPicker from 'react-native-document-picker';
-import { Video as VideoCompressor } from 'react-native-compressor';
 import Video from 'react-native-video';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Picker } from '@react-native-picker/picker';
@@ -259,7 +258,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const [photos, setPhotos] = useState<Record<string, any>>({});
   const [video, setVideo] = useState<any>(null);
   const [recording, setRecording] = useState(false);
-  const [compressing, setCompressing] = useState(false);
 
   // ─── Step 1: Category & Type ───────────────────────────────────────────────
   const [selectedCategory, setSelectedCategory] = useState<string>(existingSurvey?.business_category || existingSurvey?.businessCategory || '');
@@ -715,28 +713,16 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     setRecording(true);
     const result = await launchCamera({
       mediaType: 'video',
-      videoQuality: 'low',
+      videoQuality: 'high',
       durationLimit: 60,
       saveToPhotos: true,
     });
 
     if (result.assets && result.assets[0]) {
       const asset = result.assets[0];
-      let finalUri = asset.uri;
-      setCompressing(true);
-      try {
-        if (asset.uri) {
-          finalUri = await VideoCompressor.compress(asset.uri, {
-            compressionMethod: 'auto',
-          });
-        }
-      } catch (e) {
-        console.error('Compression failed', e);
-      }
-      setCompressing(false);
 
       setVideo({
-        uri: finalUri,
+        uri: asset.uri,
         fileName: asset.fileName,
         fileSize: asset.fileSize,
         type: asset.type,
@@ -1171,9 +1157,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                     </View>
                   </View>
                 ) : (
-                  <TouchableOpacity style={[styles.captureBtn, !gps && styles.captureBtnDisabled]} onPress={captureVideo} disabled={recording || compressing || !gps}>
-                    <Icon name={compressing ? 'movie-roll' : gps ? 'video' : 'crosshairs-gps'} size={24} color={colors.textSecondary} />
-                    <Text style={styles.captureBtnText}>{compressing ? 'Compressing Video...' : recording ? 'Opening Camera...' : !gps ? 'Waiting for GPS lock...' : 'Record Video'}</Text>
+                  <TouchableOpacity style={[styles.captureBtn, !gps && styles.captureBtnDisabled]} onPress={captureVideo} disabled={recording || !gps}>
+                    <Icon name={gps ? 'video' : 'crosshairs-gps'} size={24} color={colors.textSecondary} />
+                    <Text style={styles.captureBtnText}>{recording ? 'Opening Camera...' : !gps ? 'Waiting for GPS lock...' : 'Record Video'}</Text>
                   </TouchableOpacity>
                 )}
               </View>

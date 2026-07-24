@@ -164,19 +164,6 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
         setSurvey(mapSurveyCamel(localSurvey));
       }
 
-      // Background refresh: If online, silently check server for updated survey data
-      try {
-        const netState = await NetInfo.fetch();
-        if (netState.isConnected) {
-          const svRes = await surveyService.getByStakeholder(stakeholderId);
-          if (svRes.data?.data) {
-            setSurvey(svRes.data.data);
-          }
-        }
-      } catch (e) {
-        // Silently ignore — we already have local data
-      }
-      
       if (shLocal) {
         setEditData({
           companyNameStandardized: shLocal.companyNameStandardized || '',
@@ -191,10 +178,27 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
           category: shLocal.category || '',
         });
       }
+
+      // Show the screen immediately with local data
+      setLoading(false);
+
+      // Background refresh: If online, silently check server for updated survey data
+      // This runs AFTER the screen is already visible — no blocking
+      try {
+        const netState = await NetInfo.fetch();
+        if (netState.isConnected) {
+          const svRes = await surveyService.getByStakeholder(stakeholderId);
+          if (svRes.data?.data) {
+            setSurvey(svRes.data.data);
+          }
+        }
+      } catch (e) {
+        // Silently ignore — we already have local data
+      }
     } catch (e: any) {
       Alert.alert('Error', e.response?.data?.error?.message || 'Failed to load stakeholder');
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // Helper to convert snake_case survey row to camelCase
