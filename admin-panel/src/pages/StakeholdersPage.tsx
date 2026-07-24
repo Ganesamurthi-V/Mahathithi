@@ -467,20 +467,11 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* ─── New Plan: Documents & Certifications ─── */}
-                {(survey.aboutBusiness || survey.registeredTravelForLife || survey.registeredGreenLeaf || survey.receivedTourismAward) && (
+                {/* ─── New Plan: Business Documents ─── */}
+                {survey.aboutBusiness && (
                   <div style={{ marginTop: '16px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Business Documents</div>
-                    {survey.aboutBusiness && <p style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '8px' }}>{survey.aboutBusiness}</p>}
-                    <div className="gallery-info-grid">
-                      {[
-                        { label: 'Travel for Life', value: survey.registeredTravelForLife ? 'Yes' : 'No' },
-                        { label: 'Green Leaf Rating', value: survey.registeredGreenLeaf ? 'Yes' : 'No' },
-                        { label: 'Tourism Award', value: survey.receivedTourismAward ? 'Yes' : 'No' },
-                      ].map((row, i) => (
-                        <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
-                      ))}
-                    </div>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>About Business</div>
+                    <p style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '8px' }}>{survey.aboutBusiness}</p>
                   </div>
                 )}
 

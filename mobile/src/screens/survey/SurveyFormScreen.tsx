@@ -8,7 +8,7 @@ import Geolocation from 'react-native-geolocation-service';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { surveyDao, mediaDao, facilityDao } from '../../database';
-import { refreshSyncCountsThunk } from '../../store/slices/syncThunks';
+import { refreshSyncCountsThunk, runAutoSync } from '../../store/slices/syncThunks';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
@@ -865,8 +865,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       // this. Marking it CLOSED prematurely causes mobile/server status mismatch
       // when uploads fail midway.
 
-      // Trigger background sync — don't wait for it, navigate immediately
+      // Trigger background sync immediately — don't wait for it
       dispatch(refreshSyncCountsThunk() as any);
+      dispatch(runAutoSync() as any);
       // The existing runAutoSync pipeline (triggered by AppNavigator's NetInfo
       // listener or the Sync Center) will pick up the unsynced survey + media
       // and upload everything in the background. No need to block the UI.
