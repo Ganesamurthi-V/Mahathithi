@@ -36,12 +36,12 @@ const StatCard = React.memo(({ card, index }: { card: any, index: number }) => {
   return (
     <Animated.View style={[
       styles.statCard, 
-      { opacity: opacityAnim, transform: [{ scale: scaleAnim }] }
+      { opacity: opacityAnim, transform: [{ scale: scaleAnim }], backgroundColor: card.bgColor }
     ]}>
       <View style={[styles.statIconWrapper, { backgroundColor: card.color + '20' }]}>
         <Icon name={card.icon} size={iconSizes.md} color={card.color} />
       </View>
-      <Text style={styles.statValue}>{card.value.toLocaleString()}</Text>
+      <Text style={[styles.statValue, { color: card.color }]}>{card.value.toLocaleString()}</Text>
       <Text style={styles.statLabel}>{card.label}</Text>
     </Animated.View>
   );
@@ -119,8 +119,8 @@ export default function DashboardScreen({ navigation }: any) {
   };
 
   const statCards = useMemo(() => [
-    { label: 'Completed', value: stats.completed, color: colors.success, icon: 'check-circle-outline' },
-    { label: 'Open Tasks', value: stats.open, color: colors.warning, icon: 'clipboard-list-outline' },
+    { label: 'Completed', value: stats.completed, color: colors.success, icon: 'check-circle-outline', bgColor: '#0F1E20' },
+    { label: 'Open Tasks', value: stats.open, color: colors.warning, icon: 'clipboard-list-outline', bgColor: '#1B1715' },
   ], [stats]);
 
   return (
@@ -132,35 +132,28 @@ export default function DashboardScreen({ navigation }: any) {
       >
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerTextContainer}>
+        <View style={{ flex: 1 }}>
           <Text style={styles.greeting}>{greeting}</Text>
           <Text style={styles.userName}>{user?.name}</Text>
         </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.avatar}>
-            <Text style={styles.avatarText}>{user?.name?.[0] || 'U'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
-            <Icon name="logout" size={moderateScale(20)} color={colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity onPress={handleLogout} style={styles.notificationBtn}>
+          <Icon name="logout" size={moderateScale(22)} color={colors.textPrimary} />
+        </TouchableOpacity>
       </View>
 
       {/* Districts */}
-      <View style={styles.districtBar}>
-        <Text style={styles.districtLabel}>Assigned Districts:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.districtTags}>
-          {user?.districts?.map((d: any) => (
-            <View key={d.id} style={styles.districtTag}>
-              <Icon name="map-marker-outline" size={moderateScale(14)} color={colors.primary} style={{ marginRight: 4 }} />
-              <Text style={styles.districtTagText}>{d.name}</Text>
-            </View>
-          ))}
-        </ScrollView>
-      </View>
+      <TouchableOpacity style={styles.districtBar} activeOpacity={0.8}>
+        <Text style={styles.districtLabel}>ASSIGNED DISTRICTS</Text>
+        {user?.districts?.map((d: any) => (
+          <View key={d.id} style={{ flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm }}>
+            <Icon name="map-marker" size={moderateScale(20)} color={colors.primary} style={{ marginRight: spacing.sm }} />
+            <Text style={{ ...typography.body, color: colors.textPrimary, fontWeight: '600' }}>{d.name}</Text>
+          </View>
+        ))}
+      </TouchableOpacity>
 
       {/* Stat Cards */}
-      <Text style={styles.sectionTitle}>Overview</Text>
+      <Text style={[styles.sectionTitle, { marginBottom: spacing.lg }]}>Overview</Text>
       <View style={styles.statsGrid}>
         {statCards.map((card, index) => (
           <StatCard key={card.label} card={card} index={index} />
@@ -168,29 +161,35 @@ export default function DashboardScreen({ navigation }: any) {
       </View>
 
       {/* Sync Status */}
-      <Text style={styles.sectionTitle}>Sync Status</Text>
+      <Text style={[styles.sectionTitle, { marginBottom: spacing.lg }]}>Sync Status</Text>
       <View style={styles.syncCard}>
         <View style={styles.syncRow}>
           <View style={styles.syncLabelContainer}>
             <Icon name="clock-outline" size={moderateScale(20)} color={colors.textMuted} />
             <Text style={styles.syncLabel}>Last Sync</Text>
           </View>
-          <Text style={styles.syncValue}>
-            {lastSyncTime ? new Date(lastSyncTime).toLocaleString() : 'Never'}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+            <Text style={styles.syncValue}>
+              {lastSyncTime ? new Date(lastSyncTime).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Never'}
+            </Text>
+            {lastSyncTime && <Icon name="check-circle" size={moderateScale(20)} color={colors.success} />}
+          </View>
         </View>
         <View style={styles.syncDivider} />
-        <View style={styles.syncRow}>
+        <TouchableOpacity style={styles.syncRow} onPress={() => navigation.navigate('SyncTab')} activeOpacity={0.7}>
           <View style={styles.syncLabelContainer}>
             <Icon name="cloud-upload-outline" size={moderateScale(20)} color={colors.textMuted} />
             <Text style={styles.syncLabel}>Pending Uploads</Text>
           </View>
-          <View style={[styles.syncBadge, { backgroundColor: pendingCount > 0 ? colors.warningBg : colors.successBg }]}>
-            <Text style={[styles.syncBadgeText, { color: pendingCount > 0 ? colors.warning : colors.success }]}>
-              {pendingCount}
-            </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+            <View style={[styles.syncBadge, { backgroundColor: pendingCount > 0 ? colors.primary : colors.successBg }]}>
+              <Text style={[styles.syncBadgeText, { color: pendingCount > 0 ? '#FFF' : colors.success }]}>
+                {pendingCount}
+              </Text>
+            </View>
+            <Icon name="chevron-right" size={moderateScale(18)} color={colors.textMuted} />
           </View>
-        </View>
+        </TouchableOpacity>
         {failedCount > 0 && (
           <>
             <View style={styles.syncDivider} />
@@ -213,7 +212,7 @@ export default function DashboardScreen({ navigation }: any) {
       <Text style={styles.sectionTitle}>Quick Actions</Text>
       <View style={styles.actionsRow}>
         <ActionButton icon="magnify" text="Search" onPress={() => navigation.navigate('Search')} />
-        <ActionButton icon="sync" text="Sync Now" onPress={() => navigation.navigate('SyncTab')} />
+        <ActionButton icon="sync" text="Sync" onPress={() => navigation.navigate('SyncTab')} />
       </View>
     </ScrollView>
     </SafeAreaView>
@@ -224,19 +223,28 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgPrimary },
   content: { padding: spacing.xl, paddingBottom: moderateScale(40) },
   header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginBottom: spacing.xxl, paddingTop: spacing.md,
+    flexDirection: 'row', alignItems: 'center',
+    marginBottom: spacing.xxl, paddingTop: spacing.md, gap: spacing.md,
   },
-  headerTextContainer: { flex: 1, paddingRight: spacing.md },
+  headerTextContainer: { flex: 1 },
   greeting: { ...typography.bodySmall, color: colors.textSecondary, marginBottom: spacing.xs },
-  userName: { ...typography.h2, color: colors.primary, flexWrap: 'wrap' },
+  userName: { ...typography.h1, color: colors.textPrimary, fontSize: moderateScale(28) },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   avatar: {
-    width: moderateScale(50), height: moderateScale(50), borderRadius: moderateScale(25),
+    width: moderateScale(44), height: moderateScale(44), borderRadius: moderateScale(22),
     backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center',
-    ...shadows.glow,
   },
-  avatarText: { color: '#FFF', fontSize: moderateScale(22), fontWeight: '700' },
+  avatarText: { color: '#FFF', fontSize: moderateScale(18), fontWeight: '700' },
+  notificationBtn: {
+    width: moderateScale(44), height: moderateScale(44), borderRadius: moderateScale(22),
+    backgroundColor: colors.bgCard, justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: colors.border, position: 'relative',
+  },
+  notificationDot: {
+    position: 'absolute', top: 10, right: 10,
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: colors.primary,
+  },
   logoutBtn: {
     width: moderateScale(40), height: moderateScale(40), borderRadius: moderateScale(20),
     backgroundColor: colors.bgCard, justifyContent: 'center', alignItems: 'center',
@@ -247,7 +255,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg, marginBottom: spacing.xxl, borderWidth: 1, borderColor: colors.border,
     ...shadows.card,
   },
-  districtLabel: { ...typography.caption, color: colors.textMuted, marginBottom: spacing.md },
+  districtLabel: { ...typography.caption, color: colors.textMuted, letterSpacing: 1, fontWeight: '700', fontSize: moderateScale(11) },
   districtTags: { flexDirection: 'row', alignItems: 'center' },
   districtTag: {
     flexDirection: 'row', alignItems: 'center',
@@ -257,21 +265,20 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   districtTagText: { color: colors.primary, fontSize: moderateScale(13), fontWeight: '600' },
-  sectionTitle: { ...typography.h3, color: colors.textPrimary, marginBottom: spacing.lg, letterSpacing: 0.5 },
+  sectionTitle: { ...typography.h3, color: colors.textPrimary, letterSpacing: 0.5 },
   statsGrid: {
     flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.xxxl,
   },
   statCard: {
-    width: '48%', backgroundColor: colors.bgCard,
+    width: '48%',
     borderRadius: borderRadius.xl, padding: spacing.xl,
     borderWidth: 1, borderColor: colors.border,
-    ...shadows.elevated,
   },
   statIconWrapper: {
     width: moderateScale(48), height: moderateScale(48), borderRadius: moderateScale(24),
     justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md,
   },
-  statValue: { ...typography.stat, color: colors.textPrimary, marginBottom: spacing.xs },
+  statValue: { fontSize: moderateScale(32), fontWeight: '700', marginBottom: spacing.xs },
   statLabel: { ...typography.bodySmall, color: colors.textSecondary, fontWeight: '500' },
   syncCard: {
     backgroundColor: colors.bgCard, borderRadius: borderRadius.xl,

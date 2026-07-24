@@ -17,11 +17,11 @@ export const colors = {
   accentLight: '#FFD166',
 
   // Backgrounds (Dark Mode)
-  bgPrimary: '#0B0F1A',
-  bgSecondary: '#111827',
-  bgCard: '#1A2035',
-  bgCardElevated: '#1F2847',
-  bgInput: '#0D1320',
+  bgPrimary: '#080B14',
+  bgSecondary: '#0E1420',
+  bgCard: '#121827',
+  bgCardElevated: '#1A2235',
+  bgInput: '#0A0F1A',
 
   // Text
   textPrimary: '#F1F5F9',
@@ -30,7 +30,7 @@ export const colors = {
   textInverse: '#0F172A',
 
   // Borders
-  border: '#1E293B',
+  border: '#2A3142',
   borderLight: '#334155',
 
   // Status
@@ -41,9 +41,9 @@ export const colors = {
 
   // Semantic
   success: '#10B981',
-  successBg: 'rgba(16, 185, 129, 0.1)',
+  successBg: '#0F1E20',
   warning: '#F59E0B',
-  warningBg: 'rgba(245, 158, 11, 0.1)',
+  warningBg: '#1B1715',
   error: '#EF4444',
   errorBg: 'rgba(239, 68, 68, 0.1)',
   info: '#3B82F6',
@@ -56,8 +56,8 @@ export const colors = {
 
   // Gradients (as arrays for LinearGradient)
   gradientPrimary: ['#FF6B35', '#F4A940'],
-  gradientDark: ['#0B0F1A', '#111827'],
-  gradientCard: ['#1A2035', '#1F2847'],
+  gradientDark: ['#080B14', '#121827'],
+  gradientCard: ['#121827', '#1A2235'],
 };
 
 export const spacing = {

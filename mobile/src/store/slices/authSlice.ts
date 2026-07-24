@@ -46,27 +46,35 @@ export const login = createAsyncThunk(
       await EncryptedStorage.setItem('access_token', tokens.accessToken);
       await EncryptedStorage.setItem('refresh_token', tokens.refreshToken);
       await EncryptedStorage.setItem('user_data', JSON.stringify(enumerator));
+      // Cache credentials for offline login
+      await EncryptedStorage.setItem('cached_login_id', loginId);
+      await EncryptedStorage.setItem('cached_password', password);
 
       return enumerator;
     } catch (err: any) {
-      // If the backend sent a structured error response
-      if (err.response && err.response.data && err.response.data.error && err.response.data.error.message) {
-        return rejectWithValue(err.response.data.error.message);
-      }
-      
-      // If it's a network error (server down, no internet)
+      // If offline — try cached credentials
       if (err.message === 'Network Error' || err.code === 'ECONNABORTED') {
+        try {
+          const cachedLoginId = await EncryptedStorage.getItem('cached_login_id');
+          const cachedPassword = await EncryptedStorage.getItem('cached_password');
+          const userData = await EncryptedStorage.getItem('user_data');
+
+          if (cachedLoginId === loginId && cachedPassword === password && userData) {
+            // Credentials match cached — allow offline login
+            return JSON.parse(userData);
+          }
+        } catch {}
         return rejectWithValue('Unable to connect to the server. Please check your internet connection and try again.');
       }
 
-      // Fallback for unhandled HTTP status codes that didn't have a JSON error body
+      if (err.response && err.response.data && err.response.data.error && err.response.data.error.message) {
+        return rejectWithValue(err.response.data.error.message);
+      }
       if (err.response && err.response.status === 401) {
         return rejectWithValue('Invalid login credentials');
       } else if (err.response && err.response.status >= 500) {
         return rejectWithValue('The server is experiencing issues. Please try again later.');
       }
-
-      // Generic fallback
       return rejectWithValue('An unexpected error occurred during login. Please try again.');
     }
   }
@@ -83,6 +91,8 @@ export const logout = createAsyncThunk('auth/logout', async () => {
   await EncryptedStorage.removeItem('access_token');
   await EncryptedStorage.removeItem('refresh_token');
   await EncryptedStorage.removeItem('user_data');
+  await EncryptedStorage.removeItem('cached_login_id');
+  await EncryptedStorage.removeItem('cached_password');
   
   // Wipe all local SQLite data on logout
   await clearAllData();

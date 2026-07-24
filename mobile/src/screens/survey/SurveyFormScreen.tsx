@@ -7,7 +7,7 @@ import { useForm, Controller } from 'react-hook-form';
 import Geolocation from 'react-native-geolocation-service';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
-import { surveyDao, mediaDao, facilityDao } from '../../database';
+import { surveyDao, mediaDao, facilityDao, stakeholderDao } from '../../database';
 import { refreshSyncCountsThunk, runAutoSync } from '../../store/slices/syncThunks';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
@@ -845,11 +845,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       await saveMediaToDb(surveyId);
       console.log('💾 [Survey] Saved locally to SQLite.');
 
-      // DON'T mark stakeholder as CLOSED here — that only happens after the
-      // server successfully processes complete(). The background sync pipeline
-      // (syncThunks → Step C → complete() → removeLockedStakeholders) handles
-      // this. Marking it CLOSED prematurely causes mobile/server status mismatch
-      // when uploads fail midway.
+      // Mark stakeholder as CLOSED locally so it disappears from the work queue
+      // The server will also mark it CLOSED when complete() succeeds during sync
+      await stakeholderDao.update(stakeholderId, { status: 'CLOSED' });
 
       // Trigger background sync immediately — don't wait for it
       dispatch(refreshSyncCountsThunk() as any);

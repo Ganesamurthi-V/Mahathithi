@@ -506,6 +506,18 @@ export const runAutoSync = createAsyncThunk(
 
       dispatch(syncComplete({ timestamp: syncTime }));
 
+      // Step 5: Check if there are still unsynced items — if so, run again
+      const remainingSurveys = await surveyDao.getUnsyncedCount();
+      const remainingMedia = await mediaDao.getUnsyncedCount();
+      if (remainingSurveys > 0 || remainingMedia > 0) {
+        console.log(`🔄 [Sync] Still ${remainingSurveys} surveys + ${remainingMedia} media pending. Re-running...`);
+        // Reset mutex so the next dispatch can enter
+        isAutoSyncRunning = false;
+        // Small delay to avoid tight loop, then re-trigger
+        await new Promise<void>(resolve => setTimeout(resolve, 3000));
+        dispatch(runAutoSync() as any);
+      }
+
     } catch (error: any) {
       dispatch(syncFailed(error.message || 'Sync failed'));
       // Only alert if we are actively viewing a screen that triggers it manually,

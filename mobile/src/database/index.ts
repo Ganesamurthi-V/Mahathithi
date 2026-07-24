@@ -827,7 +827,8 @@ export const facilityDao = {
 // SYNC FIX: cap automatic retries so a permanently-broken payload (e.g. server
 // rejects with 400 every time) doesn't hammer the API forever. After this many
 // failures the item becomes "DEAD" and needs a manual retry from Sync Center.
-const MAX_AUTO_RETRIES = 5;
+// Retry cap removed — sync will keep retrying indefinitely until success
+const MAX_AUTO_RETRIES = 999;
 
 // SYNC FIX: exponential backoff schedule (minutes) indexed by retry_count.
 // Prevents every reconnect/manual-sync from immediately re-hitting an item
