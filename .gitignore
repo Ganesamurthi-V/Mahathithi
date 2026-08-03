@@ -22,3 +22,8 @@ mobile/ios/Pods
 mobile/ios/build
 # NEW-2 FIX: machine-specific SDK path; must not be committed (leaks local username)
 mobile/android/local.properties
+
+# SQL dumps
+*.sql_dump*
+sql_dump*
+**/dump/
