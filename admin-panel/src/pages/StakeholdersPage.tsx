@@ -197,7 +197,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   });
 
   const media = mediaData?.data?.data || [];
-  const DOC_CATEGORIES = ['UDYOG_AADHAR_DOC', 'AADHAR_CARD_DOC', 'PAN_CARD_DOC', 'CANCELLED_CHEQUE_DOC', 'CUSTOM_DOC'];
+  const DOC_CATEGORIES = ['GST_DOC', 'PAN_CARD_DOC', 'ESTABLISHMENT_CERT_DOC', 'CUSTOM_DOC'];
   // PERF: don't re-filter the media array on every modal re-render (edit typing,
   // lightbox open/close); recompute only when the underlying media changes.
   const photos = useMemo(() => media.filter((m: any) => m.type === 'PHOTO' && !DOC_CATEGORIES.includes(m.photoCategory)), [media]);
@@ -217,7 +217,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   const categoryLabels: Record<string, string> = {
     BUILDING_FRONT: '🏢 Building Front', SIGNBOARD: '🪧 Signboard', INTERIOR: '🏠 Interior', STAKEHOLDER: '👤 Stakeholder', ADDITIONAL: '📸 Additional',
     DISPLAY_IMAGE: '🖼️ Display Image', HEADER_SLIDER: '🎠 Header Slider',
-    UDYOG_AADHAR_DOC: '📄 Udyog Aadhar', AADHAR_CARD_DOC: '📄 Aadhar Card', PAN_CARD_DOC: '📄 PAN Card', CANCELLED_CHEQUE_DOC: '📄 Cancelled Cheque', CUSTOM_DOC: '📄 Custom Doc',
+    GST_DOC: '📄 GST Certificate', PAN_CARD_DOC: '📄 PAN Card', ESTABLISHMENT_CERT_DOC: '📄 Establishment Certificate', CUSTOM_DOC: '📄 Custom Doc',
   };
 
   const isLoading = isSurveyLoading || isMediaLoading;
@@ -388,9 +388,9 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                         { label: 'Landline', value: survey.landline },
                         { label: 'Alternate Mobile', value: survey.alternateMobile },
                         { label: 'Alternate Email', value: survey.alternateEmail },
-                        { label: 'Aadhar', value: survey.aadharNumber ? `XXXX-XXXX-${survey.aadharNumber.slice(-4)}` : undefined },
-                        { label: 'Udyam Aadhar', value: survey.udyamAadharRegNo },
                         { label: 'GST Number', value: survey.gstNumber },
+                        { label: 'PAN Number', value: survey.panNumber },
+                        { label: 'Establishment Cert. No.', value: survey.establishmentCertNo },
                         { label: 'FSSAI Number', value: survey.fssaiNumber },
                       ].filter(r => r.value).map((row, i) => (
                         <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
@@ -518,7 +518,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             <div className="gallery-section">
               <h4 className="gallery-section-title">📄 Business Documents</h4>
               {(() => {
-                const docs = media.filter((m: any) => ['UDYOG_AADHAR_DOC', 'AADHAR_CARD_DOC', 'PAN_CARD_DOC', 'CANCELLED_CHEQUE_DOC', 'CUSTOM_DOC'].includes(m.photoCategory));
+                const docs = media.filter((m: any) => ['GST_DOC', 'PAN_CARD_DOC', 'ESTABLISHMENT_CERT_DOC', 'CUSTOM_DOC'].includes(m.photoCategory));
                 return docs.length > 0 ? (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
                     {docs.map((doc: any) => (

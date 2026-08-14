@@ -4,27 +4,10 @@ import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { getDigiPin } from '../../utils/digipin';
-import crypto from 'crypto';
 // B7 FIX: removed unused StakeholderService import/instance — it was never
 // referenced and risked a circular dependency between the survey and
 // stakeholder services.
 
-// ─── Aadhar AES-256-GCM Encryption ──────────────────────────────────────────
-const AADHAR_KEY = process.env.AADHAR_ENCRYPTION_KEY
-  ? Buffer.from(process.env.AADHAR_ENCRYPTION_KEY, 'hex')
-  : null;
-
-function encryptAadhar(plaintext: string): string {
-  if (!AADHAR_KEY) {
-    throw new Error('AADHAR_ENCRYPTION_KEY environment variable is not set');
-  }
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', AADHAR_KEY, iv);
-  let encrypted = cipher.update(plaintext, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  const authTag = cipher.getAuthTag().toString('hex');
-  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
-}
 
 interface CreateSurveyData {
   stakeholderId: string;
@@ -71,8 +54,8 @@ interface CreateSurveyData {
   landline?: string;
   alternateMobile?: string;
   alternateEmail?: string;
-  aadharNumber?: string;
-  udyamAadharRegNo?: string;
+  panNumber?: string;
+  establishmentCertNo?: string;
   fssaiNumber?: string;
 
   // ─── Step 4 ────────────────────────────────────────────────────────────────
@@ -151,14 +134,6 @@ export class SurveyService {
       }
     }
 
-    // ─── Aadhar Encryption ───────────────────────────────────────────────────
-    // Encrypt raw Aadhar number before persistence. If the value is already
-    // encrypted (contains ':' separators from a previous save), skip re-encryption.
-    let encryptedAadhar = data.aadharNumber;
-    if (encryptedAadhar && !encryptedAadhar.includes(':')) {
-      encryptedAadhar = encryptAadhar(encryptedAadhar);
-    }
-
     // ─── Build new-plan fields payload ───────────────────────────────────────
     // Strip rooms/accommodation fields when category is not Accommodations
     const isAccommodation = data.businessCategory === 'Accommodations';
@@ -178,8 +153,8 @@ export class SurveyService {
       landline: data.landline,
       alternateMobile: data.alternateMobile,
       alternateEmail: data.alternateEmail,
-      aadharNumber: encryptedAadhar,
-      udyamAadharRegNo: data.udyamAadharRegNo,
+      panNumber: data.panNumber,
+      establishmentCertNo: data.establishmentCertNo,
       fssaiNumber: data.fssaiNumber,
       description: data.description,
       accommodationFacilities: isAccommodation ? data.accommodationFacilities : undefined,

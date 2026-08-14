@@ -345,8 +345,8 @@ export const runAutoSync = createAsyncThunk(
               landline: surveyLocal.landline || undefined,
               alternateMobile: surveyLocal.alternate_mobile || undefined,
               alternateEmail: surveyLocal.alternate_email || undefined,
-              aadharNumber: surveyLocal.aadhar_number || undefined,
-              udyamAadharRegNo: surveyLocal.udyam_aadhar_reg_no || undefined,
+              panNumber: surveyLocal.pan_number || undefined,
+              establishmentCertNo: surveyLocal.establishment_cert_no || undefined,
               fssaiNumber: surveyLocal.fssai_number || undefined,
               // Step 4
               description: surveyLocal.description || undefined,

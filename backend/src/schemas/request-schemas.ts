@@ -103,8 +103,8 @@ export const createSurveySchema = z.object({
   landline: optText(20),
   alternateMobile: optText(20),
   alternateEmail: optText(200),
-  aadharNumber: optText(500),  // ciphertext — longer than 12 chars after encryption
-  udyamAadharRegNo: optText(50),
+  panNumber: optText(20),
+  establishmentCertNo: optText(100),
   fssaiNumber: optText(50),
 
   // ─── Step 4: Details ─────────────────────────────────────────────────────
@@ -231,8 +231,8 @@ export const syncSurveyItemSchema = z.object({
   landline: optText(20),
   alternateMobile: optText(20),
   alternateEmail: optText(200),
-  aadharNumber: optText(500),
-  udyamAadharRegNo: optText(50),
+  panNumber: optText(20),
+  establishmentCertNo: optText(100),
   fssaiNumber: optText(50),
 
   // ─── Step 4: Details ─────────────────────────────────────────────────────

@@ -242,9 +242,12 @@ model Survey {
   landline                  String?   @map("landline")
   alternateMobile           String?   @map("alternate_mobile")
   alternateEmail            String?   @map("alternate_email")
-  aadharNumber              String?   @map("aadhar_number")       // AES-256-GCM encrypted
-  udyamAadharRegNo          String?   @map("udyam_aadhar_reg_no")
+  panNumber                 String?   @map("pan_number")
+  establishmentCertNo       String?   @map("establishment_cert_no")
   fssaiNumber               String?   @map("fssai_number")
+  // Legacy fields — kept to match the DB (9 rows of live data; cannot be dropped safely)
+  aadharNumber              String?   @map("aadhar_number")
+  udyamAadharRegNo          String?   @map("udyam_aadhar_reg_no")
 
   // ─── Step 4: Details ───────────────────────────────────────────────────────
   description               String?   @map("description")
@@ -315,11 +318,14 @@ enum PhotoCategory {
   ADDITIONAL
   DISPLAY_IMAGE
   HEADER_SLIDER
+  GST_DOC
+  PAN_CARD_DOC
+  ESTABLISHMENT_CERT_DOC
+  CUSTOM_DOC
+  // Legacy values — PostgreSQL cannot drop enum values; kept to match the DB
   UDYOG_AADHAR_DOC
   AADHAR_CARD_DOC
-  PAN_CARD_DOC
   CANCELLED_CHEQUE_DOC
-  CUSTOM_DOC
 }
 
 model Media {

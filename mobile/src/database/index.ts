@@ -161,8 +161,8 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN landline TEXT;'); } catch(e){}
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN alternate_mobile TEXT;'); } catch(e){}
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN alternate_email TEXT;'); } catch(e){}
-  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN aadhar_number TEXT;'); } catch(e){}
-  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN udyam_aadhar_reg_no TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN pan_number TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN establishment_cert_no TEXT;'); } catch(e){}
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN fssai_number TEXT;'); } catch(e){}
 
   // ─── New Plan: Step 4 — Details ────────────────────────────────────────────
@@ -619,7 +619,7 @@ export const surveyDao = {
         nearest_healthcare_center, is_draft, is_completed, is_synced,
         sub_categories, business_name, owner_name, district, city, taluka, village, pin_code,
         business_address, working_address, male_employees, female_employees, landline,
-        alternate_mobile, alternate_email, aadhar_number, udyam_aadhar_reg_no, fssai_number,
+        alternate_mobile, alternate_email, pan_number, establishment_cert_no, fssai_number,
         description, accommodation_facilities, accommodation_policies, working_hours, faq,
         rooms, coupon_codes, sale_off, additional_service_fees, booking_note,
         social_links, about_business, registered_travel_for_life, registered_green_leaf,
@@ -640,7 +640,7 @@ export const surveyDao = {
        survey.businessAddress || null, survey.workingAddress || null,
        survey.maleEmployees ?? null, survey.femaleEmployees ?? null,
        survey.landline || null, survey.alternateMobile || null, survey.alternateEmail || null,
-       survey.aadharNumber || null, survey.udyamAadharRegNo || null, survey.fssaiNumber || null,
+       survey.panNumber || null, survey.establishmentCertNo || null, survey.fssaiNumber || null,
        // Step 4
        survey.description || null,
        survey.accommodationFacilities ? JSON.stringify(survey.accommodationFacilities) : null,
