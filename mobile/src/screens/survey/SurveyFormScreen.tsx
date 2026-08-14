@@ -27,8 +27,9 @@ interface SurveyFormData {
   businessAddress: string;
   mobileNumber: string;
   email: string;
-  aadharNumber: string;
-  udyamAadharRegNo: string;
+  gstNumber: string;
+  panNumber: string;
+  establishmentCertNo: string;
   nearestPoliceStation: string;
   nearestHealthcareCenter: string;
 }
@@ -310,8 +311,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       businessAddress: existingSurvey?.business_address || existingSurvey?.businessAddress || '',
       mobileNumber: existingSurvey?.mobileNumber || existingSurvey?.mobile_number || '',
       email: existingSurvey?.email || '',
-      aadharNumber: '', // Never pre-fill for security
-      udyamAadharRegNo: existingSurvey?.udyam_aadhar_reg_no || existingSurvey?.udyamAadharRegNo || '',
+      gstNumber: existingSurvey?.gst_number || existingSurvey?.gstNumber || '',
+      panNumber: existingSurvey?.pan_number || existingSurvey?.panNumber || '',
+      establishmentCertNo: existingSurvey?.establishment_cert_no || existingSurvey?.establishmentCertNo || '',
       nearestPoliceStation: existingSurvey?.nearestPoliceStation || existingSurvey?.nearest_police_station || '',
       nearestHealthcareCenter: existingSurvey?.nearestHealthcareCenter || existingSurvey?.nearest_healthcare_center || '',
     },
@@ -1078,8 +1080,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
               <AnimatedInput field={{ name: 'email', label: 'Email Address *', placeholder: 'email@example.com', required: true, keyboardType: 'email-address' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
               <Text style={styles.sectionHeader}>Government IDs & Registrations</Text>
-              <AnimatedInput field={{ name: 'aadharNumber', label: 'Aadhar Number *', placeholder: '12-digit number', required: true, keyboardType: 'numeric', maxLength: 12, pattern: { value: /^\d{12}$/, message: 'Must be 12 digits' } }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
-              <AnimatedInput field={{ name: 'udyamAadharRegNo', label: 'Udyam Aadhar Reg. No. *', placeholder: 'Registration number', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'gstNumber', label: 'GST Number', placeholder: 'e.g. 22AAAAA0000A1Z5', required: false }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'panNumber', label: 'PAN Number', placeholder: 'e.g. ABCDE1234F', required: false, maxLength: 10 }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'establishmentCertNo', label: 'Establishment Certificate No.', placeholder: 'Certificate number', required: false }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
               <Text style={styles.sectionHeader}>Nearest Facilities</Text>
               {nearestFacilityFields.map(f => (
@@ -1224,7 +1227,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             <Text style={styles.sectionHeader}>About Business *</Text>
             <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={aboutBusiness} onChangeText={setAboutBusiness} placeholder="History, achievements, brief profile..." placeholderTextColor={colors.textMuted} />
             <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Required Documents</Text>
-            {[{ key: 'UDYOG_AADHAR_DOC', label: 'Udyog Aadhar Card' }, { key: 'AADHAR_CARD_DOC', label: 'Aadhar Card' }, { key: 'PAN_CARD_DOC', label: 'PAN Card' }, { key: 'CANCELLED_CHEQUE_DOC', label: 'Cancelled Cheque' }].map(doc => (
+            {[{ key: 'GST_DOC', label: 'GST Certificate' }, { key: 'PAN_CARD_DOC', label: 'PAN Card' }, { key: 'ESTABLISHMENT_CERT_DOC', label: 'Establishment Certificate' }].map(doc => (
               <View key={doc.key} style={{ marginBottom: spacing.md }}>
                 <Text style={{ ...typography.body, color: colors.textPrimary, marginBottom: spacing.xs }}>{doc.label} *</Text>
                 {photos[doc.key] ? (
