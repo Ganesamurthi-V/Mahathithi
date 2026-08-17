@@ -358,4 +358,72 @@ router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: 
   }
 });
 
+// ============================================================================
+// SURVEY DATA EXPORT (SQL dump)
+// ============================================================================
+
+router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const surveys = await prisma.survey.findMany({
+      include: {
+        stakeholder: { select: { companyNameStandardized: true, district: true, pinCode: true } },
+        enumerator: { select: { name: true, loginId: true } },
+        media: { where: { deletedAt: null }, select: { id: true, type: true, photoCategory: true, fileName: true, fileUrl: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Build SQL INSERT statements
+    const lines: string[] = [
+      '-- MahaAtithi Survey Data Export',
+      `-- Generated: ${new Date().toISOString()}`,
+      `-- Total surveys: ${surveys.length}`,
+      '',
+      'CREATE TABLE IF NOT EXISTS surveys_export (',
+      '  id UUID PRIMARY KEY,',
+      '  stakeholder_id UUID,',
+      '  stakeholder_name TEXT,',
+      '  stakeholder_district TEXT,',
+      '  enumerator_name TEXT,',
+      '  business_category TEXT,',
+      '  business_name TEXT,',
+      '  owner_name TEXT,',
+      '  mobile_number TEXT,',
+      '  email TEXT,',
+      '  district TEXT,',
+      '  city TEXT,',
+      '  pin_code TEXT,',
+      '  business_address TEXT,',
+      '  latitude DOUBLE PRECISION,',
+      '  longitude DOUBLE PRECISION,',
+      '  description TEXT,',
+      '  about_business TEXT,',
+      '  aadhar_number TEXT,',
+      '  udyam_aadhar_reg_no TEXT,',
+      '  gst_number TEXT,',
+      '  is_completed BOOLEAN,',
+      '  agreed_to_terms BOOLEAN,',
+      '  created_at TIMESTAMP,',
+      '  updated_at TIMESTAMP',
+      ');',
+      '',
+    ];
+
+    for (const s of surveys) {
+      const esc = (v: any) => v == null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`;
+      lines.push(
+        `INSERT INTO surveys_export VALUES (${esc(s.id)}, ${esc(s.stakeholderId)}, ${esc(s.stakeholder?.companyNameStandardized)}, ${esc(s.stakeholder?.district)}, ${esc(s.enumerator?.name)}, ${esc(s.businessCategory)}, ${esc(s.businessName)}, ${esc(s.ownerName)}, ${esc(s.mobileNumber)}, ${esc(s.email)}, ${esc(s.district)}, ${esc(s.city)}, ${esc(s.pinCode)}, ${esc(s.businessAddress)}, ${s.latitude ?? 'NULL'}, ${s.longitude ?? 'NULL'}, ${esc(s.description)}, ${esc(s.aboutBusiness)}, ${esc(s.aadharNumber)}, ${esc(s.udyamAadharRegNo)}, ${esc(s.gstNumber)}, ${s.isCompleted}, ${s.agreedToTerms}, ${esc(s.createdAt?.toISOString())}, ${esc(s.updatedAt?.toISOString())});`
+      );
+    }
+
+    const sql = lines.join('\n');
+
+    res.setHeader('Content-Type', 'application/sql');
+    res.setHeader('Content-Disposition', `attachment; filename="surveys_export_${new Date().toISOString().slice(0,10)}.sql"`);
+    res.send(sql);
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

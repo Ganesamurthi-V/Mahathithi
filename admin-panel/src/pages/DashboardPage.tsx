@@ -1,6 +1,6 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getAnalytics, getEnumerators } from '../api';
+import { getAnalytics, getEnumerators, exportSurveysSQL } from '../api';
 import { Enumerator } from '../types';
 
 export default function DashboardPage() {
@@ -31,8 +31,26 @@ export default function DashboardPage() {
   return (
     <>
       <div className="page-header">
-        <h2>Dashboard</h2>
-        <p>Overview of MahaAtithi stakeholder verification system</p>
+        <div>
+          <h2>Dashboard</h2>
+          <p>Overview of MahaAtithi stakeholder verification system</p>
+        </div>
+        <button className="btn btn-primary" onClick={async () => {
+          try {
+            const res = await exportSurveysSQL();
+            const blob = new Blob([res.data], { type: 'application/sql' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `surveys_export_${new Date().toISOString().slice(0, 10)}.sql`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+          } catch (e: any) {
+            alert('Export failed: ' + (e.message || 'Unknown error'));
+          }
+        }}>
+          📥 Export Surveys (SQL)
+        </button>
       </div>
 
       <div className="stat-grid">

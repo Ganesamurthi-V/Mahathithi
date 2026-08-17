@@ -96,4 +96,7 @@ export const getSurveyByStakeholder = (stakeholderId: string) =>
 // Media
 export const getMediaBySurvey = (surveyId: string) => api.get(`/media/survey/${surveyId}`);
 
+// Export
+export const exportSurveysSQL = () => api.get('/admin/export/surveys', { responseType: 'blob' });
+
 export default api;
