@@ -400,7 +400,6 @@ router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, n
       '  about_business TEXT,',
       '  aadhar_number TEXT,',
       '  udyam_aadhar_reg_no TEXT,',
-      '  gst_number TEXT,',
       '  is_completed BOOLEAN,',
       '  agreed_to_terms BOOLEAN,',
       '  created_at TIMESTAMP,',
@@ -412,7 +411,7 @@ router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, n
     for (const s of surveys) {
       const esc = (v: any) => v == null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`;
       lines.push(
-        `INSERT INTO surveys_export VALUES (${esc(s.id)}, ${esc(s.stakeholderId)}, ${esc(s.stakeholder?.companyNameStandardized)}, ${esc(s.stakeholder?.district)}, ${esc(s.enumerator?.name)}, ${esc(s.businessCategory)}, ${esc(s.businessName)}, ${esc(s.ownerName)}, ${esc(s.mobileNumber)}, ${esc(s.email)}, ${esc(s.district)}, ${esc(s.city)}, ${esc(s.pinCode)}, ${esc(s.businessAddress)}, ${s.latitude ?? 'NULL'}, ${s.longitude ?? 'NULL'}, ${esc(s.description)}, ${esc(s.aboutBusiness)}, ${esc(s.aadharNumber)}, ${esc(s.udyamAadharRegNo)}, ${esc(s.gstNumber)}, ${s.isCompleted}, ${s.agreedToTerms}, ${esc(s.createdAt?.toISOString())}, ${esc(s.updatedAt?.toISOString())});`
+        `INSERT INTO surveys_export VALUES (${esc(s.id)}, ${esc(s.stakeholderId)}, ${esc(s.stakeholder?.companyNameStandardized)}, ${esc(s.stakeholder?.district)}, ${esc(s.enumerator?.name)}, ${esc(s.businessCategory)}, ${esc(s.businessName)}, ${esc(s.ownerName)}, ${esc(s.mobileNumber)}, ${esc(s.email)}, ${esc(s.district)}, ${esc(s.city)}, ${esc(s.pinCode)}, ${esc(s.businessAddress)}, ${s.latitude ?? 'NULL'}, ${s.longitude ?? 'NULL'}, ${esc(s.description)}, ${esc(s.aboutBusiness)}, ${esc(s.aadharNumber)}, ${esc(s.udyamAadharRegNo)}, ${s.isCompleted}, ${s.agreedToTerms}, ${esc(s.createdAt?.toISOString())}, ${esc(s.updatedAt?.toISOString())});`
       );
     }
 

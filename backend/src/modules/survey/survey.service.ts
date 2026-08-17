@@ -12,77 +12,30 @@ import { getDigiPin } from '../../utils/digipin';
 interface CreateSurveyData {
   stakeholderId: string;
   enumeratorId: string;
-  contactPerson?: string;
-  designation?: string;
   mobileNumber?: string;
   email?: string;
-  contactPerson2?: string;
-  mobileNumber2?: string;
-  email2?: string;
-  website?: string;
   businessCategory?: string;
-  notes?: string;
-  gstNumber?: string;
-  organizationType?: string;
-  remarks?: string;
-  // SYNC FIX: were accepted by the sync-queue path (syncSurveyItemSchema's
-  // passthrough) but never made it into the online-save path or persistence
-  // here — silently dropped even when the request succeeded. See matching
-  // comment in request-schemas.ts.
   nearestPoliceStation?: string;
   nearestHealthcareCenter?: string;
   latitude?: number;
   longitude?: number;
   gpsAccuracy?: number;
   localId?: string;
-
-  // ─── Step 1 ────────────────────────────────────────────────────────────────
   subCategories?: string[];
-
-  // ─── Step 2 ────────────────────────────────────────────────────────────────
   businessName?: string;
   ownerName?: string;
   district?: string;
   city?: string;
-  taluka?: string;
-  village?: string;
   pinCode?: string;
   businessAddress?: string;
-  workingAddress?: string;
-  maleEmployees?: number;
-  femaleEmployees?: number;
-  landline?: string;
-  alternateMobile?: string;
-  alternateEmail?: string;
-  panNumber?: string;
-  establishmentCertNo?: string;
-  fssaiNumber?: string;
-
-  // ─── Step 4 ────────────────────────────────────────────────────────────────
+  aadharNumber?: string;
+  udyamAadharRegNo?: string;
   description?: string;
   accommodationFacilities?: any;
   accommodationPolicies?: string;
   workingHours?: any;
-  faq?: any;
-
-  // ─── Step 5 ────────────────────────────────────────────────────────────────
   rooms?: any;
-  couponCodes?: any;
-  saleOff?: number;
-  additionalServiceFees?: any;
-  bookingNote?: string;
-
-  // ─── Step 6 ────────────────────────────────────────────────────────────────
-  socialLinks?: any;
-
-  // ─── Step 7 ────────────────────────────────────────────────────────────────
   aboutBusiness?: string;
-  registeredTravelForLife?: boolean;
-  registeredGreenLeaf?: boolean;
-  receivedTourismAward?: boolean;
-  customDocuments?: any;
-
-  // ─── Step 8 ────────────────────────────────────────────────────────────────
   agreedToTerms?: boolean;
   declaredInfoCorrect?: boolean;
   acknowledgedDotLiability?: boolean;
@@ -118,22 +71,6 @@ export class SurveyService {
       } catch (e) {}
     }
 
-    // ─── GST Uniqueness Check ────────────────────────────────────────────────
-    // A GST number must be unique per listing (not per user). If the incoming
-    // gstNumber is non-empty, check no OTHER survey already uses it.
-    if (data.gstNumber && data.gstNumber.trim() !== '') {
-      const existingGst = await prisma.survey.findFirst({
-        where: {
-          gstNumber: data.gstNumber,
-          stakeholderId: { not: data.stakeholderId },
-        },
-        select: { id: true },
-      });
-      if (existingGst) {
-        throw new ConflictError('This GST Number is already associated with another listing.');
-      }
-    }
-
     // ─── Build new-plan fields payload ───────────────────────────────────────
     // Strip rooms/accommodation fields when category is not Accommodations
     const isAccommodation = data.businessCategory === 'Accommodations';
@@ -143,35 +80,16 @@ export class SurveyService {
       ownerName: data.ownerName,
       district: data.district,
       city: data.city,
-      taluka: data.taluka,
-      village: data.village,
       pinCode: data.pinCode,
       businessAddress: data.businessAddress,
-      workingAddress: data.workingAddress,
-      maleEmployees: data.maleEmployees,
-      femaleEmployees: data.femaleEmployees,
-      landline: data.landline,
-      alternateMobile: data.alternateMobile,
-      alternateEmail: data.alternateEmail,
-      panNumber: data.panNumber,
-      establishmentCertNo: data.establishmentCertNo,
-      fssaiNumber: data.fssaiNumber,
+      aadharNumber: data.aadharNumber,
+      udyamAadharRegNo: data.udyamAadharRegNo,
       description: data.description,
       accommodationFacilities: isAccommodation ? data.accommodationFacilities : undefined,
       accommodationPolicies: isAccommodation ? data.accommodationPolicies : undefined,
       workingHours: data.workingHours,
-      faq: data.faq,
       rooms: isAccommodation ? data.rooms : undefined,
-      couponCodes: isAccommodation ? data.couponCodes : undefined,
-      saleOff: isAccommodation ? data.saleOff : undefined,
-      additionalServiceFees: isAccommodation ? data.additionalServiceFees : undefined,
-      bookingNote: isAccommodation ? data.bookingNote : undefined,
-      socialLinks: data.socialLinks,
       aboutBusiness: data.aboutBusiness,
-      registeredTravelForLife: data.registeredTravelForLife ?? false,
-      registeredGreenLeaf: data.registeredGreenLeaf ?? false,
-      receivedTourismAward: data.receivedTourismAward ?? false,
-      customDocuments: data.customDocuments,
       agreedToTerms: data.agreedToTerms ?? false,
       declaredInfoCorrect: data.declaredInfoCorrect ?? false,
       acknowledgedDotLiability: data.acknowledgedDotLiability ?? false,
@@ -186,19 +104,9 @@ export class SurveyService {
         },
       },
       update: {
-        contactPerson: data.contactPerson,
-        designation: data.designation,
         mobileNumber: data.mobileNumber,
         email: data.email,
-        contactPerson2: data.contactPerson2,
-        mobileNumber2: data.mobileNumber2,
-        email2: data.email2,
-        website: data.website,
         businessCategory: data.businessCategory,
-        notes: data.notes,
-        gstNumber: data.gstNumber,
-        organizationType: data.organizationType,
-        remarks: data.remarks,
         nearestPoliceStation: data.nearestPoliceStation,
         nearestHealthcareCenter: data.nearestHealthcareCenter,
         latitude: data.latitude,
@@ -211,19 +119,9 @@ export class SurveyService {
       create: {
         stakeholderId: data.stakeholderId,
         enumeratorId: data.enumeratorId,
-        contactPerson: data.contactPerson,
-        designation: data.designation,
         mobileNumber: data.mobileNumber,
         email: data.email,
-        contactPerson2: data.contactPerson2,
-        mobileNumber2: data.mobileNumber2,
-        email2: data.email2,
-        website: data.website,
         businessCategory: data.businessCategory,
-        notes: data.notes,
-        gstNumber: data.gstNumber,
-        organizationType: data.organizationType,
-        remarks: data.remarks,
         nearestPoliceStation: data.nearestPoliceStation,
         nearestHealthcareCenter: data.nearestHealthcareCenter,
         latitude: data.latitude,
@@ -344,20 +242,8 @@ export class SurveyService {
     // === VALIDATION CHECKS ===
     const validationErrors: string[] = [];
 
-    // Detect if this survey was submitted with the new 8-step form (has businessName)
-    // or the old 3-step form (has contactPerson). Apply validation accordingly.
-    const isNewForm = !!survey.businessName;
-
-    if (isNewForm) {
-      // New form validations
-      if (!survey.businessName || survey.businessName.trim() === '') {
-        validationErrors.push('Business name is required');
-      }
-    } else {
-      // Legacy form: contactPerson was required
-      if (!survey.contactPerson || survey.contactPerson.trim() === '') {
-        validationErrors.push('Contact person name is required');
-      }
+    if (!survey.businessName || survey.businessName.trim() === '') {
+      validationErrors.push('Business name is required');
     }
 
     // 2. Phone
@@ -382,20 +268,18 @@ export class SurveyService {
       validationErrors.push('At least 1 verification video is required');
     }
 
-    // New-form-only validations (skip for legacy surveys)
-    if (isNewForm) {
-      if (!survey.description || survey.description.trim().length < 50) {
-        validationErrors.push('Description must be at least 50 characters');
+    // New-form validations
+    if (!survey.description || survey.description.trim().length < 50) {
+      validationErrors.push('Description must be at least 50 characters');
+    }
+    if (survey.businessCategory === 'Accommodations') {
+      const roomsData = survey.rooms as any[] | null;
+      if (!roomsData || !Array.isArray(roomsData) || roomsData.length < 1) {
+        validationErrors.push('At least 1 room is required for Accommodation listings');
       }
-      if (survey.businessCategory === 'Accommodations') {
-        const roomsData = survey.rooms as any[] | null;
-        if (!roomsData || !Array.isArray(roomsData) || roomsData.length < 1) {
-          validationErrors.push('At least 1 room is required for Accommodation listings');
-        }
-      }
-      if (!survey.agreedToTerms || !survey.declaredInfoCorrect || !survey.acknowledgedDotLiability) {
-        validationErrors.push('All Terms & Conditions checkboxes must be accepted');
-      }
+    }
+    if (!survey.agreedToTerms || !survey.declaredInfoCorrect || !survey.acknowledgedDotLiability) {
+      validationErrors.push('All Terms & Conditions checkboxes must be accepted');
     }
 
     // === DETERMINE STATUS ===

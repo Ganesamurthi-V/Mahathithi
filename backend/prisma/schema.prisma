@@ -195,94 +195,54 @@ model Survey {
   stakeholderId   String   @map("stakeholder_id")
   enumeratorId    String   @map("enumerator_id")
 
-  // Contact Information (editable by enumerator)
-  contactPerson   String?  @map("contact_person")
-  designation     String?  @map("designation")
+  // Contact
   mobileNumber    String?  @map("mobile_number")
   email           String?  @map("email")
-  
-  // Secondary Contact Information (Optional)
-  contactPerson2  String?  @map("contact_person_2")
-  mobileNumber2   String?  @map("mobile_number_2")
-  email2          String?  @map("email_2")
 
-  website         String?  @map("website")
+  // Category
   businessCategory String? @map("business_category")
-  notes           String?  @map("notes")
+  subCategories    String[] @map("sub_categories")
 
-  // Survey-specific fields
-  gstNumber       String?  @map("gst_number")
-  organizationType String? @map("organization_type")
-  remarks         String?  @map("remarks")
-
-  // GPS Data (from actual device)
+  // GPS Data
   latitude        Float?   @map("latitude")
   longitude       Float?   @map("longitude")
   gpsAccuracy     Float?   @map("gps_accuracy")
   digipin         String?  @map("digipin")
-
   nearestPoliceStation    String?  @map("nearest_police_station")
   nearestHealthcareCenter String?  @map("nearest_healthcare_center")
 
-  // ─── Step 1: Category & Type ───────────────────────────────────────────────
-  subCategories             String[]  @map("sub_categories")
+  // Basic Information
+  businessName    String?  @map("business_name")
+  ownerName       String?  @map("owner_name")
+  district        String?  @map("district")
+  city            String?  @map("city")
+  pinCode         String?  @map("pin_code")
+  businessAddress String?  @map("business_address")
+  aadharNumber    String?  @map("aadhar_number")       // AES-256-GCM encrypted
+  udyamAadharRegNo String? @map("udyam_aadhar_reg_no")
 
-  // ─── Step 2: Basic Information ─────────────────────────────────────────────
-  businessName              String?   @map("business_name")
-  ownerName                 String?   @map("owner_name")
-  district                  String?   @map("district")
-  city                      String?   @map("city")
-  taluka                    String?   @map("taluka")
-  village                   String?   @map("village")
-  pinCode                   String?   @map("pin_code")
-  businessAddress           String?   @map("business_address")
-  workingAddress            String?   @map("working_address")
-  maleEmployees             Int?      @map("male_employees")
-  femaleEmployees           Int?      @map("female_employees")
-  landline                  String?   @map("landline")
-  alternateMobile           String?   @map("alternate_mobile")
-  alternateEmail            String?   @map("alternate_email")
-  panNumber                 String?   @map("pan_number")
-  establishmentCertNo       String?   @map("establishment_cert_no")
-  fssaiNumber               String?   @map("fssai_number")
-  // Legacy fields — kept to match the DB (9 rows of live data; cannot be dropped safely)
-  aadharNumber              String?   @map("aadhar_number")
-  udyamAadharRegNo          String?   @map("udyam_aadhar_reg_no")
+  // Details
+  description               String?  @map("description")
+  accommodationFacilities   Json?    @map("accommodation_facilities")
+  accommodationPolicies     String?  @map("accommodation_policies")
+  workingHours              Json?    @map("working_hours")
 
-  // ─── Step 4: Details ───────────────────────────────────────────────────────
-  description               String?   @map("description")
-  accommodationFacilities   Json?     @map("accommodation_facilities")
-  accommodationPolicies     String?   @map("accommodation_policies")
-  workingHours              Json?     @map("working_hours")
-  faq                       Json?     @map("faq")
+  // Rooms & Pricing (Accommodations only)
+  rooms                     Json?    @map("rooms")
 
-  // ─── Step 5: Rooms & Pricing (Accommodations only) ─────────────────────────
-  rooms                     Json?     @map("rooms")
-  couponCodes               Json?     @map("coupon_codes")
-  saleOff                   Float?    @map("sale_off")
-  additionalServiceFees     Json?     @map("additional_service_fees")
-  bookingNote               String?   @map("booking_note")
+  // Business Documents
+  aboutBusiness             String?  @map("about_business")
 
-  // ─── Step 6: Your Socials ──────────────────────────────────────────────────
-  socialLinks               Json?     @map("social_links")
-
-  // ─── Step 7: Business Documents ────────────────────────────────────────────
-  aboutBusiness             String?   @map("about_business")
-  registeredTravelForLife   Boolean   @default(false) @map("registered_travel_for_life")
-  registeredGreenLeaf       Boolean   @default(false) @map("registered_green_leaf")
-  receivedTourismAward      Boolean   @default(false) @map("received_tourism_award")
-  customDocuments           Json?     @map("custom_documents")
-
-  // ─── Step 8: Terms & Conditions ────────────────────────────────────────────
-  agreedToTerms             Boolean   @default(false) @map("agreed_to_terms")
-  declaredInfoCorrect       Boolean   @default(false) @map("declared_info_correct")
-  acknowledgedDotLiability  Boolean   @default(false) @map("acknowledged_dot_liability")
+  // Terms & Conditions
+  agreedToTerms             Boolean  @default(false) @map("agreed_to_terms")
+  declaredInfoCorrect       Boolean  @default(false) @map("declared_info_correct")
+  acknowledgedDotLiability  Boolean  @default(false) @map("acknowledged_dot_liability")
 
   // Status & Sync
   isDraft         Boolean  @default(true) @map("is_draft")
   isCompleted     Boolean  @default(false) @map("is_completed")
   isSynced        Boolean  @default(false) @map("is_synced")
-  localId         String?  @map("local_id") // SQLite local ID for sync mapping
+  localId         String?  @map("local_id")
   completedAt     DateTime? @map("completed_at")
   syncedAt        DateTime? @map("synced_at")
   createdAt       DateTime @default(now()) @map("created_at")
