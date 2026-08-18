@@ -359,66 +359,164 @@ router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: 
 });
 
 // ============================================================================
-// SURVEY DATA EXPORT (SQL dump)
+// SURVEY DATA EXPORT — Maps to client's listing.* schema
 // ============================================================================
 
 router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const surveys = await prisma.survey.findMany({
-      include: {
-        stakeholder: { select: { companyNameStandardized: true, district: true, pinCode: true } },
-        enumerator: { select: { name: true, loginId: true } },
-        media: { where: { deletedAt: null }, select: { id: true, type: true, photoCategory: true, fileName: true, fileUrl: true } },
-      },
+      where: { isCompleted: true, isDraft: false },
       orderBy: { createdAt: 'desc' },
     });
 
-    // Build SQL INSERT statements
+    // Category mapping: our business_category → client's listing.categories.id
+    const CAT_MAP: Record<string, string> = {
+      'Accommodations': '24f3916c-a227-42b6-86d5-cb493b0e0a4a',
+      'Cuisine': '09247453-eec9-4e8b-9b19-219e07813b00',
+      'Experiences and Activities': 'c4e5ba48-90e8-4107-9abb-c3188c07ae18',
+      'Experiences and Activities Slots': '7110589d-e6dc-441c-9c76-25b2e5579be5',
+      'Tour Guide': 'd42e5f37-7769-480b-8d88-4d8f2ae11a70',
+      'Tour Operator / Travel Agent / DMC': '9e801ff4-9dd0-48a8-81cc-660f5457158b',
+      'Aqua Tourism': 'f64bf634-df9e-4787-897d-e06b7380f724',
+      'Guided Tours': '3c387b3f-259f-4eca-a702-b3fb85317dee',
+      'Events and Festivals': '86841a14-6545-4287-96ee-009a5e3063ab',
+      'Handicrafts and Souvenirs': '0b5503ae-7861-49df-ab1e-747b356f15fa',
+    };
+
+    const esc = (v: any): string => {
+      if (v === null || v === undefined) return 'NULL';
+      const s = String(v).replace(/'/g, "''");
+      return `'${s}'`;
+    };
+
     const lines: string[] = [
-      '-- MahaAtithi Survey Data Export',
+      '-- ==========================================================',
+      '-- MahaAtithi → Client Listing Platform Export',
       `-- Generated: ${new Date().toISOString()}`,
       `-- Total surveys: ${surveys.length}`,
+      '-- Target: listing.* schema (PostgreSQL 18.2)',
+      '--',
+      '-- PRE-RUN: Ensure listing schema exists with categories seeded.',
+      '-- Run ONCE only — NOT idempotent.',
+      '-- ==========================================================',
       '',
-      'CREATE TABLE IF NOT EXISTS surveys_export (',
-      '  id UUID PRIMARY KEY,',
-      '  stakeholder_id UUID,',
-      '  stakeholder_name TEXT,',
-      '  stakeholder_district TEXT,',
-      '  enumerator_name TEXT,',
-      '  business_category TEXT,',
-      '  business_name TEXT,',
-      '  owner_name TEXT,',
-      '  mobile_number TEXT,',
-      '  email TEXT,',
-      '  district TEXT,',
-      '  city TEXT,',
-      '  pin_code TEXT,',
-      '  business_address TEXT,',
-      '  latitude DOUBLE PRECISION,',
-      '  longitude DOUBLE PRECISION,',
-      '  description TEXT,',
-      '  about_business TEXT,',
-      '  aadhar_number TEXT,',
-      '  udyam_aadhar_reg_no TEXT,',
-      '  is_completed BOOLEAN,',
-      '  agreed_to_terms BOOLEAN,',
-      '  created_at TIMESTAMP,',
-      '  updated_at TIMESTAMP',
-      ');',
+      'BEGIN;',
       '',
     ];
 
     for (const s of surveys) {
-      const esc = (v: any) => v == null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`;
-      lines.push(
-        `INSERT INTO surveys_export VALUES (${esc(s.id)}, ${esc(s.stakeholderId)}, ${esc(s.stakeholder?.companyNameStandardized)}, ${esc(s.stakeholder?.district)}, ${esc(s.enumerator?.name)}, ${esc(s.businessCategory)}, ${esc(s.businessName)}, ${esc(s.ownerName)}, ${esc(s.mobileNumber)}, ${esc(s.email)}, ${esc(s.district)}, ${esc(s.city)}, ${esc(s.pinCode)}, ${esc(s.businessAddress)}, ${s.latitude ?? 'NULL'}, ${s.longitude ?? 'NULL'}, ${esc(s.description)}, ${esc(s.aboutBusiness)}, ${esc(s.aadharNumber)}, ${esc(s.udyamAadharRegNo)}, ${s.isCompleted}, ${s.agreedToTerms}, ${esc(s.createdAt?.toISOString())}, ${esc(s.updatedAt?.toISOString())});`
-      );
+      const listingId = `gen_random_uuid()`;
+      const contactId = `gen_random_uuid()`;
+      const docId = `gen_random_uuid()`;
+      const catId = s.businessCategory && CAT_MAP[s.businessCategory]
+        ? `'${CAT_MAP[s.businessCategory]}'::uuid`
+        : 'NULL';
+      const slug = (s.businessName || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50) + '-' + s.id.slice(0, 8);
+
+      // Use a sub-CTE per survey to link listing_id across tables
+      lines.push(`-- Survey: ${s.id}`);
+      lines.push(`WITH new_listing AS (`);
+      lines.push(`  INSERT INTO listing.listings (`);
+      lines.push(`    id, user_id, slug, category_id, name_of_business, name_of_owner,`);
+      lines.push(`    description, tour_policies, agree_terms_conditions,`);
+      lines.push(`    declare_information_correct, financial_losses_risk_decleration,`);
+      lines.push(`    save_listing_as_pending, udyam_aadhar_registration_number,`);
+      lines.push(`    approval_status, platform_fee_status, view_count, admin_remark,`);
+      lines.push(`    created_at, updated_at, is_archived`);
+      lines.push(`  ) VALUES (`);
+      lines.push(`    ${listingId}, NULL, ${esc(slug)}, ${catId},`);
+      lines.push(`    ${esc(s.businessName)}, ${esc(s.ownerName)},`);
+      lines.push(`    ${esc(s.description)}, ${esc(s.accommodationPolicies)},`);
+      lines.push(`    ${s.agreedToTerms}, ${s.declaredInfoCorrect}, ${s.acknowledgedDotLiability},`);
+      lines.push(`    true, ${esc(s.udyamAadharRegNo)},`);
+      lines.push(`    'pending', 'pending', 0,`);
+      lines.push(`    ${esc('MIGRATION: survey_id=' + s.id + ' stakeholder_id=' + s.stakeholderId)},`);
+      lines.push(`    ${esc(s.createdAt?.toISOString())}, ${esc(s.updatedAt?.toISOString())}, false`);
+      lines.push(`  ) RETURNING id`);
+      lines.push(`), new_contact AS (`);
+      lines.push(`  INSERT INTO listing.contact_details (`);
+      lines.push(`    id, listing_id, business_address, city_name, district_name,`);
+      lines.push(`    pin_code, state_name, country_name, latitude, longitude,`);
+      lines.push(`    email_address, mobile_number, country_code`);
+      lines.push(`  ) SELECT`);
+      lines.push(`    ${contactId}, id, ${esc(s.businessAddress)}, ${esc(s.city)}, ${esc(s.district)},`);
+      lines.push(`    ${esc(s.pinCode)}, 'Maharashtra', 'India',`);
+      lines.push(`    ${s.latitude != null ? `'${s.latitude}'` : 'NULL'},`);
+      lines.push(`    ${s.longitude != null ? `'${s.longitude}'` : 'NULL'},`);
+      lines.push(`    ${esc(s.email)}, ${esc(s.mobileNumber)}, '+91'`);
+      lines.push(`  FROM new_listing RETURNING listing_id`);
+      lines.push(`), new_doc AS (`);
+      lines.push(`  INSERT INTO listing.business_documents (`);
+      lines.push(`    id, listing_id, about_business, tour_registration_number`);
+      lines.push(`  ) SELECT`);
+      lines.push(`    ${docId}, id, ${esc(s.aboutBusiness)}, NULL`);
+      lines.push(`  FROM new_listing RETURNING listing_id`);
+      lines.push(`)`);
+
+      // Working hours expansion
+      const wh = s.workingHours as any[] | null;
+      if (wh && Array.isArray(wh) && wh.length > 0) {
+        lines.push(`, new_wh AS (`);
+        lines.push(`  INSERT INTO listing.working_hours (id, listing_id, day_of_week, open_all_day, close_all_day, open_specific_hours)`);
+        lines.push(`  SELECT gen_random_uuid(), nl.id, d.day_of_week, d.open_all_day, d.close_all_day, d.open_specific_hours`);
+        lines.push(`  FROM new_listing nl, (VALUES`);
+        const whRows = wh.map(day => {
+          const openAll = day.type === 'open_all_day';
+          const closed = day.type === 'closed';
+          const specific = day.type === 'hours';
+          return `    ('${day.day}', ${openAll}, ${closed}, ${specific})`;
+        });
+        lines.push(whRows.join(',\n'));
+        lines.push(`  ) AS d(day_of_week, open_all_day, close_all_day, open_specific_hours)`);
+        lines.push(`  RETURNING id, day_of_week`);
+        lines.push(`)`);
+
+        // Working hours specific (only for days with type='hours')
+        const specificDays = wh.filter(d => d.type === 'hours' && d.from && d.to);
+        if (specificDays.length > 0) {
+          lines.push(`, new_whs AS (`);
+          lines.push(`  INSERT INTO listing.working_hours_specific (id, working_hours_id, from_time, to_time)`);
+          lines.push(`  SELECT gen_random_uuid(), wh.id, d.from_time::time, d.to_time::time`);
+          lines.push(`  FROM new_wh wh, (VALUES`);
+          const whsRows = specificDays.map(d => `    ('${d.day}', '${d.from}', '${d.to}')`);
+          lines.push(whsRows.join(',\n'));
+          lines.push(`  ) AS d(day_of_week, from_time, to_time)`);
+          lines.push(`  WHERE wh.day_of_week = d.day_of_week`);
+          lines.push(`  RETURNING id`);
+          lines.push(`)`);
+        }
+      }
+
+      // Rooms expansion (Accommodations only)
+      const rooms = s.rooms as any[] | null;
+      if (rooms && Array.isArray(rooms) && rooms.length > 0 && s.businessCategory === 'Accommodations') {
+        const cteLabel = wh && wh.length > 0 ? `, new_rooms AS (` : `, new_rooms AS (`;
+        lines.push(cteLabel);
+        lines.push(`  INSERT INTO listing.accommodations_rooms (id, listing_id, room_title, price, adult_capacity)`);
+        lines.push(`  SELECT gen_random_uuid(), nl.id, d.room_title, d.price, d.adult_capacity`);
+        lines.push(`  FROM new_listing nl, (VALUES`);
+        const roomRows = rooms.map(r => {
+          const price = parseFloat(r.price) || 0;
+          const capacity = parseInt(r.capacity) || 2;
+          return `    (${esc(r.name || r.type || 'Room')}, ${price}::real, ${capacity})`;
+        });
+        lines.push(roomRows.join(',\n'));
+        lines.push(`  ) AS d(room_title, price, adult_capacity)`);
+        lines.push(`  RETURNING id`);
+        lines.push(`)`);
+      }
+
+      lines.push(`SELECT 1;`);
+      lines.push('');
     }
 
-    const sql = lines.join('\n');
+    lines.push('COMMIT;');
+    lines.push('');
+    lines.push('-- END OF MIGRATION');
 
+    const sql = lines.join('\n');
     res.setHeader('Content-Type', 'application/sql');
-    res.setHeader('Content-Disposition', `attachment; filename="surveys_export_${new Date().toISOString().slice(0,10)}.sql"`);
+    res.setHeader('Content-Disposition', `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0,10)}.sql"`);
     res.send(sql);
   } catch (error) {
     next(error);
