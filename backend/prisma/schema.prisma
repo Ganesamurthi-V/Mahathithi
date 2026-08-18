@@ -220,6 +220,7 @@ model Survey {
   businessAddress String?  @map("business_address")
   aadharNumber    String?  @map("aadhar_number")       // AES-256-GCM encrypted
   udyamAadharRegNo String? @map("udyam_aadhar_reg_no")
+  panNumber       String?  @map("pan_number")
 
   // Details
   description               String?  @map("description")

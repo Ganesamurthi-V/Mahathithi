@@ -331,6 +331,7 @@ export const runAutoSync = createAsyncThunk(
               businessAddress: surveyLocal.business_address || undefined,
               aadharNumber: surveyLocal.aadhar_number || undefined,
               udyamAadharRegNo: surveyLocal.udyam_aadhar_reg_no || undefined,
+              panNumber: surveyLocal.pan_number || undefined,
               // Step 4
               description: surveyLocal.description || undefined,
               accommodationFacilities: surveyLocal.accommodation_facilities ? JSON.parse(surveyLocal.accommodation_facilities) : undefined,

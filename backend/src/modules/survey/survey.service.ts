@@ -30,6 +30,7 @@ interface CreateSurveyData {
   businessAddress?: string;
   aadharNumber?: string;
   udyamAadharRegNo?: string;
+  panNumber?: string;
   description?: string;
   accommodationFacilities?: any;
   accommodationPolicies?: string;
@@ -84,6 +85,7 @@ export class SurveyService {
       businessAddress: data.businessAddress,
       aadharNumber: data.aadharNumber,
       udyamAadharRegNo: data.udyamAadharRegNo,
+      panNumber: data.panNumber,
       description: data.description,
       accommodationFacilities: isAccommodation ? data.accommodationFacilities : undefined,
       accommodationPolicies: isAccommodation ? data.accommodationPolicies : undefined,
