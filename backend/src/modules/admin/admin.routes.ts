@@ -362,7 +362,7 @@ router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: 
 // SURVEY DATA EXPORT — Maps to client's listing.* schema
 // ============================================================================
 
-// List completed surveys for export selection
+// List completed surveys for export selection (includes export status from DB)
 router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const surveys = await prisma.survey.findMany({
@@ -377,13 +377,32 @@ router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Respon
       },
       orderBy: { createdAt: 'desc' },
     });
-    res.json({ success: true, data: surveys });
+
+    // Get all exported survey IDs
+    const exports = await prisma.surveyExport.findMany({
+      select: { surveyId: true, exportedAt: true },
+    });
+    const exportedMap = new Map(exports.map(e => [e.surveyId, e.exportedAt]));
+
+    const result = surveys.map(s => ({
+      ...s,
+      isExported: exportedMap.has(s.id),
+      exportedAt: exportedMap.get(s.id) || null,
+    }));
+
+    // Sort: new (not exported) on top, then by date desc
+    result.sort((a, b) => {
+      if (a.isExported !== b.isExported) return a.isExported ? 1 : -1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }
 });
 
-// POST: export specific surveys by IDs
+// POST: export specific surveys by IDs and mark them as exported
 router.post('/export/surveys', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const { ids } = req.body;
@@ -393,6 +412,17 @@ router.post('/export/surveys', async (req: AuthenticatedRequest, res: Response, 
     }
     const surveys = await prisma.survey.findMany({ where, orderBy: { createdAt: 'desc' } });
     const sql = generateExportSQL(surveys);
+
+    // Mark these surveys as exported
+    const exportedBy = req.enumerator?.id || null;
+    for (const s of surveys) {
+      await prisma.surveyExport.upsert({
+        where: { surveyId: s.id },
+        update: { exportedAt: new Date(), exportedBy },
+        create: { surveyId: s.id, exportedBy },
+      });
+    }
+
     res.setHeader('Content-Type', 'application/sql');
     res.setHeader('Content-Disposition', `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0,10)}.sql"`);
     res.send(sql);

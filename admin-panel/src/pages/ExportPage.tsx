@@ -1,40 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getCompletedSurveys, exportSurveysSQL } from '../api';
 
-const EXPORTED_KEY = 'mahaatithi_exported_survey_ids';
-
-function getExportedIds(): Set<string> {
-  try {
-    const raw = localStorage.getItem(EXPORTED_KEY);
-    return raw ? new Set(JSON.parse(raw)) : new Set();
-  } catch { return new Set(); }
-}
-
-function saveExportedIds(ids: Set<string>) {
-  localStorage.setItem(EXPORTED_KEY, JSON.stringify([...ids]));
-}
-
 export default function ExportPage() {
+  const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['export-surveys-list'],
     queryFn: getCompletedSurveys,
   });
 
   const surveys: any[] = data?.data?.data || [];
-  const previouslyExported = useMemo(() => getExportedIds(), []);
-
-  // Auto-select only NEW surveys (not previously exported)
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  // Auto-select only new (not exported) surveys when data loads
   useEffect(() => {
     if (surveys.length > 0) {
-      const newIds = new Set(
-        surveys.filter(s => !previouslyExported.has(s.id)).map(s => s.id)
-      );
+      const newIds = new Set(surveys.filter((s: any) => !s.isExported).map((s: any) => s.id));
       setSelected(newIds);
     }
-  }, [surveys, previouslyExported]);
+  }, [surveys]);
 
   const toggleOne = (id: string) => {
     setSelected(prev => {
@@ -45,9 +29,9 @@ export default function ExportPage() {
     });
   };
 
-  const selectAll = () => setSelected(new Set(surveys.map(s => s.id)));
+  const selectAll = () => setSelected(new Set(surveys.map((s: any) => s.id)));
   const deselectAll = () => setSelected(new Set());
-  const selectNew = () => setSelected(new Set(surveys.filter(s => !previouslyExported.has(s.id)).map(s => s.id)));
+  const selectNew = () => setSelected(new Set(surveys.filter((s: any) => !s.isExported).map((s: any) => s.id)));
 
   const handleExport = async () => {
     if (selected.size === 0) { alert('Select at least one survey to export.'); return; }
@@ -61,15 +45,14 @@ export default function ExportPage() {
       a.click();
       window.URL.revokeObjectURL(url);
 
-      // Mark these as exported
-      const updated = new Set([...previouslyExported, ...selected]);
-      saveExportedIds(updated);
+      // Refresh the list to reflect newly exported status
+      queryClient.invalidateQueries({ queryKey: ['export-surveys-list'] });
     } catch (e: any) {
       alert('Export failed: ' + (e.message || 'Unknown error'));
     }
   };
 
-  const newCount = surveys.filter(s => !previouslyExported.has(s.id)).length;
+  const newCount = surveys.filter((s: any) => !s.isExported).length;
   const oldCount = surveys.length - newCount;
 
   if (isLoading) return <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>Loading surveys...</div>;
@@ -100,7 +83,7 @@ export default function ExportPage() {
           <thead>
             <tr>
               <th style={{ width: '40px' }}>
-                <input type="checkbox" checked={selected.size === surveys.length} onChange={() => selected.size === surveys.length ? deselectAll() : selectAll()} />
+                <input type="checkbox" checked={selected.size === surveys.length && surveys.length > 0} onChange={() => selected.size === surveys.length ? deselectAll() : selectAll()} />
               </th>
               <th>Business Name</th>
               <th>Category</th>
@@ -114,25 +97,22 @@ export default function ExportPage() {
             {surveys.length === 0 && (
               <tr><td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No completed surveys found.</td></tr>
             )}
-            {surveys.map((s: any) => {
-              const isNew = !previouslyExported.has(s.id);
-              return (
-                <tr key={s.id} style={{ opacity: isNew ? 1 : 0.6 }}>
-                  <td><input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleOne(s.id)} /></td>
-                  <td style={{ fontWeight: '600' }}>{s.businessName || '—'}</td>
-                  <td>{s.businessCategory || '—'}</td>
-                  <td>{s.district || '—'}</td>
-                  <td>{s.city || '—'}</td>
-                  <td style={{ fontSize: '13px' }}>{s.createdAt ? new Date(s.createdAt).toLocaleDateString() : '—'}</td>
-                  <td>
-                    {isNew
-                      ? <span className="badge badge-active">New</span>
-                      : <span className="badge badge-pending">Exported</span>
-                    }
-                  </td>
-                </tr>
-              );
-            })}
+            {surveys.map((s: any) => (
+              <tr key={s.id} style={{ opacity: s.isExported ? 0.6 : 1 }}>
+                <td><input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleOne(s.id)} /></td>
+                <td style={{ fontWeight: '600' }}>{s.businessName || '—'}</td>
+                <td>{s.businessCategory || '—'}</td>
+                <td>{s.district || '—'}</td>
+                <td>{s.city || '—'}</td>
+                <td style={{ fontSize: '13px' }}>{s.createdAt ? new Date(s.createdAt).toLocaleDateString() : '—'}</td>
+                <td>
+                  {s.isExported
+                    ? <span className="badge badge-pending">Exported</span>
+                    : <span className="badge badge-active">New</span>
+                  }
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

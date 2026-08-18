@@ -453,3 +453,18 @@ model Facility {
   @@index([name])
   @@map("facilities")
 }
+
+// ============================================================================
+// SURVEY EXPORT TRACKING
+// ============================================================================
+
+model SurveyExport {
+  id         String   @id @default(uuid())
+  surveyId   String   @map("survey_id")
+  exportedAt DateTime @default(now()) @map("exported_at")
+  exportedBy String?  @map("exported_by") // enumerator/admin id
+
+  @@unique([surveyId])
+  @@index([exportedAt])
+  @@map("survey_exports")
+}
