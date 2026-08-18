@@ -48,6 +48,9 @@ export default function Layout({ user, onLogout }: { user: User; onLogout: () =>
             <div className={`nav-item ${activePage === 'audit' ? 'active' : ''}`} onClick={() => navigate('/audit')}>
               <span className="icon">📋</span> Audit Logs
             </div>
+            <div className={`nav-item ${activePage === 'export' ? 'active' : ''}`} onClick={() => navigate('/export')}>
+              <span className="icon">📥</span> Export SQL
+            </div>
           </div>
         </nav>
 

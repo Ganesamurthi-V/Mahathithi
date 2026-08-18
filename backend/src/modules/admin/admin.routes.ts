@@ -362,14 +362,62 @@ router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: 
 // SURVEY DATA EXPORT — Maps to client's listing.* schema
 // ============================================================================
 
+// List completed surveys for export selection
+router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const surveys = await prisma.survey.findMany({
+      where: { isCompleted: true, isDraft: false },
+      select: {
+        id: true,
+        businessName: true,
+        businessCategory: true,
+        district: true,
+        city: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ success: true, data: surveys });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST: export specific surveys by IDs
+router.post('/export/surveys', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ids } = req.body;
+    const where: any = { isCompleted: true, isDraft: false };
+    if (ids && Array.isArray(ids) && ids.length > 0) {
+      where.id = { in: ids };
+    }
+    const surveys = await prisma.survey.findMany({ where, orderBy: { createdAt: 'desc' } });
+    const sql = generateExportSQL(surveys);
+    res.setHeader('Content-Type', 'application/sql');
+    res.setHeader('Content-Disposition', `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0,10)}.sql"`);
+    res.send(sql);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET: export all completed surveys
 router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const surveys = await prisma.survey.findMany({
       where: { isCompleted: true, isDraft: false },
       orderBy: { createdAt: 'desc' },
     });
+    const sql = generateExportSQL(surveys);
+    res.setHeader('Content-Type', 'application/sql');
+    res.setHeader('Content-Disposition', `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0,10)}.sql"`);
+    res.send(sql);
+  } catch (error) {
+    next(error);
+  }
+});
 
-    // Category mapping: our business_category → client's listing.categories.id
+function generateExportSQL(surveys: any[]): string {
     const CAT_MAP: Record<string, string> = {
       'Accommodations': '24f3916c-a227-42b6-86d5-cb493b0e0a4a',
       'Cuisine': '09247453-eec9-4e8b-9b19-219e07813b00',
@@ -385,8 +433,7 @@ router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, n
 
     const esc = (v: any): string => {
       if (v === null || v === undefined) return 'NULL';
-      const s = String(v).replace(/'/g, "''");
-      return `'${s}'`;
+      return `'${String(v).replace(/'/g, "''")}'`;
     };
 
     const lines: string[] = [
@@ -394,115 +441,43 @@ router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, n
       '-- MahaAtithi → Client Listing Platform Export',
       `-- Generated: ${new Date().toISOString()}`,
       `-- Total surveys: ${surveys.length}`,
-      '-- Target: listing.* schema (PostgreSQL 18.2)',
-      '--',
-      '-- PRE-RUN: Ensure listing schema exists with categories seeded.',
-      '-- Run ONCE only — NOT idempotent.',
       '-- ==========================================================',
-      '',
-      'BEGIN;',
-      '',
+      '', 'BEGIN;', '',
     ];
 
     for (const s of surveys) {
-      const listingId = `gen_random_uuid()`;
-      const contactId = `gen_random_uuid()`;
-      const docId = `gen_random_uuid()`;
-      const catId = s.businessCategory && CAT_MAP[s.businessCategory]
-        ? `'${CAT_MAP[s.businessCategory]}'::uuid`
-        : 'NULL';
+      const catId = s.businessCategory && CAT_MAP[s.businessCategory] ? `'${CAT_MAP[s.businessCategory]}'::uuid` : 'NULL';
       const slug = (s.businessName || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50) + '-' + s.id.slice(0, 8);
 
-      // Use a sub-CTE per survey to link listing_id across tables
       lines.push(`-- Survey: ${s.id}`);
       lines.push(`WITH new_listing AS (`);
-      lines.push(`  INSERT INTO listing.listings (`);
-      lines.push(`    id, user_id, slug, category_id, name_of_business, name_of_owner,`);
-      lines.push(`    description, tour_policies, agree_terms_conditions,`);
-      lines.push(`    declare_information_correct, financial_losses_risk_decleration,`);
-      lines.push(`    save_listing_as_pending, udyam_aadhar_registration_number,`);
-      lines.push(`    approval_status, platform_fee_status, view_count, admin_remark,`);
-      lines.push(`    created_at, updated_at, is_archived`);
-      lines.push(`  ) VALUES (`);
-      lines.push(`    ${listingId}, NULL, ${esc(slug)}, ${catId},`);
-      lines.push(`    ${esc(s.businessName)}, ${esc(s.ownerName)},`);
-      lines.push(`    ${esc(s.description)}, ${esc(s.accommodationPolicies)},`);
-      lines.push(`    ${s.agreedToTerms}, ${s.declaredInfoCorrect}, ${s.acknowledgedDotLiability},`);
-      lines.push(`    true, ${esc(s.udyamAadharRegNo)},`);
-      lines.push(`    'pending', 'pending', 0,`);
-      lines.push(`    ${esc('MIGRATION: survey_id=' + s.id + ' stakeholder_id=' + s.stakeholderId)},`);
-      lines.push(`    ${esc(s.createdAt?.toISOString())}, ${esc(s.updatedAt?.toISOString())}, false`);
-      lines.push(`  ) RETURNING id`);
+      lines.push(`  INSERT INTO listing.listings (id, user_id, slug, category_id, name_of_business, name_of_owner, description, tour_policies, agree_terms_conditions, declare_information_correct, financial_losses_risk_decleration, save_listing_as_pending, udyam_aadhar_registration_number, approval_status, platform_fee_status, view_count, admin_remark, created_at, updated_at, is_archived)`);
+      lines.push(`  VALUES (gen_random_uuid(), NULL, ${esc(slug)}, ${catId}, ${esc(s.businessName)}, ${esc(s.ownerName)}, ${esc(s.description)}, ${esc(s.accommodationPolicies)}, ${s.agreedToTerms}, ${s.declaredInfoCorrect}, ${s.acknowledgedDotLiability}, true, ${esc(s.udyamAadharRegNo)}, 'pending', 'pending', 0, ${esc('MIGRATION: survey_id=' + s.id)}, ${esc(s.createdAt?.toISOString())}, ${esc(s.updatedAt?.toISOString())}, false)`);
+      lines.push(`  RETURNING id`);
       lines.push(`), new_contact AS (`);
-      lines.push(`  INSERT INTO listing.contact_details (`);
-      lines.push(`    id, listing_id, business_address, city_name, district_name,`);
-      lines.push(`    pin_code, state_name, country_name, latitude, longitude,`);
-      lines.push(`    email_address, mobile_number, country_code`);
-      lines.push(`  ) SELECT`);
-      lines.push(`    ${contactId}, id, ${esc(s.businessAddress)}, ${esc(s.city)}, ${esc(s.district)},`);
-      lines.push(`    ${esc(s.pinCode)}, 'Maharashtra', 'India',`);
-      lines.push(`    ${s.latitude != null ? `'${s.latitude}'` : 'NULL'},`);
-      lines.push(`    ${s.longitude != null ? `'${s.longitude}'` : 'NULL'},`);
-      lines.push(`    ${esc(s.email)}, ${esc(s.mobileNumber)}, '+91'`);
-      lines.push(`  FROM new_listing RETURNING listing_id`);
+      lines.push(`  INSERT INTO listing.contact_details (id, listing_id, business_address, city_name, district_name, pin_code, state_name, country_name, latitude, longitude, email_address, mobile_number, country_code)`);
+      lines.push(`  SELECT gen_random_uuid(), id, ${esc(s.businessAddress)}, ${esc(s.city)}, ${esc(s.district)}, ${esc(s.pinCode)}, 'Maharashtra', 'India', ${s.latitude != null ? `'${s.latitude}'` : 'NULL'}, ${s.longitude != null ? `'${s.longitude}'` : 'NULL'}, ${esc(s.email)}, ${esc(s.mobileNumber)}, '+91' FROM new_listing RETURNING listing_id`);
       lines.push(`), new_doc AS (`);
-      lines.push(`  INSERT INTO listing.business_documents (`);
-      lines.push(`    id, listing_id, about_business, tour_registration_number`);
-      lines.push(`  ) SELECT`);
-      lines.push(`    ${docId}, id, ${esc(s.aboutBusiness)}, NULL`);
-      lines.push(`  FROM new_listing RETURNING listing_id`);
+      lines.push(`  INSERT INTO listing.business_documents (id, listing_id, about_business) SELECT gen_random_uuid(), id, ${esc(s.aboutBusiness)} FROM new_listing RETURNING listing_id`);
       lines.push(`)`);
 
-      // Working hours expansion
       const wh = s.workingHours as any[] | null;
       if (wh && Array.isArray(wh) && wh.length > 0) {
         lines.push(`, new_wh AS (`);
         lines.push(`  INSERT INTO listing.working_hours (id, listing_id, day_of_week, open_all_day, close_all_day, open_specific_hours)`);
-        lines.push(`  SELECT gen_random_uuid(), nl.id, d.day_of_week, d.open_all_day, d.close_all_day, d.open_specific_hours`);
-        lines.push(`  FROM new_listing nl, (VALUES`);
-        const whRows = wh.map(day => {
-          const openAll = day.type === 'open_all_day';
-          const closed = day.type === 'closed';
-          const specific = day.type === 'hours';
-          return `    ('${day.day}', ${openAll}, ${closed}, ${specific})`;
-        });
-        lines.push(whRows.join(',\n'));
-        lines.push(`  ) AS d(day_of_week, open_all_day, close_all_day, open_specific_hours)`);
-        lines.push(`  RETURNING id, day_of_week`);
+        lines.push(`  SELECT gen_random_uuid(), nl.id, d.day_of_week, d.open_all_day, d.close_all_day, d.open_specific_hours FROM new_listing nl, (VALUES`);
+        lines.push(wh.map(d => `    ('${d.day}', ${d.type === 'open_all_day'}, ${d.type === 'closed'}, ${d.type === 'hours'})`).join(',\n'));
+        lines.push(`  ) AS d(day_of_week, open_all_day, close_all_day, open_specific_hours) RETURNING id, day_of_week`);
         lines.push(`)`);
-
-        // Working hours specific (only for days with type='hours')
-        const specificDays = wh.filter(d => d.type === 'hours' && d.from && d.to);
-        if (specificDays.length > 0) {
-          lines.push(`, new_whs AS (`);
-          lines.push(`  INSERT INTO listing.working_hours_specific (id, working_hours_id, from_time, to_time)`);
-          lines.push(`  SELECT gen_random_uuid(), wh.id, d.from_time::time, d.to_time::time`);
-          lines.push(`  FROM new_wh wh, (VALUES`);
-          const whsRows = specificDays.map(d => `    ('${d.day}', '${d.from}', '${d.to}')`);
-          lines.push(whsRows.join(',\n'));
-          lines.push(`  ) AS d(day_of_week, from_time, to_time)`);
-          lines.push(`  WHERE wh.day_of_week = d.day_of_week`);
-          lines.push(`  RETURNING id`);
-          lines.push(`)`);
-        }
       }
 
-      // Rooms expansion (Accommodations only)
       const rooms = s.rooms as any[] | null;
       if (rooms && Array.isArray(rooms) && rooms.length > 0 && s.businessCategory === 'Accommodations') {
-        const cteLabel = wh && wh.length > 0 ? `, new_rooms AS (` : `, new_rooms AS (`;
-        lines.push(cteLabel);
+        lines.push(`, new_rooms AS (`);
         lines.push(`  INSERT INTO listing.accommodations_rooms (id, listing_id, room_title, price, adult_capacity)`);
-        lines.push(`  SELECT gen_random_uuid(), nl.id, d.room_title, d.price, d.adult_capacity`);
-        lines.push(`  FROM new_listing nl, (VALUES`);
-        const roomRows = rooms.map(r => {
-          const price = parseFloat(r.price) || 0;
-          const capacity = parseInt(r.capacity) || 2;
-          return `    (${esc(r.name || r.type || 'Room')}, ${price}::real, ${capacity})`;
-        });
-        lines.push(roomRows.join(',\n'));
-        lines.push(`  ) AS d(room_title, price, adult_capacity)`);
-        lines.push(`  RETURNING id`);
+        lines.push(`  SELECT gen_random_uuid(), nl.id, d.room_title, d.price, d.adult_capacity FROM new_listing nl, (VALUES`);
+        lines.push(rooms.map(r => `    (${esc(r.name || r.type || 'Room')}, ${parseFloat(r.price) || 0}::real, ${parseInt(r.capacity) || 2})`).join(',\n'));
+        lines.push(`  ) AS d(room_title, price, adult_capacity) RETURNING id`);
         lines.push(`)`);
       }
 
@@ -511,16 +486,7 @@ router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, n
     }
 
     lines.push('COMMIT;');
-    lines.push('');
-    lines.push('-- END OF MIGRATION');
-
-    const sql = lines.join('\n');
-    res.setHeader('Content-Type', 'application/sql');
-    res.setHeader('Content-Disposition', `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0,10)}.sql"`);
-    res.send(sql);
-  } catch (error) {
-    next(error);
-  }
-});
+    return lines.join('\n');
+}
 
 export default router;

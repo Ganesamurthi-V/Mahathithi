@@ -61,18 +61,8 @@ export default function DashboardPage() {
         </div>
         <div className="stat-card green">
           <div className="stat-icon">✅</div>
-          <div className="stat-value">{(statusMap.CLOSED || 0).toLocaleString()}</div>
-          <div className="stat-label">Closed</div>
-        </div>
-        <div className="stat-card blue">
-          <div className="stat-icon">⏳</div>
-          <div className="stat-value">{(statusMap.PENDING || 0).toLocaleString()}</div>
-          <div className="stat-label">Pending</div>
-        </div>
-        <div className="stat-card purple">
-          <div className="stat-icon">🔍</div>
-          <div className="stat-value">{(statusMap.IN_REVIEW || 0).toLocaleString()}</div>
-          <div className="stat-label">In Review</div>
+          <div className="stat-value">{(analytics?.completedSurveys || 0).toLocaleString()}</div>
+          <div className="stat-label">Completed Surveys</div>
         </div>
         <div className="stat-card red">
           <div className="stat-icon">👥</div>

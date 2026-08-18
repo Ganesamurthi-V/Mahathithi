@@ -14,6 +14,7 @@ const EnumeratorsPage = lazy(() => import('./pages/EnumeratorsPage'));
 const StakeholdersPage = lazy(() => import('./pages/StakeholdersPage'));
 const DistrictsPage = lazy(() => import('./pages/DistrictsPage'));
 const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage'));
+const ExportPage = lazy(() => import('./pages/ExportPage'));
 
 // Components
 import Layout from './components/Layout';
@@ -92,6 +93,7 @@ export default function App() {
             <Route path="enumerators" element={<Suspense fallback={<RouteFallback />}><EnumeratorsPage /></Suspense>} />
             <Route path="districts" element={<Suspense fallback={<RouteFallback />}><DistrictsPage /></Suspense>} />
             <Route path="audit" element={<Suspense fallback={<RouteFallback />}><AuditLogsPage /></Suspense>} />
+            <Route path="export" element={<Suspense fallback={<RouteFallback />}><ExportPage /></Suspense>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
