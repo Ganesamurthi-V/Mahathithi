@@ -378,20 +378,24 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                         { label: 'Owner', value: survey.ownerName },
                         { label: 'District', value: survey.district },
                         { label: 'City', value: survey.city },
-                        { label: 'Taluka', value: survey.taluka },
-                        { label: 'Village', value: survey.village },
                         { label: 'PIN Code', value: survey.pinCode },
                         { label: 'Business Address', value: survey.businessAddress },
-                        { label: 'Working Address', value: survey.workingAddress },
-                        { label: 'Male Employees', value: survey.maleEmployees?.toString() },
-                        { label: 'Female Employees', value: survey.femaleEmployees?.toString() },
-                        { label: 'Landline', value: survey.landline },
-                        { label: 'Alternate Mobile', value: survey.alternateMobile },
-                        { label: 'Alternate Email', value: survey.alternateEmail },
-                        { label: 'GST Number', value: survey.gstNumber },
-                        { label: 'PAN Number', value: survey.panNumber },
-                        { label: 'Establishment Cert. No.', value: survey.establishmentCertNo },
-                        { label: 'FSSAI Number', value: survey.fssaiNumber },
+                      ].filter(r => r.value).map((row, i) => (
+                        <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── Government IDs & Registrations ─── */}
+                {(survey.aadharNumber || survey.panNumber || survey.udyamAadharRegNo) && (
+                  <div style={{ marginTop: '16px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>Government IDs & Registrations</div>
+                    <div className="gallery-info-grid">
+                      {[
+                        { label: 'Aadhar Card Number', value: survey.aadharNumber },
+                        { label: 'PAN Card Number', value: survey.panNumber },
+                        { label: 'Udyam Aadhar Reg. No.', value: survey.udyamAadharRegNo },
                       ].filter(r => r.value).map((row, i) => (
                         <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
                       ))}

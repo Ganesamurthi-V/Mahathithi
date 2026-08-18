@@ -619,13 +619,13 @@ export const surveyDao = {
         nearest_healthcare_center, is_draft, is_completed, is_synced,
         sub_categories, business_name, owner_name, district, city, taluka, village, pin_code,
         business_address, working_address, male_employees, female_employees, landline,
-        alternate_mobile, alternate_email, pan_number, establishment_cert_no, fssai_number,
+        alternate_mobile, alternate_email, aadhar_number, udyam_aadhar_reg_no, pan_number, establishment_cert_no, fssai_number,
         description, accommodation_facilities, accommodation_policies, working_hours, faq,
         rooms, coupon_codes, sale_off, additional_service_fees, booking_note,
         social_links, about_business, registered_travel_for_life, registered_green_leaf,
         received_tourism_award, custom_documents, agreed_to_terms, declared_info_correct,
         acknowledged_dot_liability, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [id, survey.stakeholderId, survey.enumeratorId, survey.contactPerson,
        survey.designation, survey.mobileNumber, survey.email, survey.contactPerson2, survey.mobileNumber2, survey.email2, survey.website,
        survey.businessCategory, survey.notes, survey.gstNumber,
@@ -640,6 +640,7 @@ export const surveyDao = {
        survey.businessAddress || null, survey.workingAddress || null,
        survey.maleEmployees ?? null, survey.femaleEmployees ?? null,
        survey.landline || null, survey.alternateMobile || null, survey.alternateEmail || null,
+       survey.aadharNumber || null, survey.udyamAadharRegNo || null,
        survey.panNumber || null, survey.establishmentCertNo || null, survey.fssaiNumber || null,
        // Step 4
        survey.description || null,

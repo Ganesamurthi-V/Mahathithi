@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, ScrollView, TouchableOpacity,
-  StyleSheet, Alert, ActivityIndicator, Platform, KeyboardAvoidingView, Animated, Image
+  StyleSheet, Alert, ActivityIndicator, Platform, Animated, Image
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { useForm, Controller } from 'react-hook-form';
 import Geolocation from 'react-native-geolocation-service';
 import { useSelector, useDispatch } from 'react-redux';
@@ -27,9 +28,9 @@ interface SurveyFormData {
   businessAddress: string;
   mobileNumber: string;
   email: string;
-  gstNumber: string;
+  aadharNumber: string;
+  udyamAadharRegNo: string;
   panNumber: string;
-  establishmentCertNo: string;
   nearestPoliceStation: string;
   nearestHealthcareCenter: string;
 }
@@ -289,7 +290,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const [declaredInfoCorrect, setDeclaredInfoCorrect] = useState(!!existingSurvey?.declared_info_correct);
   const [acknowledgedDotLiability, setAcknowledgedDotLiability] = useState(!!existingSurvey?.acknowledged_dot_liability);
   
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<any>(null);
   const isSubmitSuccessRef = useRef(false);
 
 
@@ -311,9 +312,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       businessAddress: existingSurvey?.business_address || existingSurvey?.businessAddress || '',
       mobileNumber: existingSurvey?.mobileNumber || existingSurvey?.mobile_number || '',
       email: existingSurvey?.email || '',
-      gstNumber: existingSurvey?.gst_number || existingSurvey?.gstNumber || '',
+      aadharNumber: '',
+      udyamAadharRegNo: existingSurvey?.udyam_aadhar_reg_no || existingSurvey?.udyamAadharRegNo || '',
       panNumber: existingSurvey?.pan_number || existingSurvey?.panNumber || '',
-      establishmentCertNo: existingSurvey?.establishment_cert_no || existingSurvey?.establishmentCertNo || '',
       nearestPoliceStation: existingSurvey?.nearestPoliceStation || existingSurvey?.nearest_police_station || '',
       nearestHealthcareCenter: existingSurvey?.nearestHealthcareCenter || existingSurvey?.nearest_healthcare_center || '',
     },
@@ -926,11 +927,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
-    >
+    <View style={styles.container}>
       <View style={styles.progressContainer}>
         <View style={[styles.progressBar, { width: `${completionPercent}%`, backgroundColor: completionPercent === 100 ? colors.success : colors.primary }]} />
       </View>
@@ -952,7 +949,14 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         ))}
       </ScrollView>
 
-      <ScrollView ref={scrollViewRef} style={{ flex: 1 }} contentContainerStyle={styles.content}>
+      <KeyboardAwareScrollView
+        innerRef={(ref: any) => { scrollViewRef.current = ref; }}
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.content}
+        enableOnAndroid={true}
+        extraScrollHeight={120}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.stakeholderInfo}>
           <Text style={styles.stakeholderName}>{stakeholder?.companyNameStandardized}</Text>
           <Text style={styles.stakeholderMeta}>{stakeholder?.district} • {stakeholder?.pinCode}</Text>
@@ -1079,10 +1083,35 @@ export default function SurveyFormScreen({ route, navigation }: any) {
               <AnimatedInput field={{ name: 'mobileNumber', label: 'Mobile Number *', placeholder: '10-digit mobile number', required: true, keyboardType: 'phone-pad', maxLength: 10, prefix: '+91', pattern: { value: /^[0-9]{10}$/, message: 'Invalid number' } }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
               <AnimatedInput field={{ name: 'email', label: 'Email Address *', placeholder: 'email@example.com', required: true, keyboardType: 'email-address' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
-              <Text style={styles.sectionHeader}>Government IDs & Registrations</Text>
-              <AnimatedInput field={{ name: 'gstNumber', label: 'GST Number', placeholder: 'e.g. 22AAAAA0000A1Z5', required: false }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
-              <AnimatedInput field={{ name: 'panNumber', label: 'PAN Number', placeholder: 'e.g. ABCDE1234F', required: false, maxLength: 10 }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
-              <AnimatedInput field={{ name: 'establishmentCertNo', label: 'Establishment Certificate No.', placeholder: 'Certificate number', required: false }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <Text style={styles.sectionHeader}>Government IDs</Text>
+              {/* Aadhar with auto-formatting: displays as "1234 5678 9012" but stores as "123456789012" */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Aadhar Card Number *</Text>
+                <View style={[styles.inputWrapper, { borderWidth: 1, borderColor: colors.border }]}>
+                  <Controller
+                    control={control}
+                    name="aadharNumber"
+                    rules={{ required: 'Aadhar Card Number is required', pattern: { value: /^\d{12}$/, message: 'Must be 12 digits' } }}
+                    render={({ field: { onChange, value } }) => (
+                      <TextInput
+                        style={styles.input}
+                        placeholder="XXXX XXXX XXXX"
+                        placeholderTextColor={colors.textMuted}
+                        keyboardType="numeric"
+                        maxLength={14}
+                        value={value ? value.replace(/(\d{4})(?=\d)/g, '$1 ').trim() : ''}
+                        onChangeText={(text) => {
+                          const digits = text.replace(/\s/g, '').slice(0, 12);
+                          onChange(digits);
+                        }}
+                      />
+                    )}
+                  />
+                </View>
+                {errors.aadharNumber && <Text style={styles.errorText}>{errors.aadharNumber?.message}</Text>}
+              </View>
+              <AnimatedInput field={{ name: 'udyamAadharRegNo', label: 'Udyam Aadhar Registration No. *', placeholder: 'e.g. UDYAM-MH-00-0000000', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'panNumber', label: 'PAN Card Number * (ALL CAPS)', placeholder: 'e.g. ABCDE1234F', required: true, maxLength: 10, pattern: { value: /^[A-Z]{5}[0-9]{4}[A-Z]$/, message: 'Invalid PAN format' } }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
               <Text style={styles.sectionHeader}>Nearest Facilities</Text>
               {nearestFacilityFields.map(f => (
@@ -1261,7 +1290,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             </Animated.View>
           </View>
         )}
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       {/* Bottom Action Bar for Next/Prev */}
       <View style={styles.bottomActionBar}>
@@ -1286,7 +1315,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           <View style={{ flex: 1 }} />
         )}
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
