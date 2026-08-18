@@ -11,6 +11,7 @@ export default function ExportPage() {
 
   const surveys: any[] = data?.data?.data || [];
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [exporting, setExporting] = useState(false);
 
   // Auto-select only new (not exported) surveys when data loads
   useEffect(() => {
@@ -35,6 +36,7 @@ export default function ExportPage() {
 
   const handleExport = async () => {
     if (selected.size === 0) { alert('Select at least one survey to export.'); return; }
+    setExporting(true);
     try {
       const res = await exportSurveysSQL([...selected]);
       const blob = new Blob([res.data], { type: 'application/sql' });
@@ -44,11 +46,11 @@ export default function ExportPage() {
       a.download = `mahaatithi_export_${new Date().toISOString().slice(0, 10)}.sql`;
       a.click();
       window.URL.revokeObjectURL(url);
-
-      // Refresh the list to reflect newly exported status
       queryClient.invalidateQueries({ queryKey: ['export-surveys-list'] });
     } catch (e: any) {
       alert('Export failed: ' + (e.message || 'Unknown error'));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -59,13 +61,13 @@ export default function ExportPage() {
 
   return (
     <>
-      <div className="page-header">
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
         <div>
           <h2>Export Surveys</h2>
           <p>Select surveys to export as SQL for the client's listing platform</p>
         </div>
-        <button className="btn btn-primary" onClick={handleExport} disabled={selected.size === 0}>
-          📥 Export Selected ({selected.size})
+        <button className="btn btn-primary" onClick={handleExport} disabled={selected.size === 0 || exporting} style={{ whiteSpace: 'nowrap' }}>
+          {exporting ? '⏳ Exporting...' : `📥 Export Selected (${selected.size})`}
         </button>
       </div>
 
