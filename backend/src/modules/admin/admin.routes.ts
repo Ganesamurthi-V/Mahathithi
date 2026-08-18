@@ -26,16 +26,17 @@ router.use(authMiddleware, adminOnly);
 // Dashboard stats
 router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const [totalStakeholders, completedSurveys, pendingSync, failedSync] = await Promise.all([
+    const [totalStakeholders, completedSurveys, pendingSync, failedSync, exportedSurveys] = await Promise.all([
       prisma.stakeholder.count(),
       prisma.survey.count({ where: { isCompleted: true } }),
       prisma.syncQueue.count({ where: { status: 'PENDING' } }),
       prisma.syncQueue.count({ where: { status: 'FAILED' } }),
+      prisma.surveyExport.count(),
     ]);
 
     res.json({
       success: true,
-      data: { totalStakeholders, completedSurveys, pendingSync, failedSync },
+      data: { totalStakeholders, completedSurveys, pendingSync, failedSync, exportedSurveys },
     });
   } catch (error) {
     next(error);

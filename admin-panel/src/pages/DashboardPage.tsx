@@ -56,6 +56,11 @@ export default function DashboardPage() {
           <div className="stat-value">{enumerators.length}</div>
           <div className="stat-label">Enumerators</div>
         </div>
+        <div className="stat-card blue">
+          <div className="stat-icon">📤</div>
+          <div className="stat-value">{(analytics?.exportedSurveys || 0).toLocaleString()}</div>
+          <div className="stat-label">Exported Surveys</div>
+        </div>
       </div>
 
       {/* Top Districts */}
