@@ -2,7 +2,7 @@
 -- These are either old form fields replaced by new ones, or optional fields
 -- that were removed from the form and never populated with real data.
 
--- Old form fields (replaced)
+-- Old form fields (replaced by new 8-step form)
 ALTER TABLE surveys DROP COLUMN IF EXISTS contact_person;
 ALTER TABLE surveys DROP COLUMN IF EXISTS contact_person_2;
 ALTER TABLE surveys DROP COLUMN IF EXISTS designation;
@@ -35,6 +35,5 @@ ALTER TABLE surveys DROP COLUMN IF EXISTS registered_green_leaf;
 ALTER TABLE surveys DROP COLUMN IF EXISTS received_tourism_award;
 ALTER TABLE surveys DROP COLUMN IF EXISTS custom_documents;
 
--- External columns not in Prisma schema
-ALTER TABLE surveys DROP COLUMN IF EXISTS pan_number;
+-- establishment_cert_no is not in Prisma schema and not used
 ALTER TABLE surveys DROP COLUMN IF EXISTS establishment_cert_no;

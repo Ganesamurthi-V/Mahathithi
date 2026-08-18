@@ -1,0 +1,54 @@
+[
+  {
+    "table_name": "_prisma_migrations",
+    "columns": "id, checksum, finished_at, migration_name, logs, rolled_back_at, started_at, applied_steps_count"
+  },
+  {
+    "table_name": "audit_logs",
+    "columns": "id, action, entity_type, entity_id, enumerator_id, details, ip_address, created_at"
+  },
+  {
+    "table_name": "districts",
+    "columns": "id, name, state, code, is_active, created_at"
+  },
+  {
+    "table_name": "enumerator_districts",
+    "columns": "id, enumerator_id, district_id, assigned_at"
+  },
+  {
+    "table_name": "enumerators",
+    "columns": "id, login_id, password_hash, name, phone, email, is_active, is_admin, created_at, updated_at"
+  },
+  {
+    "table_name": "facilities",
+    "columns": "id, name, type, district, state, latitude, longitude, digipin"
+  },
+  {
+    "table_name": "media",
+    "columns": "id, survey_id, type, photo_category, file_path, file_url, file_name, file_size, mime_type, latitude, longitude, gps_accuracy, captured_at, duration, thumbnail_path, is_synced, local_id, synced_at, created_at, deleted_at, digipin"
+  },
+  {
+    "table_name": "phone_validations",
+    "columns": "id, stakeholder_id, enumerator_id, phone_number, status, method, verified_at, remarks, is_synced, local_id, created_at, updated_at"
+  },
+  {
+    "table_name": "sessions",
+    "columns": "id, enumerator_id, refresh_token, device_info, ip_address, is_valid, expires_at, created_at, updated_at"
+  },
+  {
+    "table_name": "stakeholders",
+    "columns": "id, primary_key_id, uin, data_source, cin_number, gst_number, tin_number, company_name_standardized, company_name_original, full_address_raw, address_line_1, address_line_2, city, taluka, village, district, state, pin_code, nic_code, nic_description, category, priority_weight, company_class, company_status, company_category, authorized_capital, paidup_capital, listing_status, registration_date, fuzzy_similarity_score, cross_source_match, human_review_required, dedup_match_status, source_lineage_notes, status, locked_by_id, locked_at, created_at, updated_at, digipin, latitude, longitude"
+  },
+  {
+    "table_name": "survey_exports",
+    "columns": "id, survey_id, exported_at, exported_by"
+  },
+  {
+    "table_name": "surveys",
+    "columns": "id, stakeholder_id, enumerator_id, mobile_number, email, business_category, latitude, longitude, gps_accuracy, is_draft, is_completed, is_synced, local_id, completed_at, synced_at, created_at, updated_at, nearest_healthcare_center, nearest_police_station, digipin, sub_categories, business_name, owner_name, district, city, pin_code, business_address, aadhar_number, udyam_aadhar_reg_no, description, accommodation_facilities, accommodation_policies, working_hours, rooms, about_business, agreed_to_terms, declared_info_correct, acknowledged_dot_liability, pan_number"
+  },
+  {
+    "table_name": "sync_queue",
+    "columns": "id, entity_type, entity_id, action, payload, status, retry_count, max_retries, error_message, processed_at, created_at, updated_at, enumerator_id"
+  }
+]

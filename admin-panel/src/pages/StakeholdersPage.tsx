@@ -346,10 +346,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                 <h4 className="gallery-section-title">📝 Survey Data</h4>
                 <div className="gallery-info-grid">
                   {[
-                    { label: 'Contact Person', value: survey.contactPerson }, { label: 'Designation', value: survey.designation },
                     { label: 'Mobile', value: survey.mobileNumber }, { label: 'Email', value: survey.email },
-                    { label: 'Website', value: survey.website }, { label: 'Org Type', value: survey.organizationType },
-                    { label: 'Remarks', value: survey.remarks },
                   ].filter(r => r.value).map((row, i) => (
                     <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
                   ))}

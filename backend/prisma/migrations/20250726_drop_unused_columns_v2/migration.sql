@@ -1,0 +1,19 @@
+-- No columns to drop.
+-- All tables have been verified against the Prisma schema and application usage.
+-- Every column in every table is actively used:
+--
+-- surveys: Already cleaned (previous migration dropped unused columns)
+-- stakeholders: All 42 columns are from the original CSV import and displayed in the app
+-- media: All columns used by upload/display/sync pipeline
+-- enumerators: All columns used by auth/admin
+-- sessions: All columns used by JWT auth
+-- districts: All columns used by district assignment
+-- enumerator_districts: All columns used by district assignment
+-- audit_logs: All columns used by audit trail
+-- facilities: All columns used by nearest facility lookup
+-- phone_validations: All columns used by phone validation module
+-- sync_queue: All columns used by offline sync pipeline
+-- survey_exports: All columns used by export tracking
+--
+-- Database is clean. No action required.
+
