@@ -44,22 +44,18 @@ const BUSINESS_CATEGORIES = [
   'Experiences and Activities',
   'Experiences and Activities Slots',
   'Guided Tours',
-  'Handicrafts and Souvenirs',
-  'Tour Guide',
-  'Tour Operator / Travel Agent / DMC',
+  'Tour Operator, Travel Agent and Destination Management Company',
 ];
 
 const SUB_CATEGORIES: Record<string, string[]> = {
-  'Accommodations': ['Hotel', 'Resort', 'Homestay', 'Guest House', 'Hostel'],
-  'Aqua Tourism': ['Scuba Diving', 'Snorkeling', 'Boat Cruise', 'Kayaking', 'Jet Ski / Water Sports'],
-  'Cuisine': ['Restaurant', 'Café', 'Street Food', 'Traditional Cuisine', 'Bakery & Sweets'],
-  'Events and Festivals': ['Cultural Festival', 'Religious Festival', 'Music & Dance Event', 'Food Festival', 'Seasonal Celebration'],
-  'Experiences and Activities': ['Adventure Activities', 'Cultural Experience', 'Wellness & Yoga', 'Nature Experience', 'Photography Experience'],
-  'Experiences and Activities Slots': ['Morning Slot', 'Afternoon Slot', 'Evening Slot', 'Full Day Experience', 'Multi-Day Experience'],
-  'Guided Tours': ['City Tour', 'Heritage Tour', 'Nature Tour', 'Food Tour', 'Walking Tour'],
-  'Handicrafts and Souvenirs': ['Handmade Crafts', 'Textiles & Apparel', 'Jewelry & Accessories', 'Home Décor', 'Local Souvenirs'],
-  'Tour Guide': ['Heritage Guide', 'Nature Guide', 'Adventure Guide', 'City Guide', 'Multilingual Guide'],
-  'Tour Operator / Travel Agent / DMC': ['Local Tour Operator', 'Domestic Travel Agency', 'International Travel Agency', 'Destination Management Company (DMC)', 'Custom Tour Planner'],
+  'Accommodations': ['Hotels', 'Resort', 'Agro Tourism/ Farm Stay', 'Apartments', 'Hostels', 'Tourism Villas', 'Tree House', 'Tented Accommodation', 'Home stay', 'Bed and Breakfast', 'Log Huts', 'Staycations', 'Camping Sites', 'Others'],
+  'Aqua Tourism': ['Car Rental', 'Cruises', 'Yachts', 'Houseboats', 'Ferries', 'Sky Dive', 'Jet Ski', 'Rafting', 'Scuba Diving', 'Water Parks', 'Helicopter Rides', 'Others'],
+  'Cuisine': ['Restaurant', 'Food Safaris', 'Authentic Food/Cusines', 'Cafeterias', 'Others'],
+  'Events and Festivals': ['Art', 'Cultural', 'Exhibitions / Conferences', 'Folk Art & Culture', 'Food', 'International Trade Fairs', 'Music Concerts', 'MICE', 'Others'],
+  'Experiences and Activities': ['Adventure Activities', 'Caravan', 'Caves', 'Cultural', 'Museums', 'Spiritual', 'Theme Parks', 'Others'],
+  'Experiences and Activities Slots': ['Adventure Activities', 'Caravan', 'Caves', 'Cultural', 'Museums', 'Spiritual', 'Theme Parks', 'Others'],
+  'Guided Tours': ['Cave Tours', 'Educational Tours', 'Food Testing & Culinary Tours', 'Historical/Landmark Tours', 'Tour', 'Others'],
+  'Tour Operator, Travel Agent and Destination Management Company': ['Cave Tours', 'Day Tours', 'Educational Tours', 'Film City Tours', 'Historical/Landmark Tours', 'Guided Tours', 'Food Tour', 'Food Testing & Culinary Tours', 'Industrial Tours', 'Mining Tours', 'Special/Unique Tours', 'Tour', 'Holiday Tours', 'Others'],
 };
 
 const ACCOMMODATION_FACILITIES = [
