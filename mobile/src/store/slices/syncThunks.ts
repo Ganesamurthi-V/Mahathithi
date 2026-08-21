@@ -1,6 +1,5 @@
 import { createAsyncThunk } from '@reduxjs/toolkit';
 import NetInfo from '@react-native-community/netinfo';
-import { Alert } from 'react-native';
 import { RootState } from '../index';
 import {
   startSync, syncComplete, syncFailed, updateSyncProgress,
@@ -176,6 +175,65 @@ const refreshSyncCounts = async (dispatch: any) => {
 
 let isAutoSyncRunning = false;
 
+// Upper bound on how many times one runAutoSync invocation will loop over the
+// pending queue. Each pass uploads everything currently eligible; a pass only
+// happens again if the previous one made real progress, so this cap is a
+// backstop rather than the normal exit condition.
+const MAX_SYNC_PASSES = 25;
+const PASS_DELAY_MS = 1500;
+
+/**
+ * Classify an error as permanently unfixable by retrying.
+ *
+ * api.ts already retries genuinely transient failures (no response / 5xx) twice
+ * in-process. What reaches here as a 4xx is a considered rejection from the
+ * server — a validation failure, an unknown enum value, a district/ownership
+ * denial, or a stakeholder already locked by someone else. Retrying those eight
+ * more times over nine hours accomplishes nothing, so they are dead-lettered
+ * immediately and surfaced to the user.
+ *
+ * Deliberately excluded (still treated as retryable):
+ *   401 — the interceptor refreshes the token and replays the request
+ *   404 — the server-side survey row may not exist yet on a media-first pass
+ *   408 / 429 — explicit "try again later" signals
+ */
+function isPermanentFailure(err: any): boolean {
+  const status = err?.response?.status;
+  if (typeof status !== 'number') return false;
+  if (status === 401 || status === 404 || status === 408 || status === 429) return false;
+  return status >= 400 && status < 500;
+}
+
+/** Extract the most useful message the server or transport gave us. */
+function describeError(err: any): string {
+  const d = err?.response?.data?.error;
+  if (d?.details) return Array.isArray(d.details) ? d.details.join('; ') : String(d.details);
+  if (d?.message) return String(d.message);
+  return err?.message || 'Unknown error';
+}
+
+/**
+ * Is the device offline *right now*?
+ *
+ * Losing connectivity mid-upload must not consume an item's retry budget. With
+ * MAX_AUTO_RETRIES attempts and a genuinely flaky connection (the normal case
+ * for field enumerators moving between villages), a perfectly valid photo could
+ * otherwise burn through every attempt on dropped packets alone and end up
+ * dead-lettered — reported to the user as broken when nothing was wrong with it.
+ *
+ * So on failure we check connectivity: if we are offline, the item is left
+ * completely untouched (same retry_count, same backoff window) and the pass is
+ * abandoned. It resumes automatically when the NetInfo listener fires.
+ */
+async function isOfflineNow(): Promise<boolean> {
+  try {
+    const s = await NetInfo.fetch();
+    return !s.isConnected;
+  } catch {
+    return false;
+  }
+}
+
 export const runAutoSync = createAsyncThunk(
   'sync/runAutoSync',
   async (_, { dispatch, getState }) => {
@@ -187,17 +245,20 @@ export const runAutoSync = createAsyncThunk(
 
     const netState = await NetInfo.fetch();
     if (!netState.isConnected) {
-      // SYNC BUTTON FIX: previously this returned silently with no Redux
-      // dispatch, so the UI had no idea the thunk ran and exited. The sync
-      // button remained enabled (good) but tapping it appeared to do nothing
-      // — the thunk entered, hit this branch, and vanished. Now we dispatch
-      // syncFailed so the Redux state reflects a completed (failed) attempt,
-      // counts are refreshed, and any screen listening to sync state gets
-      // an update. We still don't show an alert here (this is auto-sync;
-      // the SyncStatusScreen's own NetInfo check surfaces the offline state
-      // to the user through the badge and button label).
-      dispatch(startSync());
-      dispatch(syncFailed('No internet connection'));
+      // Being offline is a normal state for this app, not a sync failure.
+      //
+      // This branch used to dispatch startSync() + syncFailed('No internet
+      // connection'). That was tolerable when the only automatic trigger was a
+      // connectivity transition, but the pipeline is now also woken by a 60-second
+      // heartbeat (needed so elapsed backoff windows actually get retried on a
+      // stable connection). Keeping the old behaviour would push a fresh "sync
+      // failed" error into Redux every minute for as long as the enumerator is out
+      // of coverage — alarming, and wrong: nothing failed.
+      //
+      // Manual syncs are unaffected: SyncStatusScreen.performSync() runs its own
+      // NetInfo check and shows an Alert before it ever dispatches this thunk, so
+      // tapping "Sync Now" while offline still gives clear feedback.
+      // We refresh the counts so the pending badge stays accurate, then exit quietly.
       try { await refreshSyncCounts(dispatch); } catch { /* best-effort */ }
       isAutoSyncRunning = false;
       return;
@@ -206,108 +267,161 @@ export const runAutoSync = createAsyncThunk(
     dispatch(startSync());
 
     try {
-      dispatch(updateSyncProgress(10));
-      const unsyncedSurveys = await surveyDao.getUnsynced();
-      const unsyncedMedia = await mediaDao.getUnsynced();
+      dispatch(updateSyncProgress(5));
 
-      // Calculate total work items for accurate progress
-      // Text uploads + media uploads + complete calls = total steps
-      const totalTextUploads = unsyncedSurveys.length;
-      const totalMediaUploads = unsyncedMedia.length;
-      const totalWorkItems = totalTextUploads + totalMediaUploads + totalTextUploads; // text + media + complete per survey
-      let completedWorkItems = 0;
+      // ── Bounded multi-pass upload loop ─────────────────────────────────────
+      // This replaces the previous tail-recursive re-trigger:
+      //
+      //   isAutoSyncRunning = false;
+      //   await sleep(3000);
+      //   dispatch(runAutoSync());      // not awaited
+      //
+      // which had two serious defects:
+      //   1. Because the re-dispatch was not awaited, the parent fell through to
+      //      its own `finally`, which set isAutoSyncRunning = false while the
+      //      child was still mid-flight. The mutex was defeated by its own
+      //      recursion, letting a third concurrent run enter and race on the
+      //      same rows (duplicate uploads, lost markSynced/markFailed writes).
+      //   2. It had no termination condition other than "nothing left pending",
+      //      so any permanently-failing item looped every 3 s forever.
+      //
+      // Now: one mutex acquisition, a bounded loop, and each pass must make
+      // measurable progress to earn another one. The mutex is released exactly
+      // once, in `finally`.
+      let pass = 0;
+      let grandTotalProcessed = 0;
 
-      const updateProgress = () => {
-        if (totalWorkItems === 0) return;
-        // Scale progress from 10% to 90% based on work completed
-        const pct = 10 + Math.floor((completedWorkItems / totalWorkItems) * 80);
-        dispatch(updateSyncProgress(Math.min(pct, 90)));
-      };
+      while (pass < MAX_SYNC_PASSES) {
+        pass++;
 
-      // Group by local survey ID to process 1-by-1
-      const surveyIdsToProcess = new Set<string>();
-      unsyncedSurveys.forEach((s: any) => surveyIdsToProcess.add(s.id));
-      unsyncedMedia.forEach((m: any) => surveyIdsToProcess.add(m.survey_id));
+        // Only rows eligible right now: unsynced, under the retry cap, and past
+        // their backoff window. Dead-lettered rows are intentionally invisible
+        // here — they are reported to the user instead of retried.
+        const retryableSurveys = await surveyDao.getRetryable();
+        const retryableMedia = await mediaDao.getRetryable();
+        const retryableQueue = await syncQueueDao.getRetryable();
+        const pendingCompletions = await surveyDao.getPendingCompletion();
 
-      let processedCount = 0;
-      const total = surveyIdsToProcess.size;
+        const workThisPass =
+          retryableSurveys.length + retryableMedia.length +
+          retryableQueue.length + pendingCompletions.length;
 
-      // === Scenario E FIX: Retry complete() for surveys whose connection dropped after all media was uploaded ===
-      // These are surveys where is_synced=1 AND is_completed=0 — everything made it to the server
-      // except the final complete() call. Without this, the stakeholder stays OPEN on the server forever.
-      const pendingCompletions = await surveyDao.getPendingCompletion();
-      if (pendingCompletions.length > 0) {
-        console.log(`🔄 [Sync] Found ${pendingCompletions.length} stranded completions (Scenario E). Retrying...`);
-      }
-      for (const survey of pendingCompletions) {
-        try {
-          // Resolve the real server survey ID from stakeholder
-          let serverSurveyId = survey.id;
-          if (survey.stakeholder_id) {
-            try {
-              const svRes = await surveyService.getByStakeholder(survey.stakeholder_id);
-              if (svRes.data?.data?.id) serverSurveyId = svRes.data.data.id;
-            } catch { /* use local id as fallback */ }
-          }
-          await surveyService.complete(serverSurveyId);
-          await surveyDao.markCompleted(survey.id);
-          if (survey.stakeholder_id) {
-            await stakeholderDao.removeLockedStakeholders([survey.stakeholder_id]);
-          }
-          console.log(`✅ [Sync] Retried complete() for stranded survey ${survey.id}`);
-        } catch (err: any) {
-          console.warn(`[Sync] Stranded complete() retry failed for ${survey.id}:`, err.message);
-          // Will retry on next sync run — survey remains is_completed=0
+        if (workThisPass === 0) {
+          if (pass === 1) console.log('[Sync] Nothing eligible to upload.');
+          break;
         }
-      }
 
-      // === Generic Sync Queue Pipeline ===
-      // SYNC FIX: getRetryable() returns PENDING items AND FAILED items whose
-      // backoff window has elapsed and are still under the retry cap. Previously
-      // this called getPending() which only ever saw PENDING — once an item hit
-      // FAILED it was retried by nothing, forever. This is the fix for stakeholder
-      // edits in particular, since unlike survey/media they have no SQLite-side
-      // fallback signal (is_synced=0) to catch them via the 1-by-1 pipeline below.
-      const pendingSyncItems = await syncQueueDao.getRetryable();
-      for (const item of pendingSyncItems) {
-        try {
-          if (item.entity_type === 'stakeholder' && item.action === 'UPDATE') {
-            const payload = JSON.parse(item.payload);
-            await stakeholderService.updateStakeholder(item.entity_id, payload);
-          } else if (item.entity_type === 'survey' && item.action === 'CREATE') {
-            // BUG 1 FIX: Handle offline-queued survey text payloads
-            const payload = JSON.parse(item.payload);
-            await syncService.upload({
-              surveys: [payload],
-              phoneValidations: [],
-              mediaMetadata: [],
-            });
-            // Mark the local survey as synced so media-only runs can pick it up
-            await surveyDao.markSynced(payload.id);
+        console.log(
+          `[Sync] Pass ${pass}: ${retryableSurveys.length} survey(s), ${retryableMedia.length} media, ` +
+          `${retryableQueue.length} queue item(s), ${pendingCompletions.length} stranded completion(s)`
+        );
+
+        // Progress accounting for this pass. Text + media + one complete() per survey.
+        const totalWorkItems =
+          retryableSurveys.length + retryableMedia.length +
+          retryableSurveys.length + pendingCompletions.length;
+        let completedWorkItems = 0;
+
+        const updateProgress = () => {
+          if (totalWorkItems === 0) return;
+          // 5% → 90%. Capped at 90 so the getChanges/cleanup phase below can
+          // advance monotonically to 100 without ever moving the bar backwards.
+          const pct = 5 + Math.floor((completedWorkItems / totalWorkItems) * 85);
+          dispatch(updateSyncProgress(Math.min(pct, 90)));
+        };
+
+        let progressedThisPass = 0;
+        // Set when connectivity is lost mid-pass. Aborts the remaining work
+        // without penalising any item's retry budget.
+        let networkLost = false;
+
+        // ── Stranded completions (text + media all uploaded, complete() failed) ──
+        for (const survey of pendingCompletions) {
+          if (networkLost) break;
+          try {
+            let serverSurveyId = survey.id;
+            if (survey.stakeholder_id) {
+              try {
+                const svRes = await surveyService.getByStakeholder(survey.stakeholder_id);
+                if (svRes.data?.data?.id) serverSurveyId = svRes.data.data.id;
+              } catch { /* fall back to local id */ }
+            }
+            await surveyService.complete(serverSurveyId);
+            await surveyDao.markCompleted(survey.id);
+            await surveyDao.clearRetryState(survey.id);
+            if (survey.stakeholder_id) {
+              await stakeholderDao.removeLockedStakeholders([survey.stakeholder_id]);
+            }
+            progressedThisPass++;
+            completedWorkItems++;
+            updateProgress();
+            console.log(`[Sync] Recovered stranded completion for survey ${survey.id}`);
+          } catch (err: any) {
+            const msg = describeError(err);
+            if (await isOfflineNow()) {
+              networkLost = true;
+              console.log('[Sync] Connection lost; leaving retry state untouched.');
+            } else if (isPermanentFailure(err)) {
+              // e.g. 409 — another enumerator locked this stakeholder. Retrying
+              // will never succeed; surface it instead of looping.
+              await surveyDao.markUnrecoverable(survey.id, `Completion rejected: ${msg}`);
+              console.error(`[Sync] Completion permanently rejected for ${survey.id}: ${msg}`);
+            } else {
+              await surveyDao.markFailed(survey.id, msg);
+              console.warn(`[Sync] Completion retry failed for ${survey.id}: ${msg}`);
+            }
           }
-          await syncQueueDao.markCompleted(item.id);
-        } catch (err: any) {
-          console.error(`Sync Queue Item Failed [${item.id}] (attempt ${(item.retry_count || 0) + 1}):`, err.message);
-          await syncQueueDao.markFailed(item.id, err.message);
         }
-      }
 
-      // === 1-by-1 Pipeline ===
-      for (const localSurveyId of surveyIdsToProcess) {
-        processedCount++;
+        // ── Generic sync queue (stakeholder edits, etc.) ───────────────────────
+        for (const item of retryableQueue) {
+          if (networkLost) break;
+          try {
+            if (item.entity_type === 'stakeholder' && item.action === 'UPDATE') {
+              const payload = JSON.parse(item.payload);
+              await stakeholderService.updateStakeholder(item.entity_id, payload);
+            } else if (item.entity_type === 'survey' && item.action === 'CREATE') {
+              const payload = JSON.parse(item.payload);
+              await syncService.upload({
+                surveys: [payload],
+                phoneValidations: [],
+                mediaMetadata: [],
+              });
+              if (payload.id) await surveyDao.markSynced(payload.id);
+            }
+            await syncQueueDao.markCompleted(item.id);
+            progressedThisPass++;
+          } catch (err: any) {
+            const msg = describeError(err);
+            if (await isOfflineNow()) {
+              networkLost = true;
+              console.log('[Sync] Connection lost; leaving queue item untouched.');
+            } else if (isPermanentFailure(err)) {
+              await syncQueueDao.markDead(item.id, msg);
+              console.error(`[Sync] Queue item ${item.id} permanently rejected: ${msg}`);
+            } else {
+              await syncQueueDao.markFailed(item.id, msg);
+              console.error(`[Sync] Queue item ${item.id} failed (attempt ${(item.retry_count || 0) + 1}): ${msg}`);
+            }
+          }
+        }
 
-        try {
-          const surveyLocal = unsyncedSurveys.find((s: any) => s.id === localSurveyId);
+        // ── Per-survey pipeline: text → media → complete ───────────────────────
+        const surveyIdsToProcess = new Set<string>();
+        retryableSurveys.forEach((s: any) => surveyIdsToProcess.add(s.id));
+        retryableMedia.forEach((m: any) => surveyIdsToProcess.add(m.survey_id));
+
+        for (const localSurveyId of surveyIdsToProcess) {
+          if (networkLost) break;
+          const surveyLocal = retryableSurveys.find((s: any) => s.id === localSurveyId);
+          const mediaForThisSurvey = retryableMedia.filter((m: any) => m.survey_id === localSurveyId);
           let serverSurveyId = localSurveyId;
-          // BUG 3 FIX: when survey is already synced (media-only run), stakeholder_id
-          // comes from the media row instead of the missing surveyLocal.
-          const mediaForThisSurvey = unsyncedMedia.filter((m: any) => m.survey_id === localSurveyId);
-          let stakeholderId =
+          const stakeholderId =
             surveyLocal?.stakeholder_id ||
             mediaForThisSurvey[0]?.stakeholder_id ||
             (localSurveyId.startsWith('draft_') ? localSurveyId.replace('draft_', '') : null);
 
-          // Step A: Upload Text Payload (if unsynced)
+          // ── Step A: text payload ────────────────────────────────────────────
           if (surveyLocal) {
             const surveyPayload = {
               stakeholderId: surveyLocal.stakeholder_id,
@@ -320,9 +434,7 @@ export const runAutoSync = createAsyncThunk(
               nearestPoliceStation: surveyLocal.nearest_police_station,
               nearestHealthcareCenter: surveyLocal.nearest_healthcare_center,
               localId: surveyLocal.id,
-              // Step 1
               subCategories: surveyLocal.sub_categories ? JSON.parse(surveyLocal.sub_categories) : undefined,
-              // Step 2
               businessName: surveyLocal.business_name || undefined,
               ownerName: surveyLocal.owner_name || undefined,
               district: surveyLocal.district || undefined,
@@ -332,57 +444,63 @@ export const runAutoSync = createAsyncThunk(
               aadharNumber: surveyLocal.aadhar_number || undefined,
               udyamAadharRegNo: surveyLocal.udyam_aadhar_reg_no || undefined,
               panNumber: surveyLocal.pan_number || undefined,
-              // Step 4
               description: surveyLocal.description || undefined,
               accommodationFacilities: surveyLocal.accommodation_facilities ? JSON.parse(surveyLocal.accommodation_facilities) : undefined,
               accommodationPolicies: surveyLocal.accommodation_policies || undefined,
               workingHours: surveyLocal.working_hours ? JSON.parse(surveyLocal.working_hours) : undefined,
-              // Step 5
               rooms: surveyLocal.rooms ? JSON.parse(surveyLocal.rooms) : undefined,
-              // Step 7
               aboutBusiness: surveyLocal.about_business || undefined,
-              // Step 8
               agreedToTerms: !!surveyLocal.agreed_to_terms,
               declaredInfoCorrect: !!surveyLocal.declared_info_correct,
               acknowledgedDotLiability: !!surveyLocal.acknowledged_dot_liability,
             };
 
-            // NEW-3 FIX: never write full survey PII to device logs in release
-            // builds (RN does not strip console.* by default → visible in logcat).
-            if (__DEV__) {
-              console.log(`📤 [Sync] Uploading text payload for survey ${localSurveyId}:`, JSON.stringify(surveyPayload, null, 2));
+            try {
+              // NEW-3 FIX: never write full survey PII to device logs in release
+              // builds (RN does not strip console.* by default → visible in logcat).
+              if (__DEV__) {
+                console.log(`[Sync] Uploading text payload for survey ${localSurveyId}`);
+              }
+              await syncService.upload({
+                surveys: [surveyPayload],
+                phoneValidations: [],
+                mediaMetadata: [],
+              });
+              await surveyDao.markSynced(localSurveyId);
+              // Give the complete() phase a fresh retry budget — the text upload
+              // succeeded, so failures from here on are a different problem.
+              await surveyDao.clearRetryState(localSurveyId);
+              progressedThisPass++;
+              completedWorkItems++;
+              updateProgress();
+            } catch (err: any) {
+              const msg = describeError(err);
+              if (await isOfflineNow()) {
+                networkLost = true;
+                console.log('[Sync] Connection lost during text upload; retry state untouched.');
+              } else if (isPermanentFailure(err)) {
+                await surveyDao.markUnrecoverable(localSurveyId, msg);
+                console.error(`[Sync] Survey ${localSurveyId} permanently rejected: ${msg}`);
+              } else {
+                await surveyDao.markFailed(localSurveyId, msg);
+                console.error(`[Sync] Survey ${localSurveyId} text upload failed: ${msg}`);
+              }
+              // Cannot attach media to a survey the server does not have yet.
+              continue;
             }
-            await syncService.upload({
-              surveys: [surveyPayload],
-              phoneValidations: [],
-              mediaMetadata: [],
-            });
-            await surveyDao.markSynced(localSurveyId);
-            completedWorkItems++;
-            updateProgress();
           }
 
-          // Step B: Resolve serverSurveyId from Stakeholder
+          // ── Step B: resolve the server-side survey id ───────────────────────
           if (stakeholderId) {
-             try {
-               const svRes = await surveyService.getByStakeholder(stakeholderId);
-               if (svRes.data?.data?.id) serverSurveyId = svRes.data.data.id;
-             } catch { /* ignore if not found */ }
+            try {
+              const svRes = await surveyService.getByStakeholder(stakeholderId);
+              if (svRes.data?.data?.id) serverSurveyId = svRes.data.data.id;
+            } catch { /* keep local id as fallback */ }
           }
-          console.log(`🔍 [Sync] Resolved serverSurveyId: ${serverSurveyId} (Stakeholder: ${stakeholderId})`);
 
-          // Step C: Upload Media for this Survey with bounded concurrency.
-          // PERF: the old loop uploaded files strictly one-at-a-time, so a survey
-          // with 4 photos + a video paid the full round-trip latency serially.
-          // We now upload in chunks of MEDIA_UPLOAD_CONCURRENCY in parallel.
-          // INVARIANT PRESERVED: complete() (Step D) must only run if EVERY media
-          // file for this survey uploaded. We collect failures across the whole set
-          // and throw before reaching Step D — same effect as the old per-item throw,
-          // just without aborting siblings that were already in flight.
-          const surveyMedia = unsyncedMedia.filter((m: any) => m.survey_id === localSurveyId);
+          // ── Step C: media, bounded concurrency ──────────────────────────────
           const MEDIA_UPLOAD_CONCURRENCY = 3;
           const uploadOne = async (media: any) => {
-            // Fail fast if network dropped during sync
             const net = await NetInfo.fetch();
             if (!net.isConnected) throw new Error('Network lost during upload');
 
@@ -390,10 +508,12 @@ export const runAutoSync = createAsyncThunk(
             formData.append('surveyId', serverSurveyId);
             formData.append('type', media.type);
             if (media.photo_category) formData.append('photoCategory', media.photo_category);
-            if (media.latitude) formData.append('latitude', media.latitude.toString());
-            if (media.longitude) formData.append('longitude', media.longitude.toString());
-            if (media.gps_accuracy) formData.append('gpsAccuracy', media.gps_accuracy.toString());
-            if (media.duration) formData.append('duration', media.duration.toString());
+            // Compare against null/undefined rather than truthiness: latitude or
+            // longitude of exactly 0 is a valid coordinate and was being dropped.
+            if (media.latitude != null) formData.append('latitude', String(media.latitude));
+            if (media.longitude != null) formData.append('longitude', String(media.longitude));
+            if (media.gps_accuracy != null) formData.append('gpsAccuracy', String(media.gps_accuracy));
+            if (media.duration != null) formData.append('duration', String(media.duration));
             formData.append('localId', media.id);
 
             formData.append('file', {
@@ -402,100 +522,163 @@ export const runAutoSync = createAsyncThunk(
               name: media.file_name || `upload_${Date.now()}`,
             } as any);
 
-            console.log(`📤 [Sync] Uploading media ${media.id} (type: ${media.type}) for survey ${serverSurveyId}`);
             await mediaService.upload(formData);
             await mediaDao.markSynced(media.id);
-            completedWorkItems++;
-            updateProgress();
-            console.log(`✅ [Sync] Media ${media.id} uploaded successfully`);
           };
 
-          const failedMediaIds: string[] = [];
-          for (let c = 0; c < surveyMedia.length; c += MEDIA_UPLOAD_CONCURRENCY) {
-            const chunk = surveyMedia.slice(c, c + MEDIA_UPLOAD_CONCURRENCY);
+          const failedMedia: string[] = [];
+          for (let c = 0; c < mediaForThisSurvey.length; c += MEDIA_UPLOAD_CONCURRENCY) {
+            const chunk = mediaForThisSurvey.slice(c, c + MEDIA_UPLOAD_CONCURRENCY);
             const settled = await Promise.allSettled(chunk.map(uploadOne));
-            settled.forEach((res, idx) => {
-              if (res.status === 'rejected') {
-                const failed = chunk[idx];
-                console.error(`Media upload failed for ${failed.id}`, res.reason?.response?.data || res.reason?.message);
-                failedMediaIds.push(failed.id);
+            for (let idx = 0; idx < settled.length; idx++) {
+              const res = settled[idx];
+              const media = chunk[idx];
+              if (res.status === 'fulfilled') {
+                progressedThisPass++;
+                completedWorkItems++;
+                updateProgress();
+                continue;
               }
-            });
-          }
-          if (failedMediaIds.length > 0) {
-            // Break this survey's pipeline before complete() — successfully uploaded
-            // files are already marked synced, so the next sync run retries only the rest.
-            throw new Error(`Media failed: ${failedMediaIds.join(', ')}`);
+              const err: any = (res as PromiseRejectedResult).reason;
+              const msg = describeError(err);
+              failedMedia.push(media.id);
+
+              // A local file that no longer exists (camera cache evicted by the
+              // OS, storage cleared) can never upload. RN surfaces this as an
+              // unhelpful network-ish error, so match on the message. Checked
+              // before the offline test because a missing file is permanent
+              // regardless of connectivity.
+              const looksMissingFile = /ENOENT|no such file|could not be found|failed to read|not a file/i.test(msg);
+              if (looksMissingFile) {
+                await mediaDao.markUnrecoverable(media.id, `Local file missing: ${msg}`);
+                console.error(`[Sync] Media ${media.id} file is gone locally - dead-lettered`);
+              } else if (await isOfflineNow()) {
+                networkLost = true;
+                console.log(`[Sync] Connection lost uploading ${media.id}; retry state untouched.`);
+              } else if (isPermanentFailure(err)) {
+                await mediaDao.markUnrecoverable(media.id, msg);
+                console.error(`[Sync] Media ${media.id} permanently rejected: ${msg}`);
+              } else {
+                await mediaDao.markFailed(media.id, msg);
+                console.error(`[Sync] Media ${media.id} upload failed: ${msg}`);
+              }
+            }
+            if (networkLost) break;
           }
 
-          // Step D: Complete Survey
-          console.log(`🏁 [Sync] Calling complete() on server for survey ${serverSurveyId}`);
-          await surveyService.complete(serverSurveyId);
-          completedWorkItems++;
-          updateProgress();
-          // Scenario E FIX: mark locally completed so a future sync doesn't lose this
-          await surveyDao.markCompleted(localSurveyId);
-          console.log(`✅ Fully synced survey ${localSurveyId}`);
-          
-          // Remove from local database immediately after successful sync
-          if (stakeholderId) {
-            await stakeholderDao.removeLockedStakeholders([stakeholderId]);
-            console.log(`🗑️ Removed completed survey and stakeholder ${stakeholderId} from local DB`);
+          // complete() must only run when every file for this survey is on the
+          // server. Skip it this pass; already-uploaded files stay marked synced
+          // so a later pass only retries what is genuinely outstanding.
+          if (failedMedia.length > 0) {
+            console.warn(`[Sync] Survey ${localSurveyId}: ${failedMedia.length} media outstanding, deferring completion.`);
+            continue;
           }
 
-        } catch (surveyErr: any) {
-          // If ANY step in this survey fails (Text, Media, or Complete), it catches here.
-          const errDetail = surveyErr.response?.data?.error?.details || surveyErr.response?.data?.error?.message || surveyErr.message;
-          console.error(`❌ Failed to sync survey ${localSurveyId}:`, errDetail);
+          // ── Step D: complete ───────────────────────────────────────────────
+          // Skip if there is still unsynced media for this survey that simply
+          // was not eligible this pass (e.g. sitting in a backoff window).
+          const stillPending = await mediaDao.countUnsyncedForSurvey(localSurveyId);
+          if (stillPending > 0) {
+            console.warn(`[Sync] Survey ${localSurveyId}: ${stillPending} media still pending (backoff), deferring completion.`);
+            continue;
+          }
+
+          try {
+            await surveyService.complete(serverSurveyId);
+            await surveyDao.markCompleted(localSurveyId);
+            await surveyDao.clearRetryState(localSurveyId);
+            progressedThisPass++;
+            completedWorkItems++;
+            updateProgress();
+            console.log(`[Sync] Survey ${localSurveyId} fully synced.`);
+
+            if (stakeholderId) {
+              await stakeholderDao.removeLockedStakeholders([stakeholderId]);
+            }
+          } catch (err: any) {
+            const msg = describeError(err);
+            if (await isOfflineNow()) {
+              networkLost = true;
+              console.log('[Sync] Connection lost during completion; retry state untouched.');
+            } else if (isPermanentFailure(err)) {
+              await surveyDao.markUnrecoverable(localSurveyId, `Completion rejected: ${msg}`);
+              console.error(`[Sync] complete() permanently rejected for ${localSurveyId}: ${msg}`);
+            } else {
+              await surveyDao.markFailed(localSurveyId, msg);
+              console.error(`[Sync] complete() failed for ${localSurveyId}: ${msg}`);
+            }
+          }
         }
+
+        grandTotalProcessed += progressedThisPass;
+
+        // Connectivity went away mid-pass. Stop here; nothing was penalised and
+        // the NetInfo listener in AppNavigator will restart the sync on reconnect.
+        if (networkLost) {
+          console.log('[Sync] Aborting remaining passes — device is offline.');
+          break;
+        }
+
+        // A pass that uploaded nothing means everything still outstanding is
+        // either dead-lettered or waiting on a backoff window. Looping again
+        // would spin without accomplishing anything — this is the guard that
+        // makes a permanently-failing item cost one attempt instead of an
+        // unbounded retry storm.
+        if (progressedThisPass === 0) {
+          console.log('[Sync] Pass made no progress; stopping. Remaining items are backed off or need attention.');
+          break;
+        }
+
+        // Anything still eligible right now? If not, we are done.
+        const [moreSurveys, moreMedia, moreQueue, moreCompletions] = await Promise.all([
+          surveyDao.getRetryable(),
+          mediaDao.getRetryable(),
+          syncQueueDao.getRetryable(),
+          surveyDao.getPendingCompletion(),
+        ]);
+        if (moreSurveys.length + moreMedia.length + moreQueue.length + moreCompletions.length === 0) break;
+
+        await new Promise<void>(resolve => setTimeout(resolve, PASS_DELAY_MS));
       }
 
-      // Step 2: Get changes from server
+      if (pass >= MAX_SYNC_PASSES) {
+        console.warn(`[Sync] Reached the ${MAX_SYNC_PASSES}-pass ceiling; remaining work continues on the next sync.`);
+      }
+
+      dispatch(updateSyncProgress(92));
+
+      // ── Pull server-side changes and reconcile local cache ─────────────────
       const lastSync = await appStateDao.get('last_sync_time');
       try {
         const changes = await syncService.getChanges(lastSync || undefined);
+        dispatch(updateSyncProgress(96));
 
-        dispatch(updateSyncProgress(85));
-
-        // Step 3: Remove locked stakeholders from local DB
+        // removeLockedStakeholders now refuses to delete any stakeholder that
+        // still holds unsynced survey or media rows, so this can no longer
+        // destroy pending field data.
         const lockedIds = changes.data?.data?.lockedStakeholderIds || changes.data?.lockedStakeholderIds || [];
         if (Array.isArray(lockedIds) && lockedIds.length > 0) {
           await stakeholderDao.removeLockedStakeholders(lockedIds);
         }
       } catch (err: any) {
-        console.warn('Failed to get changes from server (Step 2/3):', err.message);
+        console.warn('[Sync] Failed to fetch server changes:', err.message);
       }
-
-      // Step 3.5: Sync Facilities (REMOVED)
-      // Facilities are mostly static and are already downloaded during runInitialSync.
-      // Re-downloading 13,000+ facilities on every background auto-sync causes massive DB locking/slowdown.
-      // If facility updates are needed, this should be a manual trigger or use a 'since' timestamp.
 
       dispatch(updateSyncProgress(100));
 
-      // Step 4: Update sync timestamp
       const syncTime = new Date().toISOString();
       await appStateDao.set('last_sync_time', syncTime);
-
       dispatch(syncComplete({ timestamp: syncTime }));
 
-      // Step 5: Check if there are still unsynced items — if so, run again
-      const remainingSurveys = await surveyDao.getUnsyncedCount();
-      const remainingMedia = await mediaDao.getUnsyncedCount();
-      if (remainingSurveys > 0 || remainingMedia > 0) {
-        console.log(`🔄 [Sync] Still ${remainingSurveys} surveys + ${remainingMedia} media pending. Re-running...`);
-        // Reset mutex so the next dispatch can enter
-        isAutoSyncRunning = false;
-        // Small delay to avoid tight loop, then re-trigger
-        await new Promise<void>(resolve => setTimeout(resolve, 3000));
-        dispatch(runAutoSync() as any);
+      if (grandTotalProcessed > 0) {
+        console.log(`[Sync] Completed. ${grandTotalProcessed} item(s) uploaded across ${pass} pass(es).`);
       }
 
     } catch (error: any) {
+      // Reached only for an unexpected fault in the orchestration itself —
+      // per-item upload failures are handled inline and recorded against the row.
       dispatch(syncFailed(error.message || 'Sync failed'));
-      // Only alert if we are actively viewing a screen that triggers it manually,
-      // but since it's an auto-sync, we'll silently fail or log it.
-      console.error('AutoSync Error:', error.message);
+      console.error('[Sync] Unexpected pipeline error:', error.message);
     } finally {
       // SYNC FIX (round 2): counts must refresh here, not only after a clean
       // run. Previously this block sat at the end of the `try`, right after
@@ -519,7 +702,10 @@ export const runAutoSync = createAsyncThunk(
 export const retryFailedSyncNow = createAsyncThunk(
   'sync/retryFailedSyncNow',
   async (_, { dispatch }) => {
-    const count = await syncQueueDao.retryAllFailedNow();
+    // Clears the backoff window across sync_queue, surveys AND media. Previously
+    // this only touched sync_queue, so the button did nothing for the failing
+    // photos and surveys that are the common case.
+    const count = await syncQueueDao.retryEverythingNow();
     if (count > 0) {
       await dispatch(runAutoSync());
     }
@@ -534,7 +720,8 @@ export const retryFailedSyncNow = createAsyncThunk(
 export const resetDeadLettersAndRetry = createAsyncThunk(
   'sync/resetDeadLettersAndRetry',
   async (_, { dispatch }) => {
-    const count = await syncQueueDao.resetDeadLetters();
+    // Re-arms dead-lettered items across all three sources with a fresh budget.
+    const count = await syncQueueDao.resetAllDeadLetters();
     if (count > 0) {
       await dispatch(runAutoSync());
     }

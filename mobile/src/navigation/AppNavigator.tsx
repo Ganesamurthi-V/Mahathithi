@@ -146,9 +146,26 @@ export function AppNavigator() {
         }, 1500);
       }
     });
-    
+
+    // RETRY-SCHEDULE FIX: failed uploads are now spaced out by an exponential
+    // backoff window (1, 2, 5, 15... minutes) instead of being retried in a tight
+    // 3-second loop. That means *something* has to wake the pipeline up once a
+    // window elapses. The NetInfo listener above only fires on a connectivity
+    // transition, so on a device that stays online the whole time — the common
+    // case — a backed-off item would never be retried until the user manually
+    // opened Sync Center and tapped Sync Now.
+    //
+    // This heartbeat closes that gap. It is cheap: runAutoSync() opens with four
+    // indexed queries and returns immediately when nothing is eligible, so the
+    // steady-state cost is negligible. The internal mutex makes a tick that
+    // lands during an in-flight sync a no-op.
+    const heartbeat = setInterval(() => {
+      dispatch(runAutoSync() as any);
+    }, 60_000);
+
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
+      clearInterval(heartbeat);
       unsubscribe();
       disconnectRealtime();
     };

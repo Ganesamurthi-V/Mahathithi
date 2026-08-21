@@ -738,6 +738,12 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   // === SAVE LOGIC ===
 
   const saveMediaToDb = async (newSurveyId: string) => {
+    // Clear any not-yet-uploaded media for this survey first. The block below
+    // writes the complete current set, so anything unsynced that is not in it is
+    // stale (a replaced retake, or a row from the old random-id scheme). Rows
+    // already uploaded are preserved and never re-sent.
+    await mediaDao.deleteUnsyncedForSurvey(newSurveyId);
+
     for (const key in photos) {
       const p = photos[key];
       await mediaDao.save({
@@ -807,7 +813,16 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       return;
     }
     setSaving(true);
-    const surveyId = existingSurvey?.id || `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    // DATA-INTEGRITY FIX: reuse the existing local row for this stakeholder if
+    // one is already on the device. Generating a fresh `local_<ts>` id on every
+    // save created a SECOND survey row for the same stakeholder; because
+    // removeLockedStakeholders() purges by stakeholder_id, completing one row
+    // deleted the other and all of its photos.
+    const existingLocalId = await surveyDao.findLocalId(stakeholderId, user!.id);
+    const surveyId =
+      existingSurvey?.id ||
+      existingLocalId ||
+      `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const surveyPayload = {
       id: surveyId,
       stakeholderId,
@@ -839,10 +854,12 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     };
 
     try {
-      // Save to local SQLite first (offline-first) — this is instant
-      await surveyDao.save(surveyPayload);
-      await saveMediaToDb(surveyId);
-      console.log('💾 [Survey] Saved locally to SQLite.');
+      // Save to local SQLite first (offline-first) — this is instant.
+      // save() returns the canonical row id it actually wrote, which is what the
+      // media rows must reference.
+      const savedSurveyId = await surveyDao.save(surveyPayload);
+      await saveMediaToDb(savedSurveyId);
+      console.log('[Survey] Saved locally to SQLite.');
 
       // Mark stakeholder as CLOSED locally so it disappears from the work queue
       // The server will also mark it CLOSED when complete() succeeds during sync

@@ -8,7 +8,7 @@ import {
   setPendingCount, setFailedCount, setDeadLetterCount,
 } from '../../store/slices/syncSlice';
 import { runAutoSync, retryFailedSyncNow, resetDeadLettersAndRetry, refreshSyncCountsThunk } from '../../store/slices/syncThunks';
-import { syncQueueDao, surveyDao, mediaDao } from '../../database';
+import { syncQueueDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 
@@ -19,6 +19,9 @@ export default function SyncStatusScreen() {
   );
   const [isOnline, setIsOnline] = useState(true);
   const [isRetrying, setIsRetrying] = useState(false);
+  // Dead-lettered items now carry the server's reason, so the user can see WHY
+  // something is stuck instead of just being told a number.
+  const [stuckDetails, setStuckDetails] = useState<Array<{ kind: string; id: string; error: string }>>([]);
 
   // Animations
   const spinAnim = useRef(new Animated.Value(0)).current;
@@ -33,7 +36,6 @@ export default function SyncStatusScreen() {
     const unsubscribe = NetInfo.addEventListener((state) => {
       setIsOnline(state.isConnected ?? false);
     });
-    loadCounts();
     return () => unsubscribe();
   }, []);
 
@@ -69,8 +71,17 @@ export default function SyncStatusScreen() {
   const loadCounts = async () => {
     try {
       await dispatch(refreshSyncCountsThunk() as any);
+      const details = await syncQueueDao.getStuckItemDetails();
+      setStuckDetails(details);
     } catch(e) {}
   };
+
+  // Loads on mount (isSyncing starts false) and again each time a sync finishes,
+  // so items visibly move from Pending to Stuck without leaving the screen.
+  // Safe from re-entry: loadCounts only writes counts/details, never isSyncing.
+  useEffect(() => {
+    if (!isSyncing) { loadCounts(); }
+  }, [isSyncing]);
 
   const performSync = useCallback(async () => {
     if (isSyncing) return;
@@ -177,8 +188,19 @@ export default function SyncStatusScreen() {
                 <Text style={styles.deadLetterTitle}>{deadLetterCount} item(s) stuck</Text>
               </View>
               <Text style={styles.deadLetterText}>
-                These failed repeatedly and stopped retrying automatically. Check your connection and try again.
+                These stopped retrying automatically. Some may need a stable connection; others were rejected by the server and will not succeed without a fix.
               </Text>
+
+              {stuckDetails.slice(0, 5).map((d, i) => (
+                <View key={i} style={styles.stuckRow}>
+                  <Text style={styles.stuckKind}>{d.kind}</Text>
+                  <Text style={styles.stuckError} numberOfLines={2}>{d.error}</Text>
+                </View>
+              ))}
+              {stuckDetails.length > 5 && (
+                <Text style={styles.stuckMore}>+{stuckDetails.length - 5} more</Text>
+              )}
+
               <TouchableOpacity
                 style={[styles.retryButton, isRetrying && styles.syncButtonDisabled]}
                 onPress={handleResetDeadLetters}
@@ -250,7 +272,8 @@ export default function SyncStatusScreen() {
             <Text style={styles.infoText}>• Surveys are saved locally when offline</Text>
             <Text style={styles.infoText}>• Auto-sync triggers when internet is available</Text>
             <Text style={styles.infoText}>• Failed uploads retry automatically with increasing delays</Text>
-            <Text style={styles.infoText}>• Items that fail 5 times need a manual retry, shown above</Text>
+            <Text style={styles.infoText}>• Items that fail 8 times stop and are listed above for a manual retry</Text>
+            <Text style={styles.infoText}>• Nothing is deleted from this device until it has uploaded</Text>
             <Text style={styles.infoText}>• Completed stakeholders are removed from your list</Text>
           </View>
         </Animated.View>
@@ -310,6 +333,13 @@ const styles = StyleSheet.create({
   },
   deadLetterTitle: { ...typography.body, fontWeight: '700', color: colors.error },
   deadLetterText: { ...typography.bodySmall, color: colors.textSecondary, marginBottom: spacing.md, lineHeight: 20 },
+  stuckRow: {
+    backgroundColor: colors.bgCard, borderRadius: borderRadius.sm,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginBottom: spacing.xs,
+  },
+  stuckKind: { ...typography.caption, fontWeight: '700', color: colors.textPrimary },
+  stuckError: { ...typography.caption, color: colors.textMuted, marginTop: 2 },
+  stuckMore: { ...typography.caption, color: colors.textMuted, marginBottom: spacing.md, fontStyle: 'italic' },
   retryButton: {
     backgroundColor: colors.error, borderRadius: borderRadius.md,
     padding: spacing.md, alignItems: 'center',

@@ -81,7 +81,19 @@ export const login = createAsyncThunk(
 );
 
 // Logout
-export const logout = createAsyncThunk('auth/logout', async () => {
+//
+// DATA-LOSS FIX: this thunk is dispatched both by the user tapping "log out" and
+// by the `force_logout` event the axios interceptor emits when a token refresh
+// is rejected with 401/403 (expired refresh token after idle, revoked session,
+// rotated JWT secret). It previously called clearAllData() with no argument,
+// which deleted every survey, photo and video on the device — including work
+// that had not yet been uploaded.
+//
+// clearAllData() now defaults to preserving unsynced survey/media rows and the
+// sync_queue entries needed to push them, while still clearing the cached
+// stakeholder dataset and session state. Pending work resumes on next login.
+// Pass `true` only from a deliberate, user-confirmed "discard local data" flow.
+export const logout = createAsyncThunk<void, boolean | undefined>('auth/logout', async (discardLocalData) => {
   try {
     const refreshToken = await EncryptedStorage.getItem('refresh_token');
     await authService.logout(refreshToken || undefined);
@@ -93,9 +105,8 @@ export const logout = createAsyncThunk('auth/logout', async () => {
   await EncryptedStorage.removeItem('user_data');
   await EncryptedStorage.removeItem('cached_login_id');
   await EncryptedStorage.removeItem('cached_password');
-  
-  // Wipe all local SQLite data on logout
-  await clearAllData();
+
+  await clearAllData(discardLocalData === true);
 });
 
 const authSlice = createSlice({
