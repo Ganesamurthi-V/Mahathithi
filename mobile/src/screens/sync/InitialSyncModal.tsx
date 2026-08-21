@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, ProgressBarAndroid } from 'react-native';
+import { Modal, View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { runInitialSync } from '../../store/slices/syncThunks';

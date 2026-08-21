@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { LogBox } from 'react-native';
 import { Provider } from 'react-redux';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NavigationContainer } from '@react-navigation/native';
@@ -8,6 +9,15 @@ import { RootNavigator } from './navigation/AppNavigator';
 import { initDatabase } from './database';
 import { isApiConfigured } from './services/api';
 import ConfigErrorScreen from './screens/ConfigErrorScreen';
+
+// Suppress known deprecation warnings from react-native core that only fire
+// because the framework still defines these modules internally. They are not
+// imported or used anywhere in our code. Upgrading RN to 0.73+ removes them.
+LogBox.ignoreLogs([
+  'ProgressBarAndroid has been extracted',
+  'Clipboard has been extracted',
+  'PushNotificationIOS has been extracted',
+]);
 
 const queryClient = new QueryClient({
   defaultOptions: {
