@@ -7,6 +7,7 @@ import {
   startInitialSync, updateInitialSyncProgress, initialSyncComplete, initialSyncFailed
 } from './syncSlice';
 import { syncService, mediaService, surveyService, stakeholderService, facilityService } from '../../services/api';
+import { announceLocalDataChange } from '../../services/realtime';
 import { surveyDao, syncQueueDao, stakeholderDao, appStateDao, mediaDao, facilityDao } from '../../database';
 
 // Page size for the paginated stakeholder download.
@@ -672,6 +673,14 @@ export const runAutoSync = createAsyncThunk(
 
       if (grandTotalProcessed > 0) {
         console.log(`[Sync] Completed. ${grandTotalProcessed} item(s) uploaded across ${pass} pass(es).`);
+
+        // A sync rewrites this device's own SQLite rows — surveys marked synced,
+        // completed stakeholders purged from the local set. Nothing arrives over
+        // the socket for our own writes, so without this announcement any screen
+        // currently displayed would keep rendering the pre-sync state until the
+        // operator navigated away. Only fired when something actually moved, so
+        // an idle sync pass does not cause needless reloads.
+        announceLocalDataChange(['stakeholders', 'surveys', 'analytics']);
       }
 
     } catch (error: any) {

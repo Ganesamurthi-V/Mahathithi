@@ -262,15 +262,48 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   // so they never appear in the photo grid regardless of photoCategory.
   const videos = useMemo(() => media.filter((m: any) => m.type === 'VIDEO'), [media]);
 
+  // Leaves edit mode the moment you hit Save rather than after the round trip,
+  // and writes the new values straight into the cached row so the detail pane and
+  // the table behind it both update at once. The server's data:changed broadcast
+  // then propagates the same edit to every other open admin session.
   const updateMut = useMutation({
     mutationFn: (data: any) => updateStakeholder(stakeholder.id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['stakeholders'] });
+    onMutate: async (data: any) => {
       setEditMode(false);
+      await queryClient.cancelQueries({ queryKey: ['stakeholders'] });
+      const previous = queryClient.getQueriesData({ queryKey: ['stakeholders'] });
+
+      // ['stakeholders', filters, page] — patch the row wherever it appears.
+      queryClient.setQueriesData({ queryKey: ['stakeholders'] }, (old: any) => {
+        const list = old?.data?.data?.stakeholders;
+        if (!Array.isArray(list)) return old;
+        return {
+          ...old,
+          data: {
+            ...old.data,
+            data: {
+              ...old.data.data,
+              stakeholders: list.map((row: any) =>
+                row.id === stakeholder.id ? { ...row, ...data } : row
+              ),
+            },
+          },
+        };
+      });
+
+      return { previous };
     },
-    onError: (err: any) => {
+    onError: (err: any, _vars, ctx: any) => {
+      // Restore every snapshot we touched, then reopen the editor so the operator
+      // can see and correct what failed.
+      ctx?.previous?.forEach(([key, value]: [any, any]) => queryClient.setQueryData(key, value));
+      setEditMode(true);
       alert(err.response?.data?.error?.message || 'Failed to update stakeholder');
-    }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['stakeholders'] });
+      queryClient.invalidateQueries({ queryKey: ['survey', stakeholder.id] });
+    },
   });
 
   const categoryLabels: Record<string, string> = {

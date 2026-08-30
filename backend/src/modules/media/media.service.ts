@@ -3,6 +3,7 @@ import { uploadToS3, getPresignedUrl, deleteFromS3, generateS3Key } from '../../
 import { NotFoundError, ForbiddenError, ConflictError } from '../../utils/errors';
 import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
+import { broadcastChange } from '../../realtime/events';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
@@ -143,6 +144,13 @@ export class MediaService {
     });
 
     logger.info(`Media uploaded: ${data.type} for survey ${data.surveyId}`);
+
+    // An admin with the verification gallery open sees newly synced photos and
+    // documents appear, instead of an incomplete set until they reopen the modal.
+    broadcastChange(['media', 'surveys'], {
+      action: 'create',
+      entityId: resolvedSurveyId,
+    });
 
     return media;
   }

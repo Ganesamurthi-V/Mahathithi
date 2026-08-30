@@ -1,7 +1,6 @@
 import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { setStats, setLoading } from '../../store/slices/dashboardSlice';
@@ -9,6 +8,7 @@ import { logout } from '../../store/slices/authSlice';
 import { dashboardService } from '../../services/api';
 import { colors, spacing, borderRadius, typography, shadows, iconSizes } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
+import { useLiveData } from '../../hooks/useLiveData';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const StatCard = React.memo(({ card, index }: { card: any, index: number }) => {
@@ -105,10 +105,19 @@ export default function DashboardScreen({ navigation }: any) {
     }
   }, [dispatch]);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadStats(false); // silent background refresh — never blocks the UI
-    }, [loadStats])
+  // Live: refreshes on navigation focus, on any server change touching these
+  // resources, and whenever the app returns to the foreground.
+  //
+  // Previously this was focus-only, so the counters on a dashboard left open were
+  // simply wrong — a survey completed by this or any other enumerator in the
+  // district did not move them until the operator navigated away and back.
+  //
+  // `loadStats(false)` is the silent variant: it keeps the current numbers on
+  // screen and swaps them when the response lands, so a background refresh never
+  // flashes a spinner over data the operator is reading.
+  useLiveData(
+    ['analytics', 'surveys', 'stakeholders'],
+    useCallback(() => loadStats(false), [loadStats])
   );
 
   const handleLogout = () => {

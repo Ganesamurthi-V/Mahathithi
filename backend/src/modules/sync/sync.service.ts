@@ -3,6 +3,7 @@ import { logger } from '../../utils/logger';
 import { ValidationError } from '../../utils/errors';
 import { getDigiPin } from '../../utils/digipin';
 import { districtScopeFilter } from '../../utils/district-scope';
+import { broadcastChange } from '../../realtime/events';
 
 const MAX_BATCH_ITEMS = 200;
 
@@ -223,6 +224,16 @@ export class SyncService {
     }
 
     logger.info(`Sync upload processed for enumerator ${enumeratorId}:`, results);
+
+    // A batch upload from a field device is the other way survey data enters the
+    // system, and it was entirely silent — an admin watching the dashboard saw
+    // nothing until they navigated away and back. Only broadcast when something
+    // actually landed, so a no-op sync poll does not churn every client.
+    if (results.surveys.success > 0 || results.phoneValidations.success > 0) {
+      broadcastChange(['surveys', 'stakeholders', 'analytics', 'exports'], {
+        action: 'update',
+      });
+    }
 
     return results;
   }

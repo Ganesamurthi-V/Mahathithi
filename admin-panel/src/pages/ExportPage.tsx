@@ -18,6 +18,9 @@ export default function ExportPage() {
   const surveys: any[] = data?.data?.data || [];
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+  // Progress/result text so the operator knows the size of the job and when it
+  // finished, instead of just watching a spinner.
+  const [exportNote, setExportNote] = useState('');
 
   // Auto-select only new (not exported) surveys when data loads
   useEffect(() => {
@@ -40,24 +43,51 @@ export default function ExportPage() {
   const deselectAll = () => setSelected(new Set());
   const selectNew = () => setSelected(new Set(surveys.filter((s: any) => !s.isExported).map((s: any) => s.id)));
 
-  const handleExport = async () => {
+  /**
+   * Generate and download the SQL.
+   *
+   * This one cannot be made truly fire-and-forget: the result IS a file the
+   * browser has to receive, so the request must stay open until the bytes arrive.
+   * What it should not do is freeze the page — so the work runs detached from the
+   * click, the rest of the UI stays interactive, and the operator is told what is
+   * happening and roughly how big the job is.
+   *
+   * Making it genuinely background would need a server-side job that writes to
+   * storage and a "your export is ready" notification. That is a larger change
+   * and worth doing only if exports grow past a few thousand surveys.
+   */
+  const handleExport = () => {
     if (selected.size === 0) { alert('Select at least one survey to export.'); return; }
+
+    const count = selected.size;
     setExporting(true);
-    try {
-      const res = await exportSurveysSQL([...selected]);
-      const blob = new Blob([res.data], { type: 'application/sql' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `mahaatithi_export_${new Date().toISOString().slice(0, 10)}.sql`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-      queryClient.invalidateQueries({ queryKey: ['export-surveys-list'] });
-    } catch (e: any) {
-      alert('Export failed: ' + (e.message || 'Unknown error'));
-    } finally {
-      setExporting(false);
-    }
+    setExportNote(`Preparing ${count} survey${count === 1 ? '' : 's'}…`);
+
+    // Deliberately not awaited: the click handler returns immediately so the
+    // browser never treats the tab as busy, and the promise settles on its own.
+    exportSurveysSQL([...selected])
+      .then((res) => {
+        const blob = new Blob([res.data], { type: 'application/sql' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mahaatithi_export_${new Date().toISOString().slice(0, 10)}.sql`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        setExportNote(`Downloaded ${count} survey${count === 1 ? '' : 's'}.`);
+        // The server marked these exported and broadcast the change, so other
+        // sessions update too; this refreshes ours without waiting for the event.
+        queryClient.invalidateQueries({ queryKey: ['export-surveys-list'] });
+        queryClient.invalidateQueries({ queryKey: ['analytics'] });
+      })
+      .catch((e: any) => {
+        setExportNote('');
+        alert('Export failed: ' + (e.response?.data?.error?.message || e.message || 'Unknown error'));
+      })
+      .finally(() => {
+        setExporting(false);
+        window.setTimeout(() => setExportNote(''), 4000);
+      });
   };
 
   const newCount = surveys.filter((s: any) => !s.isExported).length;
@@ -118,6 +148,11 @@ export default function ExportPage() {
         {/* handleExport invalidates this list so freshly exported rows flip to
             "Exported"; this explains the badges changing. */}
         {isRefreshing && <InlineLoader label="Updating list…" />}
+        {exportNote && (
+          <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 600 }}>
+            {exportNote}
+          </span>
+        )}
       </div>
 
       <RefetchOverlay active={isRefreshing}>

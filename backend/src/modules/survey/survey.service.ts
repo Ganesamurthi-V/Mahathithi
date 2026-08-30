@@ -3,6 +3,7 @@ import { NotFoundError, ValidationError, ConflictError } from '../../utils/error
 import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
+import { broadcastChange } from '../../realtime/events';
 import { getDigiPin } from '../../utils/digipin';
 // B7 FIX: removed unused StakeholderService import/instance — it was never
 // referenced and risked a circular dependency between the survey and
@@ -337,6 +338,16 @@ export class SurveyService {
       lockedAt: new Date().toISOString(),
       district: survey.stakeholder.district,
     });
+
+    // A completed survey is the single most consequential change in the system:
+    // it moves the completed/closed counters, adds a row to the export queue, and
+    // flips the stakeholder's status everywhere. Broadcasting the affected
+    // resources means an admin watching the dashboard or the export page sees it
+    // land without touching anything.
+    broadcastChange(
+      ['surveys', 'stakeholders', 'analytics', 'exports', 'auditLogs'],
+      { action: 'update', entityId: surveyId, district: survey.stakeholder.district }
+    );
 
     return {
       status: 'CLOSED',

@@ -10,6 +10,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { surveyDao, mediaDao, facilityDao, stakeholderDao } from '../../database';
 import { refreshSyncCountsThunk, runAutoSync } from '../../store/slices/syncThunks';
+import { announceLocalDataChange } from '../../services/realtime';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
@@ -869,6 +870,12 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       // Mark stakeholder as CLOSED locally so it disappears from the work queue
       // The server will also mark it CLOSED when complete() succeeds during sync
       await stakeholderDao.update(stakeholderId, { status: 'CLOSED' });
+
+      // The stakeholder was just marked CLOSED locally, so the list screen we are
+      // about to navigate to is already stale. Announcing before navigating means
+      // it renders the correct set on arrival rather than showing the completed
+      // record for a moment and then dropping it.
+      announceLocalDataChange(['stakeholders', 'surveys', 'analytics']);
 
       // Trigger background sync immediately — don't wait for it
       dispatch(refreshSyncCountsThunk() as any);

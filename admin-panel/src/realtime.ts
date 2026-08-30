@@ -7,23 +7,86 @@ const SOCKET_BASE = API_BASE.replace(/\/api\/?$/, '') || window.location.origin;
 let socket: Socket | null = null;
 let teardownWindowHooks: (() => void) | null = null;
 
-// Coalesce bursts of cache invalidation.
-//
-// Every stakeholder:locked event triggered an immediate invalidateQueries. When
-// several enumerators complete surveys around the same time — normal during field
-// hours — that fired a refetch per event, so a dozen events meant a dozen
-// /analytics round trips in a second. Analytics is a set of aggregate counters, so
-// collapsing a burst into one refetch shortly after it settles gives the same
-// result for a fraction of the traffic.
-const INVALIDATE_DEBOUNCE_MS = 750;
-let invalidateTimer: number | null = null;
+/**
+ * Server resource names, mirroring DataResource in backend/src/realtime/events.ts.
+ */
+type DataResource =
+  | 'stakeholders'
+  | 'enumerators'
+  | 'districts'
+  | 'surveys'
+  | 'media'
+  | 'analytics'
+  | 'auditLogs'
+  | 'exports';
 
-function scheduleAnalyticsRefresh(queryClient: QueryClient): void {
-  if (invalidateTimer !== null) window.clearTimeout(invalidateTimer);
-  invalidateTimer = window.setTimeout(() => {
-    invalidateTimer = null;
-    queryClient.invalidateQueries({ queryKey: ['analytics'] });
-  }, INVALIDATE_DEBOUNCE_MS);
+interface DataChangedPayload {
+  resources: DataResource[];
+  action?: 'create' | 'update' | 'delete';
+  entityId?: string;
+  at: string;
+}
+
+/**
+ * Which cached queries a change to each resource makes stale.
+ *
+ * This is the single place that knows the relationship, so a new page only has to
+ * add its key here to start updating live. Keys are matched by prefix, which is
+ * what makes ['stakeholders'] cover every filter/page permutation of
+ * ['stakeholders', filters, page] without enumerating them.
+ *
+ * Note the deliberate fan-out: a completed survey changes the stakeholder's
+ * status, the dashboard counters AND the export queue, so the server names all
+ * three resources and each maps onto its own keys. Getting this wrong is what
+ * produced the original symptom — the panel invalidated only ['analytics'], so
+ * the stakeholders table, enumerators list, districts page, audit log and export
+ * list all sat on stale data until the operator navigated away and back.
+ */
+const RESOURCE_QUERY_KEYS: Record<DataResource, string[][]> = {
+  stakeholders: [['stakeholders'], ['survey']],
+  enumerators:  [['enumerators']],
+  districts:    [['districts']],
+  surveys:      [['stakeholders'], ['survey'], ['export-surveys-list']],
+  media:        [['media']],
+  analytics:    [['analytics']],
+  auditLogs:    [['auditLogs']],
+  exports:      [['export-surveys-list']],
+};
+
+/**
+ * Coalesce bursts of invalidation.
+ *
+ * A single field sync can emit several events in quick succession (survey text,
+ * then each media file). Invalidating per event would fire a refetch per event;
+ * collecting the affected keys and flushing once shortly after the burst settles
+ * produces the same end state for a fraction of the requests.
+ */
+const FLUSH_DEBOUNCE_MS = 300;
+let pendingKeys = new Set<string>();
+let flushTimer: number | null = null;
+
+function scheduleInvalidation(queryClient: QueryClient, resources: DataResource[]): void {
+  for (const resource of resources) {
+    for (const key of RESOURCE_QUERY_KEYS[resource] ?? []) {
+      pendingKeys.add(JSON.stringify(key));
+    }
+  }
+  if (pendingKeys.size === 0) return;
+
+  if (flushTimer !== null) window.clearTimeout(flushTimer);
+  flushTimer = window.setTimeout(() => {
+    flushTimer = null;
+    const keys = [...pendingKeys].map((k) => JSON.parse(k) as string[]);
+    pendingKeys = new Set();
+
+    for (const queryKey of keys) {
+      // refetchType 'all' rather than the default 'active': a page the operator
+      // is not looking at right now must ALSO be refreshed, otherwise switching
+      // to it shows the cached stale value first and then flickers to the truth.
+      // That flicker is the exact "showing old data again" behaviour being fixed.
+      queryClient.invalidateQueries({ queryKey, refetchType: 'all' });
+    }
+  }, FLUSH_DEBOUNCE_MS);
 }
 
 export function connectAdminRealtime(queryClient: QueryClient): void {
@@ -32,9 +95,7 @@ export function connectAdminRealtime(queryClient: QueryClient): void {
   // LEAK FIX: the guard above only skips when the socket is *connected*. A socket
   // that exists but has dropped fell straight through and a brand-new one was
   // constructed on top of it, leaving the old instance and all of its listeners
-  // attached. Repeated over a long admin session (each drop leaving another dead
-  // socket behind) that means duplicate handlers and duplicate refetches for every
-  // event. Dispose explicitly before rebuilding.
+  // attached — duplicate handlers and duplicate refetches for every event.
   if (socket) {
     socket.removeAllListeners();
     socket.disconnect();
@@ -43,29 +104,45 @@ export function connectAdminRealtime(queryClient: QueryClient): void {
 
   socket = io(SOCKET_BASE, {
     withCredentials: true, // sends the httpOnly admin_session cookie for the handshake
-    // Order matters: websocket is attempted first, so the usual case skips the
-    // HTTP long-poll handshake entirely. `polling` is retained as a fallback
-    // because government/corporate networks sometimes block WebSocket upgrades,
-    // and a panel with no realtime is better than a panel that cannot connect.
+    // websocket first so the usual case skips the HTTP long-poll handshake;
+    // polling retained as a fallback because government/corporate networks
+    // sometimes block WebSocket upgrades.
     transports: ['websocket', 'polling'],
-    // Explicit reconnection policy. Previously unset, so a dropped connection
-    // relied entirely on defaults with no ceiling on the backoff.
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 10000,
     timeout: 10000,
   });
 
+  socket.on('connect', () => {
+    // Any change that happened while we were disconnected was missed entirely,
+    // so treat a (re)connect as "everything is suspect" and refresh the lot.
+    // Without this, a laptop resumed from sleep would keep showing pre-sleep data
+    // until something else happened to invalidate it.
+    scheduleInvalidation(queryClient, Object.keys(RESOURCE_QUERY_KEYS) as DataResource[]);
+  });
+
   socket.on('connect_error', (err) => {
-    // Surfaced deliberately: a silent auth failure here is why realtime could
-    // appear "broken" with no diagnostic. UNAUTHORIZED means the admin_session
-    // cookie has lapsed; the api.ts keep-alive renews it and the next
-    // reconnection attempt will carry the fresh cookie.
+    // A silent auth failure here is why realtime could appear "broken" with no
+    // diagnostic. UNAUTHORIZED means the admin_session cookie lapsed; the api.ts
+    // keep-alive renews it and the next reconnect carries the fresh cookie.
     if (import.meta.env.DEV) console.warn('[realtime] connect_error:', err.message);
   });
 
-  socket.on('stakeholder:locked', () => scheduleAnalyticsRefresh(queryClient));
-  socket.on('stakeholder:unlocked', () => scheduleAnalyticsRefresh(queryClient));
+  // The generic change feed — covers every mutation the server reports.
+  socket.on('data:changed', (payload: DataChangedPayload) => {
+    if (!payload?.resources?.length) return;
+    scheduleInvalidation(queryClient, payload.resources);
+  });
+
+  // Specific events kept for their side effects beyond cache invalidation.
+  socket.on('stakeholder:locked', () => {
+    scheduleInvalidation(queryClient, ['stakeholders', 'analytics', 'surveys']);
+  });
+
+  socket.on('stakeholder:unlocked', () => {
+    scheduleInvalidation(queryClient, ['stakeholders', 'analytics']);
+  });
 
   socket.on('enumerator:presence', (payload: { enumeratorId: string; status: 'online' | 'offline' }) => {
     queryClient.setQueryData(['enumerator-presence'], (old: Record<string, boolean> = {}) => ({
@@ -76,8 +153,8 @@ export function connectAdminRealtime(queryClient: QueryClient): void {
 
   // Browsers throttle timers and may drop sockets in background tabs, and a
   // laptop resumed from sleep comes back with a dead connection while `socket`
-  // still looks valid. Re-check whenever the tab becomes visible or the network
-  // returns, so the panel does not sit silently disconnected.
+  // still looks valid. Re-check on visibility and on regaining network; the
+  // 'connect' handler above then refreshes everything that was missed.
   const revive = () => {
     if (!socket || socket.connected) return;
     socket.connect();
@@ -94,10 +171,11 @@ export function connectAdminRealtime(queryClient: QueryClient): void {
 }
 
 export function disconnectAdminRealtime(): void {
-  if (invalidateTimer !== null) {
-    window.clearTimeout(invalidateTimer);
-    invalidateTimer = null;
+  if (flushTimer !== null) {
+    window.clearTimeout(flushTimer);
+    flushTimer = null;
   }
+  pendingKeys = new Set();
   if (teardownWindowHooks) {
     teardownWindowHooks();
     teardownWindowHooks = null;

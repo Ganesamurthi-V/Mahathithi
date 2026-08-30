@@ -3,6 +3,7 @@ import { prisma } from '../../config/database';
 import { NotFoundError, ForbiddenError, ConflictError } from '../../utils/errors';
 import { logger } from '../../utils/logger';
 import { districtScopeFilter } from '../../utils/district-scope';
+import { broadcastChange } from '../../realtime/events';
 
 interface SearchParams {
   name?: string;
@@ -458,6 +459,15 @@ export class StakeholderService {
           updatedFields: Object.keys(updateData)
         },
       },
+    });
+
+    // An edit made in the admin gallery, or from a field device, now reaches
+    // every other open client. The district is passed so enumerators working that
+    // area pick up the corrected name/address without re-syncing manually.
+    broadcastChange(['stakeholders', 'auditLogs'], {
+      action: 'update',
+      entityId: stakeholderId,
+      district: updated.district,
     });
 
     return updated;

@@ -8,6 +8,7 @@ import { AuthenticatedRequest } from '../../middleware/auth';
 import { ValidationError, NotFoundError } from '../../utils/errors';
 import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
+import { broadcastChange } from '../../realtime/events';
 
 /**
  * L1 FIX: enforce minimum password strength before hashing.
@@ -211,6 +212,14 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
       },
     });
 
+    // Every open admin session updates immediately. auditLogs is included
+    // because the write above appended an entry, and analytics because the
+    // enumerator count changed.
+    broadcastChange(['enumerators', 'analytics', 'auditLogs'], {
+      action: 'create',
+      entityId: enumerator.id,
+    });
+
     res.status(201).json({ success: true, data: { id: enumerator.id, loginId, name } });
   } catch (error) {
     next(error);
@@ -237,6 +246,13 @@ router.patch('/enumerators/:id', async (req: AuthenticatedRequest, res: Response
     const enumerator = await prisma.enumerator.update({
       where: { id: (req.params.id as string) },
       data: updateData,
+    });
+
+    // Covers the Activate/Deactivate toggle, which changes the row's badge for
+    // every admin currently looking at the enumerators table.
+    broadcastChange(['enumerators', 'analytics'], {
+      action: 'update',
+      entityId: enumerator.id,
     });
 
     res.json({ success: true, data: enumerator });
@@ -298,6 +314,15 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
       },
     });
 
+    // Deleting touches a lot: the enumerator list, the district assignment
+    // counts, previously-locked stakeholders that are now free, and the counters.
+    // The per-district stakeholder:unlocked events above already told field
+    // devices to restore those rows; this covers the admin-side tables.
+    broadcastChange(['enumerators', 'districts', 'stakeholders', 'analytics', 'auditLogs'], {
+      action: 'delete',
+      entityId: enumeratorId,
+    });
+
     res.json({ success: true, message: 'Enumerator deleted (deactivated) successfully' });
   } catch (error) {
     next(error);
@@ -334,6 +359,14 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
         enumeratorId: req.enumerator!.id,
         details: { districtIds },
       },
+    });
+
+    // Changes the badges in the enumerators table AND the "assigned enumerators"
+    // column on the districts page — two pages that previously only caught this
+    // if the operator navigated away and back.
+    broadcastChange(['enumerators', 'districts', 'auditLogs'], {
+      action: 'update',
+      entityId: req.params.id as string,
     });
 
     res.json({ success: true, message: 'Districts assigned successfully' });
@@ -476,6 +509,11 @@ router.post('/export/surveys', async (req: AuthenticatedRequest, res: Response, 
         create: { surveyId: s.id, exportedBy },
       });
     }
+
+    // Rows just flipped from "New" to "Exported" and the dashboard's exported
+    // counter moved. Without this, a second admin would keep seeing them as new
+    // and could export the same surveys again.
+    broadcastChange(['exports', 'analytics'], { action: 'update' });
 
     res.setHeader('Content-Type', 'application/sql');
     res.setHeader('Content-Disposition', `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0,10)}.sql"`);

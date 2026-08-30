@@ -23,11 +23,28 @@ import Layout from './components/Layout';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchOnWindowFocus: false,
       retry: 1,
-      // PERF: cache responses for 30s and keep them 5m so navigating between
-      // pages doesn't refetch immediately on every mount.
-      staleTime: 30_000,
+
+      // Refetch when the operator comes back to the tab. This was explicitly
+      // false, which is a large part of why the panel showed old data: a tab left
+      // open for an hour kept whatever it had until something was navigated. The
+      // realtime feed handles changes while the tab is focused, and this covers
+      // the gap where the socket dropped in a backgrounded tab and events were
+      // missed entirely.
+      refetchOnWindowFocus: true,
+
+      // Same reasoning for regaining connectivity after a drop.
+      refetchOnReconnect: true,
+
+      // Mount always revalidates. Combined with the short staleTime below this
+      // means a page cannot render stale data and leave it there.
+      refetchOnMount: true,
+
+      // Kept short rather than zero: it still collapses the burst of requests
+      // fired when several components mount together, without meaningfully
+      // holding on to old values, since realtime invalidation overrides it the
+      // moment anything actually changes.
+      staleTime: 10_000,
       gcTime: 5 * 60_000,
     },
   },

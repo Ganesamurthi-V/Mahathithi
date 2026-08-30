@@ -14,6 +14,40 @@ const SOCKET_BASE = API_BASE.replace(/\/api\/?$/, '');
 
 let socket: Socket | null = null;
 
+/**
+ * Local event name screens subscribe to for "server data moved".
+ *
+ * Kept as a constant so a typo cannot silently produce a listener that never
+ * fires — the failure mode of a stale screen is invisible, with no error.
+ */
+export const DATA_CHANGED_EVENT = 'data:changed';
+
+/** Mirrors DataResource on the server. */
+export type DataResource =
+  | 'stakeholders'
+  | 'enumerators'
+  | 'districts'
+  | 'surveys'
+  | 'media'
+  | 'analytics'
+  | 'auditLogs'
+  | 'exports';
+
+export const ALL_RESOURCES: DataResource[] = [
+  'stakeholders', 'enumerators', 'districts', 'surveys', 'media', 'analytics', 'auditLogs', 'exports',
+];
+
+/**
+ * Announce a local change so screens refresh without a server round trip.
+ *
+ * Used after a sync finishes: the device has just rewritten its own SQLite rows,
+ * so the screens showing them are stale even though nothing arrived over the
+ * socket.
+ */
+export function announceLocalDataChange(resources: DataResource[]): void {
+  DeviceEventEmitter.emit(DATA_CHANGED_EVENT, { resources, reason: 'local' });
+}
+
 export async function connectRealtime(): Promise<void> {
   if (socket?.connected) return;
 
@@ -68,6 +102,24 @@ export async function connectRealtime(): Promise<void> {
 
     // Notify list screen to reload so newly unlocked stakeholders become visible
     DeviceEventEmitter.emit('stakeholder:unlocked', { stakeholderIds: payload.stakeholderIds });
+  });
+
+  // Generic change feed from the server (see backend/src/realtime/events.ts).
+  //
+  // Re-broadcast locally so any mounted screen can react while the operator is
+  // looking at it. Screens previously refreshed only in useFocusEffect, which
+  // means a screen already on display never updated — an admin correcting a
+  // stakeholder's address, or another enumerator closing one, was invisible until
+  // the enumerator navigated away and came back.
+  socket.on('data:changed', (payload: { resources?: string[]; entityId?: string; action?: string }) => {
+    if (!payload?.resources?.length) return;
+    DeviceEventEmitter.emit(DATA_CHANGED_EVENT, payload);
+  });
+
+  socket.on('connect', () => {
+    // Anything that changed while this device was offline was missed. Treat a
+    // (re)connect as "refresh everything you are showing".
+    DeviceEventEmitter.emit(DATA_CHANGED_EVENT, { resources: ALL_RESOURCES, reason: 'reconnect' });
   });
 
   socket.on('disconnect', (reason) => {

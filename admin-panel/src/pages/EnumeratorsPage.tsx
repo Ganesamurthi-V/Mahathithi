@@ -37,43 +37,124 @@ export default function EnumeratorsPage() {
   const enumerators: Enumerator[] = enumeratorsRes?.data?.data || [];
   const districts: District[] = districtsRes?.data?.data || [];
 
+  const ENUM_KEY = ['enumerators'];
+
+  /**
+   * Rewrite the cached enumerator list in place.
+   *
+   * The cache holds the raw axios response, so the array lives at
+   * `response.data.data`. Rebuilding the wrapper preserves that shape while
+   * swapping the array, which is what lets the table re-render instantly.
+   */
+  const patchEnumeratorCache = (fn: (list: Enumerator[]) => Enumerator[]) => {
+    queryClient.setQueryData(ENUM_KEY, (old: any) => {
+      if (!old?.data?.data) return old;
+      return { ...old, data: { ...old.data, data: fn(old.data.data as Enumerator[]) } };
+    });
+  };
+
+  /**
+   * Snapshot the list, apply an optimistic edit, and hand the snapshot back so
+   * onError can restore it. Cancelling in-flight fetches first stops a response
+   * that was already on the wire from overwriting the optimistic value.
+   */
+  const beginOptimistic = async (fn: (list: Enumerator[]) => Enumerator[]) => {
+    await queryClient.cancelQueries({ queryKey: ENUM_KEY });
+    const previous = queryClient.getQueryData(ENUM_KEY);
+    patchEnumeratorCache(fn);
+    return { previous };
+  };
+
+  const rollback = (ctx: any) => {
+    if (ctx?.previous !== undefined) queryClient.setQueryData(ENUM_KEY, ctx.previous);
+  };
+
+  // The modal closes the moment you submit rather than after the server answers.
+  // Creation needs a server-generated id, so the new row cannot be faked into the
+  // cache — but the operator does not have to sit and watch a spinner for it. The
+  // row arrives via the invalidation below (and via the data:changed broadcast,
+  // which is also what puts it on every OTHER admin's screen).
   const createMut = useMutation({
     mutationFn: createEnumerator,
-    onSuccess: (res, vars) => {
-      showToast('success', `Enumerator "${vars.name}" created successfully`);
+    onMutate: (vars: any) => {
       setShowCreateModal(false);
-      queryClient.invalidateQueries({ queryKey: ['enumerators'] });
+      showToast('info', `Creating "${vars.name}"…`);
     },
-    onError: (err: any) => {
-      showToast('error', err.response?.data?.error?.message || 'Failed to create enumerator');
-    }
+    onSuccess: (_res, vars: any) => {
+      showToast('success', `Enumerator "${vars.name}" created successfully`);
+    },
+    onError: (err: any, vars: any) => {
+      // Reopening would lose the typed values, so report clearly instead and let
+      // the operator retry from a fresh form.
+      showToast('error', `Could not create "${vars?.name}": ${err.response?.data?.error?.message || 'request failed'}`);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ENUM_KEY });
+      queryClient.invalidateQueries({ queryKey: ['analytics'] });
+    },
   });
 
+  // Activate/Deactivate flips in the cache immediately — the badge and button
+  // label change on click, with no wait at all. If the server rejects it, the
+  // previous list is restored and a toast explains why.
   const toggleActiveMut = useMutation({
     mutationFn: (e: Enumerator) => updateEnumerator(e.id, { isActive: !e.isActive }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['enumerators'] });
-    }
+    onMutate: (e: Enumerator) =>
+      beginOptimistic((list) =>
+        list.map((row) => (row.id === e.id ? { ...row, isActive: !e.isActive } : row))
+      ),
+    onError: (err: any, e, ctx) => {
+      rollback(ctx);
+      showToast('error', `Could not update "${e.name}": ${err.response?.data?.error?.message || 'request failed'}`);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ENUM_KEY }),
   });
 
+  // District badges update on the row straight away, using the names resolved
+  // from the already-cached districts list.
   const assignMut = useMutation({
     mutationFn: ({ id, dIds }: { id: string, dIds: string[] }) => assignDistricts(id, dIds),
-    onSuccess: () => {
-      showToast('success', 'Districts assigned successfully');
+    onMutate: async ({ id, dIds }) => {
       setShowAssignModal(null);
-      queryClient.invalidateQueries({ queryKey: ['enumerators'] });
-    }
+      const all: District[] = (queryClient.getQueryData(['districts']) as any)?.data?.data || [];
+      const next = dIds
+        .map((dId) => all.find((d) => d.id === dId))
+        .filter(Boolean)
+        .map((d: any) => ({ id: d.id, name: d.name }));
+      return beginOptimistic((list) =>
+        list.map((row) => (row.id === id ? { ...row, districts: next } : row))
+      );
+    },
+    onSuccess: () => showToast('success', 'Districts assigned successfully'),
+    onError: (err: any, _vars, ctx) => {
+      rollback(ctx);
+      showToast('error', err.response?.data?.error?.message || 'Failed to assign districts');
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ENUM_KEY });
+      queryClient.invalidateQueries({ queryKey: ['districts'] });
+    },
   });
 
+  // Deletion is a soft delete (isActive = false) rather than a row removal, so
+  // the optimistic edit mirrors exactly what the server will do — the row stays
+  // and turns Inactive.
   const deleteMut = useMutation({
     mutationFn: deleteEnumerator,
-    onSuccess: () => {
-      showToast('success', 'Enumerator deleted successfully');
-      queryClient.invalidateQueries({ queryKey: ['enumerators'] });
-    },
-    onError: (err: any) => {
+    onMutate: (id: string) =>
+      beginOptimistic((list) =>
+        list.map((row) => (row.id === id ? { ...row, isActive: false } : row))
+      ),
+    onSuccess: () => showToast('success', 'Enumerator deleted successfully'),
+    onError: (err: any, _id, ctx) => {
+      rollback(ctx);
       showToast('error', err.response?.data?.error?.message || 'Failed to delete enumerator');
-    }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ENUM_KEY });
+      queryClient.invalidateQueries({ queryKey: ['analytics'] });
+      queryClient.invalidateQueries({ queryKey: ['districts'] });
+    },
   });
 
   const handleToggleActive = (e: Enumerator) => toggleActiveMut.mutate(e);
@@ -229,7 +310,7 @@ export default function EnumeratorsPage() {
       {toast && (
         <div className="toast-container">
           <div className={`toast ${toast.type}`}>
-            {toast.type === 'success' ? '✅' : '❌'} {toast.message}
+            {toast.type === 'success' ? '✅' : toast.type === 'info' ? '⏳' : '❌'} {toast.message}
           </div>
         </div>
       )}

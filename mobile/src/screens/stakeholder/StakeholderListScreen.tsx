@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Animated, Easing, DeviceEventEmitter } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { stakeholderService } from '../../services/api';
 import { stakeholderDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
+import { useLiveData } from '../../hooks/useLiveData';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -128,22 +128,30 @@ export default function StakeholderListScreen({ navigation }: any) {
     }
   };
 
-  useFocusEffect(
-    useCallback(() => {
-      loadStakeholders(1, false); // Silent background refresh on focus
-    }, [])
+  // Live: navigation focus, any server change to stakeholders/surveys, and app
+  // foreground. Replaces the focus-only reload, which left a visible list showing
+  // records that had already been edited or taken by someone else.
+  //
+  // Reloading page 1 (rather than clearing first) means the rows are swapped in
+  // place with no flicker and no loss of the header/count.
+  useLiveData(
+    ['stakeholders', 'surveys'],
+    useCallback(() => { loadStakeholders(1, false); }, [])
   );
 
-  // Realtime: update the list instantly when another enumerator locks a
-  // stakeholder or an admin unlocks a batch — no manual pull-to-refresh needed.
+  // Kept alongside the generic feed because these two have a better response than
+  // a refetch: a lock removes exactly one known row, which is instant and avoids
+  // re-querying 295K rows to discover the same thing.
   useEffect(() => {
     const onLocked = ({ stakeholderId }: { stakeholderId: string }) => {
       setStakeholders(prev => prev.filter(s => s.id !== stakeholderId));
+      // Keep the badge honest after removing a row.
+      stakeholderDao.searchCount({}).then(setTotalCount).catch(() => {});
     };
 
     const onUnlocked = () => {
-      // A stakeholder was unlocked (e.g. enumerator deactivated), reload
-      // from SQLite so the restored records appear in the list.
+      // Records were restored (e.g. an enumerator was deactivated), so the local
+      // set genuinely changed — a full reload is the right response here.
       loadStakeholders(1, false);
     };
 

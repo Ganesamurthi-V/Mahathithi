@@ -954,3 +954,7 @@ select.form-input {
 }
 
 .refetch-badge .spinner { color: var(--primary); }
+
+/* Progress toast for work that was handed off to the background, so the operator
+   is told the request is on its way without being made to wait for it. */
+.toast.info { border-left: 3px solid var(--primary); }
