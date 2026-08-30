@@ -57,7 +57,7 @@ export async function deleteFromS3(key: string): Promise<void> {
 }
 
 export function generateS3Key(
-  type: 'photo' | 'video' | 'thumbnail',
+  type: 'photo' | 'video' | 'thumbnail' | 'document',
   surveyId: string,
   fileName: string
 ): string {

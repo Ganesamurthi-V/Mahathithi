@@ -746,10 +746,15 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
     for (const key in photos) {
       const p = photos[key];
+      // Document categories (GST_DOC, PAN_CARD_DOC, etc.) are stored in the same
+      // `photos` map as real photos, but must be classified as DOCUMENT so a PDF
+      // isn't recorded as a PHOTO. Anything whose category ends in _DOC is a
+      // document; a PDF mime type is treated as a document too, as a safety net.
+      const isDocument = key.endsWith('_DOC') || (p.type || '').includes('pdf');
       await mediaDao.save({
         surveyId: newSurveyId,
         stakeholderId,
-        type: 'PHOTO',
+        type: isDocument ? 'DOCUMENT' : 'PHOTO',
         photoCategory: key,
         filePath: p.uri,
         fileName: p.fileName,

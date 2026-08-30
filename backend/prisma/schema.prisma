@@ -269,6 +269,7 @@ model Survey {
 enum MediaType {
   PHOTO
   VIDEO
+  DOCUMENT
 }
 
 enum PhotoCategory {

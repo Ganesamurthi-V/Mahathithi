@@ -201,6 +201,8 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   // PERF: don't re-filter the media array on every modal re-render (edit typing,
   // lightbox open/close); recompute only when the underlying media changes.
   const photos = useMemo(() => media.filter((m: any) => m.type === 'PHOTO' && !DOC_CATEGORIES.includes(m.photoCategory)), [media]);
+  // 'DOCUMENT'-typed rows are handled by the Business Documents section below,
+  // so they never appear in the photo grid regardless of photoCategory.
   const videos = useMemo(() => media.filter((m: any) => m.type === 'VIDEO'), [media]);
 
   const updateMut = useMutation({
@@ -519,7 +521,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             <div className="gallery-section">
               <h4 className="gallery-section-title">📄 Business Documents</h4>
               {(() => {
-                const docs = media.filter((m: any) => ['GST_DOC', 'PAN_CARD_DOC', 'ESTABLISHMENT_CERT_DOC', 'CUSTOM_DOC'].includes(m.photoCategory));
+                const docs = media.filter((m: any) => m.type === 'DOCUMENT' || DOC_CATEGORIES.includes(m.photoCategory));
                 return docs.length > 0 ? (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
                     {docs.map((doc: any) => (

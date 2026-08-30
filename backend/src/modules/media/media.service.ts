@@ -9,7 +9,7 @@ import path from 'path';
 interface UploadMediaData {
   enumeratorId: string;
   surveyId: string;
-  type: 'PHOTO' | 'VIDEO';
+  type: 'PHOTO' | 'VIDEO' | 'DOCUMENT';
   photoCategory?: string;
   fileName: string;
   fileBuffer: Buffer;
@@ -89,14 +89,26 @@ export class MediaService {
       }
     }
 
+    if (data.type === 'DOCUMENT') {
+      const existingDocs = await prisma.media.count({
+        where: { surveyId: resolvedSurveyId, type: 'DOCUMENT', deletedAt: null },
+      });
+      if (existingDocs >= 50) {
+        throw new Error('Maximum 50 documents allowed per survey');
+      }
+    }
+
     // H5 FIX: generate a UUID-based filename for the S3 key so client-supplied
     // names (../path, unicode tricks, etc.) never end up in storage paths.
     // Keep the original name in the DB only as display metadata.
     const ext = path.extname(data.fileName).toLowerCase().replace(/[^a-z0-9.]/g, '');
     const safeStorageName = `${uuidv4()}${ext}`;
 
+    const s3Prefix =
+      data.type === 'PHOTO' ? 'photo' :
+      data.type === 'VIDEO' ? 'video' : 'document';
     const s3Key = generateS3Key(
-      data.type === 'PHOTO' ? 'photo' : 'video',
+      s3Prefix,
       resolvedSurveyId,
       safeStorageName // H5 FIX: use the safe server-generated name, not the client's
     );

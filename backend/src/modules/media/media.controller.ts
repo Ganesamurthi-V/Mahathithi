@@ -22,7 +22,7 @@ export class MediaController {
         {
           enumeratorId: req.enumerator!.id,
           surveyId,
-          type: type as 'PHOTO' | 'VIDEO',
+          type: type as 'PHOTO' | 'VIDEO' | 'DOCUMENT',
           photoCategory,
           fileName: file.originalname,
           fileBuffer: file.buffer,
