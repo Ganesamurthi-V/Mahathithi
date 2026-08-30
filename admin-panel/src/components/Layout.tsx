@@ -1,12 +1,29 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { User } from '../types';
+import { LoadingButton } from './Loading';
 
-export default function Layout({ user, onLogout }: { user: User; onLogout: () => void }) {
+export default function Layout({ user, onLogout }: { user: User; onLogout: () => void | Promise<void> }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const [signingOut, setSigningOut] = useState(false);
 
   const activePage = location.pathname.substring(1) || 'dashboard';
+
+  // onLogout awaits POST /auth/logout before clearing local state, so on a slow
+  // connection the button previously sat inert with no feedback and could be
+  // clicked repeatedly, firing several logout requests.
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await onLogout();
+    } finally {
+      // Only reached if logout failed and the component is still mounted; on
+      // success the tree unmounts as `user` becomes null.
+      setSigningOut(false);
+    }
+  };
 
   return (
     <div className="app-layout">
@@ -69,9 +86,16 @@ export default function Layout({ user, onLogout }: { user: User; onLogout: () =>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{user.loginId}</div>
             </div>
           </div>
-          <button className="btn btn-secondary btn-sm" style={{ width: '100%', justifyContent: 'center' }} onClick={onLogout}>
+          <LoadingButton
+            variant="secondary"
+            size="sm"
+            loading={signingOut}
+            loadingText="Signing out…"
+            onClick={handleSignOut}
+            style={{ width: '100%', justifyContent: 'center' }}
+          >
             Sign Out
-          </button>
+          </LoadingButton>
         </div>
       </aside>
 

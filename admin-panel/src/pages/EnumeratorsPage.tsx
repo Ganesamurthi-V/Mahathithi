@@ -2,6 +2,13 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getEnumerators, getDistricts, createEnumerator, updateEnumerator, deleteEnumerator, assignDistricts } from '../api';
 import { Enumerator, District } from '../types';
+import {
+  LoadingButton,
+  TableSkeletonWithHeader,
+  RefetchOverlay,
+  InlineLoader,
+  SkeletonBlock,
+} from '../components/Loading';
 
 export default function EnumeratorsPage() {
   const queryClient = useQueryClient();
@@ -14,12 +21,12 @@ export default function EnumeratorsPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const { data: enumeratorsRes, isLoading: enumLoading } = useQuery({
+  const { data: enumeratorsRes, isLoading: enumLoading, isFetching: enumFetching } = useQuery({
     queryKey: ['enumerators'],
     queryFn: getEnumerators,
   });
 
-  const { data: districtsRes } = useQuery({
+  const { data: districtsRes, isLoading: districtsLoading } = useQuery({
     queryKey: ['districts'],
     queryFn: getDistricts,
     // PERF: districts change rarely — cache for 10m so opening/closing the
@@ -76,7 +83,34 @@ export default function EnumeratorsPage() {
     }
   };
 
-  if (enumLoading) return <div style={{ padding: '40px', textAlign: 'center' }}>Loading enumerators...</div>;
+  // Which specific row is mid-request. TanStack exposes the in-flight `variables`
+  // for a pending mutation, which lets a shared mutation drive a per-row spinner
+  // instead of every row reacting to the same global isPending flag.
+  const togglingId = toggleActiveMut.isPending ? toggleActiveMut.variables?.id : undefined;
+  const deletingId = deleteMut.isPending ? deleteMut.variables : undefined;
+
+  const TABLE_HEADERS = ['Name', 'Login ID', 'Phone', 'Districts', 'Surveys', 'Status', 'Actions'];
+
+  // First load shows a table-shaped skeleton rather than replacing the whole page
+  // with text, so the header and Create button stay usable and nothing shifts.
+  if (enumLoading) {
+    return (
+      <>
+        <div className="page-header">
+          <h2>Enumerators</h2>
+          <p>Manage field enumerators and their district assignments</p>
+        </div>
+        <div style={{ marginBottom: '20px' }}>
+          <button className="btn btn-primary" disabled>+ Create Enumerator</button>
+        </div>
+        <TableSkeletonWithHeader
+          headers={TABLE_HEADERS}
+          rows={6}
+          widths={['65%', '50%', '45%', '80%', '25%', '55%', '85%']}
+        />
+      </>
+    );
+  }
 
   return (
     <>
@@ -85,26 +119,30 @@ export default function EnumeratorsPage() {
         <p>Manage field enumerators and their district assignments</p>
       </div>
 
-      <div style={{ marginBottom: '20px' }}>
+      <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
         <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
           + Create Enumerator
         </button>
+        {/* A mutation invalidates ['enumerators'], so the list refetches after
+            every create/activate/delete. Surfacing it explains why rows change. */}
+        {enumFetching && <InlineLoader label="Refreshing list…" />}
       </div>
 
-      <div className="table-container">
+      <RefetchOverlay active={enumFetching}>
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Login ID</th>
-              <th>Phone</th>
-              <th>Districts</th>
-              <th>Surveys</th>
-              <th>Status</th>
-              <th>Actions</th>
+              {TABLE_HEADERS.map((h) => <th key={h}>{h}</th>)}
             </tr>
           </thead>
           <tbody>
+            {enumerators.length === 0 && (
+              <tr>
+                <td colSpan={TABLE_HEADERS.length} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                  No enumerators yet. Create one to get started.
+                </td>
+              </tr>
+            )}
             {enumerators.map((e) => (
               <tr key={e.id}>
                 <td style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{e.name}</td>
@@ -136,20 +174,28 @@ export default function EnumeratorsPage() {
                     </button>
                     {!e.isAdmin && (
                       <>
-                        <button
-                          className={`btn btn-sm ${e.isActive ? 'btn-danger' : 'btn-success'}`}
+                        {/* Scoped to THIS row via the mutation's in-flight
+                            variables. A bare `isPending` would spin every row's
+                            button at once, implying the whole table was busy. */}
+                        <LoadingButton
+                          variant={e.isActive ? 'danger' : 'success'}
+                          size="sm"
+                          loading={togglingId === e.id}
+                          loadingText="Saving…"
                           onClick={() => handleToggleActive(e)}
                         >
                           {e.isActive ? 'Deactivate' : 'Activate'}
-                        </button>
-                        <button
-                          className="btn btn-sm btn-danger"
+                        </LoadingButton>
+                        <LoadingButton
+                          variant="danger"
+                          size="sm"
+                          loading={deletingId === e.id}
                           onClick={() => handleDeleteEnumerator(e)}
                           style={{ padding: '6px 8px' }}
                           title="Delete Enumerator"
                         >
-                          🗑️
-                        </button>
+                          {deletingId === e.id ? '' : '🗑️'}
+                        </LoadingButton>
                       </>
                     )}
                   </div>
@@ -158,13 +204,26 @@ export default function EnumeratorsPage() {
             ))}
           </tbody>
         </table>
-      </div>
+      </RefetchOverlay>
 
       {showCreateModal && (
-        <CreateEnumeratorModal districts={districts} onClose={() => setShowCreateModal(false)} onSubmit={(data: any) => createMut.mutate(data)} />
+        <CreateEnumeratorModal
+          districts={districts}
+          districtsLoading={districtsLoading}
+          submitting={createMut.isPending}
+          onClose={() => setShowCreateModal(false)}
+          onSubmit={(data: any) => createMut.mutate(data)}
+        />
       )}
       {showAssignModal && (
-        <AssignDistrictsModal enumerator={showAssignModal} districts={districts} onClose={() => setShowAssignModal(null)} onSubmit={(id: string, dIds: string[]) => assignMut.mutate({ id, dIds })} />
+        <AssignDistrictsModal
+          enumerator={showAssignModal}
+          districts={districts}
+          districtsLoading={districtsLoading}
+          submitting={assignMut.isPending}
+          onClose={() => setShowAssignModal(null)}
+          onSubmit={(id: string, dIds: string[]) => assignMut.mutate({ id, dIds })}
+        />
       )}
 
       {toast && (
@@ -178,7 +237,7 @@ export default function EnumeratorsPage() {
   );
 }
 
-function CreateEnumeratorModal({ districts, onClose, onSubmit }: any) {
+function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClose, onSubmit }: any) {
   const [form, setForm] = useState({ loginId: '', password: '', name: '', phone: '', email: '', districtIds: [] as string[] });
   
   const toggleDistrict = (id: string) => {
@@ -188,10 +247,12 @@ function CreateEnumeratorModal({ districts, onClose, onSubmit }: any) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    // While submitting, ignore the overlay click that would otherwise close the
+    // modal mid-request and leave the operator unsure whether it succeeded.
+    <div className="modal-overlay" onClick={submitting ? undefined : onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <h3>Create New Enumerator</h3>
-        <form onSubmit={e => { e.preventDefault(); onSubmit(form); }}>
+        <form onSubmit={e => { e.preventDefault(); if (!submitting) onSubmit(form); }}>
           <div className="form-group">
             <label>Login ID *</label>
             <input className="form-input" required value={form.loginId} onChange={e => setForm({ ...form, loginId: e.target.value })} />
@@ -215,16 +276,31 @@ function CreateEnumeratorModal({ districts, onClose, onSubmit }: any) {
           <div className="form-group">
             <label>Assign Districts</label>
             <div className="checkbox-list">
-              {districts.map((d: any) => (
-                <label key={d.id} className="checkbox-item">
-                  <input type="checkbox" checked={form.districtIds.includes(d.id)} onChange={() => toggleDistrict(d.id)} /> {d.name}
-                </label>
-              ))}
+              {/* The districts query is cached for 10 minutes, so this is usually
+                  instant — but on a cold open the list would otherwise render as
+                  an empty box with no explanation. */}
+              {districtsLoading ? (
+                <div style={{ padding: '12px' }}>
+                  {[1, 2, 3, 4].map((i) => (
+                    <SkeletonBlock key={i} height={14} width={`${70 - i * 6}%`} style={{ margin: '8px 0' }} />
+                  ))}
+                </div>
+              ) : districts.length === 0 ? (
+                <div style={{ padding: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>No districts available.</div>
+              ) : (
+                districts.map((d: any) => (
+                  <label key={d.id} className="checkbox-item">
+                    <input type="checkbox" checked={form.districtIds.includes(d.id)} onChange={() => toggleDistrict(d.id)} /> {d.name}
+                  </label>
+                ))
+              )}
             </div>
           </div>
           <div className="modal-actions">
-            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary">Create Enumerator</button>
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={submitting}>Cancel</button>
+            <LoadingButton type="submit" variant="primary" loading={submitting} loadingText="Creating…">
+              Create Enumerator
+            </LoadingButton>
           </div>
         </form>
       </div>
@@ -232,26 +308,43 @@ function CreateEnumeratorModal({ districts, onClose, onSubmit }: any) {
   );
 }
 
-function AssignDistrictsModal({ enumerator, districts, onClose, onSubmit }: any) {
+function AssignDistrictsModal({ enumerator, districts, districtsLoading, submitting, onClose, onSubmit }: any) {
   const [selected, setSelected] = useState<string[]>(enumerator.districts.map((d: any) => d.id));
   const toggleDistrict = (id: string) => setSelected(prev => prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id]);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={submitting ? undefined : onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <h3>Assign Districts to {enumerator.name}</h3>
         <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '20px' }}>Select the districts this enumerator can access.</p>
         <div className="checkbox-list" style={{ maxHeight: '300px' }}>
-          {districts.map((d: any) => (
-            <label key={d.id} className="checkbox-item">
-              <input type="checkbox" checked={selected.includes(d.id)} onChange={() => toggleDistrict(d.id)} /> {d.name} ({d.stakeholdersCount})
-            </label>
-          ))}
+          {districtsLoading ? (
+            <div style={{ padding: '12px' }}>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <SkeletonBlock key={i} height={14} width={`${75 - i * 5}%`} style={{ margin: '8px 0' }} />
+              ))}
+            </div>
+          ) : districts.length === 0 ? (
+            <div style={{ padding: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>No districts available.</div>
+          ) : (
+            districts.map((d: any) => (
+              <label key={d.id} className="checkbox-item">
+                <input type="checkbox" checked={selected.includes(d.id)} onChange={() => toggleDistrict(d.id)} /> {d.name} ({d.stakeholdersCount})
+              </label>
+            ))
+          )}
         </div>
         <div style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>{selected.length} district(s) selected</div>
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={() => onSubmit(enumerator.id, selected)}>Save Assignments</button>
+          <button className="btn btn-secondary" onClick={onClose} disabled={submitting}>Cancel</button>
+          <LoadingButton
+            variant="primary"
+            loading={submitting}
+            loadingText="Saving…"
+            onClick={() => onSubmit(enumerator.id, selected)}
+          >
+            Save Assignments
+          </LoadingButton>
         </div>
       </div>
     </div>

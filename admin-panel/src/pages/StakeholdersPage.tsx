@@ -2,6 +2,14 @@ import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { searchStakeholders, updateStakeholder, getSurveyByStakeholder, getMediaBySurvey } from '../api';
 import { getDigiPin } from '../utils/digipin';
+import {
+  LoadingButton,
+  TableSkeletonWithHeader,
+  RefetchOverlay,
+  PageLoader,
+  SkeletonBlock,
+  CopyButton,
+} from '../components/Loading';
 
 // PERF: pure helper hoisted to module scope so it isn't re-created each render
 // and a memoized row can reference it without breaking memoization.
@@ -33,11 +41,15 @@ const StakeholderRow = memo(function StakeholderRow({ s, onSelect }: { s: any; o
   );
 });
 
+const TABLE_HEADERS = ['Organization', 'District', 'City / Taluka', 'PIN Code', 'DIGIPIN', 'Category', 'Status', 'Actions'];
+
 export default function StakeholdersPage() {
   const [filters, setFilters] = useState({ name: '', district: '', pinCode: '', digipin: '', category: '', status: '' });
   const [debouncedFilters, setDebouncedFilters] = useState(filters);
   const [page, setPage] = useState(1);
   const [selectedStakeholder, setSelectedStakeholder] = useState<any>(null);
+  // Which pagination button was pressed, so only that one shows a spinner.
+  const [pendingDirection, setPendingDirection] = useState<'prev' | 'next' | null>(null);
 
   // Debounce filter changes
   useEffect(() => {
@@ -48,7 +60,7 @@ export default function StakeholdersPage() {
     return () => clearTimeout(timer);
   }, [filters]);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['stakeholders', debouncedFilters, page],
     queryFn: () => {
       const params: any = { page, limit: 20 };
@@ -74,6 +86,14 @@ export default function StakeholdersPage() {
 
   // PERF: stable handler reference so memoized rows don't re-render on every keystroke.
   const handleSelect = useCallback((s: any) => setSelectedStakeholder(s), []);
+
+  // A refresh of data already on screen, as distinct from the very first load.
+  const isRefreshing = isFetching && !isLoading;
+
+  // Clear the pagination spinner target once the request settles.
+  useEffect(() => {
+    if (!isFetching) setPendingDirection(null);
+  }, [isFetching]);
 
   return (
     <>
@@ -108,49 +128,86 @@ export default function StakeholdersPage() {
               <option value="CLOSED">Closed</option>
             </select>
           </div>
-          <button type="submit" className="btn btn-primary" style={{ height: '42px' }} disabled={isLoading}>
-            {isLoading ? '...' : '🔍 Search'}
-          </button>
+          {/* Was `isLoading ? '...' : 'Search'`, which only reacted to the very
+              first fetch — pressing Search again after results existed gave no
+              feedback at all. isFetching covers every subsequent search too. */}
+          <LoadingButton
+            type="submit"
+            variant="primary"
+            loading={isFetching}
+            loadingText="Searching…"
+            style={{ height: '42px' }}
+          >
+            🔍 Search
+          </LoadingButton>
         </form>
       </div>
 
-      <div style={{ marginBottom: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
-        Showing {stakeholders.length} results {total > 0 && `of ${total.toLocaleString()} total`}
+      <div style={{ marginBottom: '16px', fontSize: '13px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {isLoading
+          ? <SkeletonBlock width={200} height={13} />
+          : <span>Showing {stakeholders.length} results {total > 0 && `of ${total.toLocaleString()} total`}</span>
+        }
       </div>
 
-      <div className="table-container">
-        <table>
-          <thead>
-            <tr>
-              <th>Organization</th>
-              <th>District</th>
-              <th>City / Taluka</th>
-              <th>PIN Code</th>
-              <th>DIGIPIN</th>
-              <th>Category</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stakeholders.length === 0 && (
+      {isLoading ? (
+        // First load only. A skeleton in the real column layout means the header
+        // row and column widths do not shift when results arrive.
+        <TableSkeletonWithHeader
+          headers={TABLE_HEADERS}
+          rows={10}
+          widths={['80%', '50%', '45%', '40%', '45%', '55%', '50%', '75%']}
+        />
+      ) : (
+        // Paging or re-searching with results already on screen: dim the existing
+        // rows rather than tearing them down, so the operator keeps their place.
+        <RefetchOverlay active={isRefreshing} label="Loading results…">
+          <table>
+            <thead>
               <tr>
-                <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-                  {isLoading ? 'Searching...' : 'No stakeholders found. Try adjusting your search filters.'}
-                </td>
+                {TABLE_HEADERS.map((h) => <th key={h}>{h}</th>)}
               </tr>
-            )}
-            {stakeholders.map((s: any) => (
-              <StakeholderRow key={s.id} s={s} onSelect={handleSelect} />
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {stakeholders.length === 0 && (
+                <tr>
+                  <td colSpan={TABLE_HEADERS.length} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                    No stakeholders found. Try adjusting your search filters.
+                  </td>
+                </tr>
+              )}
+              {stakeholders.map((s: any) => (
+                <StakeholderRow key={s.id} s={s} onSelect={handleSelect} />
+              ))}
+            </tbody>
+          </table>
+        </RefetchOverlay>
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', marginTop: '24px' }}>
-        <button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Previous</button>
+        {/* Pagination now blocks while a page is in flight, so a double-click
+            cannot skip a page, and shows which direction is loading. */}
+        <LoadingButton
+          variant="secondary"
+          size="sm"
+          disabled={page <= 1 || isFetching}
+          loading={isFetching && pendingDirection === 'prev'}
+          loadingText="Loading…"
+          onClick={() => { setPendingDirection('prev'); setPage(page - 1); }}
+        >
+          ← Previous
+        </LoadingButton>
         <span style={{ display: 'flex', alignItems: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>Page {page}</span>
-        <button className="btn btn-secondary btn-sm" disabled={stakeholders.length < 20} onClick={() => setPage(page + 1)}>Next →</button>
+        <LoadingButton
+          variant="secondary"
+          size="sm"
+          disabled={stakeholders.length < 20 || isFetching}
+          loading={isFetching && pendingDirection === 'next'}
+          loadingText="Loading…"
+          onClick={() => { setPendingDirection('next'); setPage(page + 1); }}
+        >
+          Next →
+        </LoadingButton>
       </div>
 
       {selectedStakeholder && (
@@ -238,7 +295,10 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
         </div>
 
         {isLoading ? (
-          <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>Loading verification data...</div>
+          // Two chained requests back this modal: the survey, then its media
+          // (which is `enabled` only once a survey id exists). The label reflects
+          // which stage is running so a slow media fetch does not look stalled.
+          <PageLoader label={isSurveyLoading ? 'Loading survey…' : 'Loading photos and documents…'} />
         ) : (
           <div className="gallery-body">
             <div className="gallery-section">
@@ -316,7 +376,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                       <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>DIGIPIN</label>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <input className="form-input" value={editData.digipin} readOnly style={{ backgroundColor: 'var(--bg-surface)' }} />
-                        <button type="button" className="btn btn-secondary" onClick={() => navigator.clipboard.writeText(editData.digipin)}>Copy</button>
+                        <CopyButton value={editData.digipin} />
                       </div>
                     </div>
                   </div>
@@ -496,7 +556,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                       <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>OFFICIAL DIGIPIN</span>
                       <span style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--text-primary)', letterSpacing: '2px', fontFamily: 'monospace' }}>{survey.digipin || stakeholder.digipin}</span>
                     </div>
-                    <button className="btn btn-secondary btn-sm" onClick={() => navigator.clipboard.writeText(survey.digipin || stakeholder.digipin)}>📋 Copy</button>
+                    <CopyButton value={survey.digipin || stakeholder.digipin} label="📋 Copy" size="sm" />
                   </div>
                 )}
               </div>

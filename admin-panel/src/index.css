@@ -793,3 +793,164 @@ select.form-input {
   background: rgba(255,255,255,0.3);
   transform: scale(1.1);
 }
+
+/* ==========================================================================
+   LOADING STATES
+   Spinners, skeletons and disabled affordances.
+   ========================================================================== */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes skeleton-pulse {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+@keyframes skeleton-sweep {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+/* --- Spinner ------------------------------------------------------------ */
+/* A bordered circle with one transparent edge, rotated. currentColor makes it
+   inherit the text colour of whatever it sits in, so the same element works on
+   a primary button (white text) and on a muted page background. */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+.spinner-sm { width: 12px; height: 12px; border-width: 2px; }
+.spinner-lg { width: 28px; height: 28px; border-width: 3px; }
+
+/* --- Disabled buttons -------------------------------------------------- */
+/* There was no :disabled rule at all, so buttons that were already disabled in
+   code (Export with nothing selected, pagination at the first page) looked
+   fully interactive. The hover overrides matter too: .btn-primary:hover applies
+   a lift and a stronger shadow, which fired even while disabled. */
+.btn:disabled,
+.btn[aria-busy='true'] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn:disabled:hover,
+.btn[aria-busy='true']:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: var(--border);
+  color: inherit;
+}
+
+.btn-primary:disabled:hover {
+  box-shadow: 0 2px 8px rgba(255,107,53,0.3);
+}
+
+/* Keep a busy button from collapsing as its label swaps out. */
+.btn[aria-busy='true'] { pointer-events: none; }
+
+/* --- Skeletons ---------------------------------------------------------- */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-input) 25%,
+    var(--bg-card-hover) 50%,
+    var(--bg-input) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+  display: block;
+}
+
+/* Respect users who ask for less motion: keep the placeholder, drop the sweep. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: skeleton-pulse 2s ease-in-out infinite; }
+  .spinner { animation-duration: 1.2s; }
+}
+
+.skeleton-text {
+  height: 12px;
+  margin: 4px 0;
+}
+
+.skeleton-badge {
+  height: 20px;
+  width: 68px;
+  border-radius: var(--radius-full, 999px);
+}
+
+.skeleton-btn {
+  height: 26px;
+  width: 96px;
+}
+
+/* --- Page-level loader -------------------------------------------------- */
+.page-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 64px 24px;
+  min-height: 240px;
+  color: var(--text-muted);
+}
+
+.page-loader .spinner { color: var(--primary); }
+
+.page-loader-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* --- Inline / row-level loader ------------------------------------------ */
+.inline-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* --- Refetch-in-place overlay ------------------------------------------- */
+/* Used when a table already shows data and is quietly refreshing. Keeping the
+   old rows visible (dimmed) avoids the content jump that replacing the whole
+   table with a loader would cause. */
+.is-refetching {
+  position: relative;
+}
+
+.is-refetching > table {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.refetch-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-full, 999px);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.refetch-badge .spinner { color: var(--primary); }

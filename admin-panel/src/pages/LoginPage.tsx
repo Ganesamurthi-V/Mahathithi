@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { login as apiLogin } from '../api';
 import { User } from '../types';
+import { LoadingButton } from '../components/Loading';
 
 export default function LoginPage({ onLogin }: { onLogin: (user: User) => void }) {
   const [loginId, setLoginId] = useState('');
@@ -11,6 +12,9 @@ export default function LoginPage({ onLogin }: { onLogin: (user: User) => void }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Guard against a second submit slipping through before the disabled state
+    // has rendered (pressing Enter twice quickly).
+    if (submitting) return;
     setError('');
     setSubmitting(true);
 
@@ -53,6 +57,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: User) => void }
               value={loginId}
               onChange={(e) => setLoginId(e.target.value)}
               required
+              disabled={submitting}
             />
           </div>
           <div className="form-group">
@@ -66,6 +71,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: User) => void }
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                disabled={submitting}
               />
               <span
                 onClick={() => setShowPassword(!showPassword)}
@@ -88,15 +94,16 @@ export default function LoginPage({ onLogin }: { onLogin: (user: User) => void }
               </span>
             </div>
           </div>
-          <button
+          <LoadingButton
             id="login-submit"
             type="submit"
-            className="btn btn-primary"
+            variant="primary"
+            loading={submitting}
+            loadingText="Signing in…"
             style={{ width: '100%', justifyContent: 'center', padding: '12px' }}
-            disabled={submitting}
           >
-            {submitting ? 'Signing in...' : 'Sign In'}
-          </button>
+            Sign In
+          </LoadingButton>
         </form>
       </div>
     </div>

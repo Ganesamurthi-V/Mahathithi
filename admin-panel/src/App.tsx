@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import api, { getProfile, startSessionKeepAlive, SESSION_EXPIRED_EVENT } from './api';
 import { User } from './types';
+import { PageLoader } from './components/Loading';
 import { connectAdminRealtime, disconnectAdminRealtime } from './realtime';
 
 // PERF: lazy-load route pages so the initial bundle only ships the login/shell.
@@ -32,12 +33,9 @@ const queryClient = new QueryClient({
   },
 });
 
+// Shown while a lazily-loaded route chunk is being fetched.
 function RouteFallback() {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '60vh' }}>
-      <div style={{ color: 'var(--text-muted)' }}>Loading…</div>
-    </div>
-  );
+  return <PageLoader label="Loading page…" />;
 }
 
 function AppRoutes({ user, onLogout }: { user: User; onLogout: () => void }) {
@@ -131,8 +129,10 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       {loading ? (
+        // Initial session probe (getProfile). Full-height so the panel does not
+        // flash the login form before we know whether a session exists.
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-          <div style={{ color: 'var(--text-muted)' }}>Loading...</div>
+          <PageLoader label="Restoring session…" />
         </div>
       ) : !user ? (
         <LoginPage onLogin={setUser} />
