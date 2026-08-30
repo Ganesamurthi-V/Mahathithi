@@ -1,10 +1,14 @@
 import { prisma } from '../../config/database';
+import { districtScopeFilter } from '../../utils/district-scope';
 
 export class DashboardService {
   async getStats(enumeratorId: string, districts: string[], isAdmin: boolean) {
+    // PERF: exact match on canonicalised district names. `mode: 'insensitive'`
+    // forced LOWER(district) into the SQL, which defeated every index on the
+    // column and made this groupBy a full scan of 295K rows (~1.1s).
     const districtFilter = isAdmin
       ? {}
-      : { district: { in: districts, mode: 'insensitive' as const } };
+      : await districtScopeFilter(districts);
 
     // M4 FIX: scope sync counts to the calling enumerator for non-admins.
     // Previously every enumerator's dashboard showed the system-wide backlog

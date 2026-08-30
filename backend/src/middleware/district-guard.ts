@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from './auth';
 import { ForbiddenError } from '../utils/errors';
 import { prisma } from '../config/database';
 import { logger } from '../utils/logger';
+import { districtScopeFilter } from '../utils/district-scope';
 
 /**
  * Middleware that enforces district-level access control.
@@ -73,15 +74,20 @@ export async function districtGuard(
 /**
  * Get district filter condition for Prisma queries.
  * Returns a WHERE clause to restrict results to assigned districts.
+ *
+ * PERF: this used to upper-case the names and match with `mode: 'insensitive'`,
+ * which compiled to LOWER(district) IN (...) and made the filter unable to use
+ * any index on `district` — a full scan of 295K rows. It now resolves the
+ * canonical spelling and matches exactly. Note the old `.toUpperCase()` was
+ * load-bearing only because of the insensitive mode; stakeholders.district is
+ * stored in Title Case ('Pune'), so upper-casing with exact matching would have
+ * matched nothing.
  */
-export function getDistrictFilter(enumerator: AuthenticatedRequest['enumerator']): object {
+export async function getDistrictFilter(
+  enumerator: AuthenticatedRequest['enumerator']
+): Promise<object> {
   if (!enumerator) return {};
   if (enumerator.isAdmin) return {};
 
-  return {
-    district: {
-      in: enumerator.districts.map(d => d.toUpperCase()),
-      mode: 'insensitive' as const,
-    },
-  };
+  return districtScopeFilter(enumerator.districts);
 }

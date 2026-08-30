@@ -336,12 +336,38 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
   // walk rows in already-sorted order and stop after LIMIT (20), turning a
   // full scan+sort into an index range read.
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_sort ON stakeholders(priority_weight DESC, company_name_standardized ASC);`);
-  // PERF: the most common filtered browse is by district, still sorted by
-  // priority. This composite serves "district = ? ORDER BY priority_weight".
-  await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_district_sort ON stakeholders(district COLLATE NOCASE, priority_weight DESC);`);
   // PERF: cascade dropdown getUniquePins(city) filters by city alone; the
   // existing composite leads with district so a city-only predicate scanned.
   await database.executeSql(`CREATE INDEX IF NOT EXISTS idx_sh_city_only ON stakeholders(city COLLATE NOCASE);`);
+
+  // PERF: district browse, WITH the sort tiebreaker included.
+  //
+  // The previous idx_sh_district_sort was (district, priority_weight DESC) and
+  // stopped short of company_name_standardized. Because the query orders by
+  // BOTH columns, an index missing the second one can only satisfy the first —
+  // SQLite still had to sort every matching row to break ties before applying
+  // LIMIT 20. For a large district that is tens of thousands of rows sorted to
+  // return twenty. The identical mistake existed on the Postgres side, where
+  // fixing it took the query from 422ms to 0.2ms.
+  //
+  // Adding the third column makes the index supply the full ordering, so SQLite
+  // reads 20 entries and stops regardless of how big the district is.
+  await database.executeSql(
+    `CREATE INDEX IF NOT EXISTS idx_sh_district_sort2
+     ON stakeholders(district COLLATE NOCASE, priority_weight DESC, company_name_standardized ASC);`
+  );
+  // Superseded by idx_sh_district_sort2 above; dropping it removes write cost on
+  // every one of the 295K rows written during initial sync.
+  try { await database.executeSql(`DROP INDEX IF EXISTS idx_sh_district_sort;`); } catch (e) { /* best-effort */ }
+
+  // PERF: makes getUniquePins(city) index-only. The city-only index above finds
+  // the rows but has to touch the table for each pin_code; including pin_code
+  // lets SQLite answer the DISTINCT straight from the index.
+  await database.executeSql(
+    `CREATE INDEX IF NOT EXISTS idx_sh_city_pin ON stakeholders(city COLLATE NOCASE, pin_code);`
+  );
+  // Same idea for getUniqueCities(district): covers the DISTINCT city lookup
+  // without heap access. (idx_sh_district_city already exists and covers this.)
 }
 
 export async function getDB(): Promise<SQLite.SQLiteDatabase> {

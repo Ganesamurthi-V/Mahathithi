@@ -124,9 +124,11 @@ export class AuthService {
     // Generate tokens
     const tokens = await this.generateTokens(enumerator.id, enumerator.loginId, enumerator.name, enumerator.isAdmin);
 
-    // Store refresh token in session
+    // Store refresh token in session.
+    // Lifetime is configurable and slides forward on every refresh, so an active
+    // enumerator is never signed out. See config.jwt.sessionExpiryDays.
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
+    expiresAt.setDate(expiresAt.getDate() + config.jwt.sessionExpiryDays);
 
     await prisma.session.create({
       data: {
@@ -172,7 +174,36 @@ export class AuthService {
   }
 
   /**
-   * Refresh access token using refresh token
+   * Issue a fresh access token from a refresh token.
+   *
+   * IDEMPOTENT AND NON-ROTATING — this is deliberate, and it is half of the fix
+   * for enumerators being signed out when they reopened the app.
+   *
+   * The previous implementation rotated: it flipped the presented session to
+   * isValid=false and inserted a brand-new row. That made the operation
+   * single-use, which the mobile client cannot honour. Reopening the app after
+   * more than the 15-minute access-token lifetime fires a burst of concurrent
+   * requests (session check, initial sync, realtime auth, dashboard, sync
+   * heartbeat); all of them 401 and all of them refresh with the same stored
+   * token. One won, the rest presented a token invalidated microseconds earlier,
+   * received 401 from this endpoint, and the client correctly interpreted that
+   * as a revoked session and signed the user out.
+   *
+   * The client now coalesces concurrent refreshes into one call, but relying on
+   * that alone would leave a real failure mode: if the app is killed after the
+   * server rotated but before the new token reached EncryptedStorage, the only
+   * valid token is lost and the user is locked out with no recourse.
+   *
+   * So the session row is now stable. The same refresh token stays valid and
+   * each use slides expires_at forward, so an active user is never signed out.
+   *
+   * Security trade-off, stated plainly: without rotation a leaked refresh token
+   * remains usable until the session is explicitly invalidated, and reuse of a
+   * stolen token is no longer detectable by rotation. Accepted here because the
+   * token is a random uuid stored only as a SHA-256 hash server-side, held in
+   * Keychain/Keystore on the device, and the alternative — signing field staff
+   * out mid-survey and stranding unsynced work — is the more damaging failure.
+   * Revocation still works through logout and the isActive check below.
    */
   async refreshToken(refreshToken: string): Promise<TokenPair> {
     // H2 FIX: look up by hash of the incoming token, not the raw value
@@ -197,36 +228,30 @@ export class AuthService {
       throw new UnauthorizedError('Account has been deactivated');
     }
 
-    // Invalidate old session
+    // Slide the expiry window forward. Keeps an active device signed in
+    // indefinitely while still letting a genuinely abandoned session lapse.
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + config.jwt.sessionExpiryDays);
+
     await prisma.session.update({
       where: { id: session.id },
-      data: { isValid: false },
+      data: { expiresAt },
     });
 
-    // Generate new token pair
-    const tokens = await this.generateTokens(
+    const accessToken = this.signAccessToken(
       session.enumerator.id,
       session.enumerator.loginId,
       session.enumerator.name,
       session.enumerator.isAdmin
     );
 
-    // Create new session
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-
-    await prisma.session.create({
-      data: {
-        enumeratorId: session.enumerator.id,
-        // H2 FIX: store only the hash, never the raw token
-        refreshToken: hashToken(tokens.refreshToken),
-        deviceInfo: session.deviceInfo,
-        ipAddress: session.ipAddress,
-        expiresAt,
-      },
-    });
-
-    return tokens;
+    // Return the SAME refresh token. The client only overwrites its stored copy
+    // when the value differs, so this is a no-op on the device.
+    return {
+      accessToken,
+      refreshToken,
+      expiresIn: config.jwt.accessExpiry,
+    };
   }
 
   /**
@@ -282,23 +307,34 @@ export class AuthService {
     };
   }
 
+  /**
+   * Sign a short-lived access token. Extracted so refreshToken() can mint a new
+   * access token without also minting a refresh token it does not want to rotate.
+   */
+  private signAccessToken(
+    id: string,
+    loginId: string,
+    name: string,
+    isAdmin: boolean
+  ): string {
+    return jwt.sign(
+      { id, loginId, name, isAdmin },
+      config.jwt.secret,
+      { expiresIn: config.jwt.accessExpiry as any }
+    );
+  }
+
   private async generateTokens(
     id: string,
     loginId: string,
     name: string,
     isAdmin: boolean
   ): Promise<TokenPair> {
-    const accessToken = jwt.sign(
-      { id, loginId, name, isAdmin },
-      config.jwt.secret,
-      { expiresIn: config.jwt.accessExpiry as any }
-    );
-
-    const refreshToken = uuidv4();
-
     return {
-      accessToken,
-      refreshToken,
+      accessToken: this.signAccessToken(id, loginId, name, isAdmin),
+      // Opaque random value, not a JWT. Its lifetime is enforced entirely by
+      // sessions.expires_at, and only its SHA-256 hash is persisted.
+      refreshToken: uuidv4(),
       expiresIn: config.jwt.accessExpiry,
     };
   }

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware, adminOnly } from '../../middleware/auth';
 import { prisma } from '../../config/database';
+import { config } from '../../config';
 import bcrypt from 'bcryptjs';
 import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
@@ -412,7 +413,8 @@ router.post('/export/surveys', async (req: AuthenticatedRequest, res: Response, 
       where.id = { in: ids };
     }
     const surveys = await prisma.survey.findMany({ where, orderBy: { createdAt: 'desc' } });
-    const sql = generateExportSQL(surveys);
+    const mediaBySurvey = await fetchExportMedia(surveys.map(s => s.id));
+    const sql = generateExportSQL(surveys, mediaBySurvey);
 
     // Mark these surveys as exported
     const exportedBy = req.enumerator?.id || null;
@@ -439,7 +441,8 @@ router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, n
       where: { isCompleted: true, isDraft: false },
       orderBy: { createdAt: 'desc' },
     });
-    const sql = generateExportSQL(surveys);
+    const mediaBySurvey = await fetchExportMedia(surveys.map(s => s.id));
+    const sql = generateExportSQL(surveys, mediaBySurvey);
     res.setHeader('Content-Type', 'application/sql');
     res.setHeader('Content-Disposition', `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0,10)}.sql"`);
     res.send(sql);
@@ -448,7 +451,115 @@ router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, n
   }
 });
 
-function generateExportSQL(surveys: any[]): string {
+// ============================================================================
+// MEDIA EXPORT MAPPING (see media_mapping.md)
+// ============================================================================
+
+/**
+ * Build the permanent, non-expiring object URL the client will use.
+ *
+ * Two things must never be exported:
+ *   • media.file_url — a presigned URL carrying X-Amz-Expires=3600, so it is
+ *     already dead by the time the client imports the SQL.
+ *   • media.file_path bare — that is only the S3 object key, not fetchable.
+ *
+ * The permanent form is `<publicBase>/<file_path>`. Each path segment is
+ * percent-encoded so keys containing spaces or unicode still resolve, while the
+ * '/' separators are preserved.
+ */
+function buildMediaUrl(filePath: string | null | undefined): string | null {
+  if (!filePath) return null;
+  const encoded = String(filePath)
+    .replace(/^\/+/, '')
+    .split('/')
+    .map(encodeURIComponent)
+    .join('/');
+  return `${config.aws.s3PublicBaseUrl}/${encoded}`;
+}
+
+interface SurveyMediaUrls {
+  displayImageUrl: string | null;
+  gstCertUrl: string | null;
+  panCardUrl: string | null;
+  establishmentCertUrl: string | null;
+}
+
+/**
+ * Reduce a survey's media rows to the four URLs the client schema accepts.
+ *
+ * Rows arrive ordered by created_at ASC, so "first wins" is simply the first
+ * match encountered — that is the documented rule for BUILDING_FRONT, and it
+ * also makes re-uploads of the same document category deterministic.
+ *
+ * Categories we collect but do NOT export, because the client schema has no
+ * column for them: SIGNBOARD, INTERIOR, STAKEHOLDER, ADDITIONAL, DISPLAY_IMAGE,
+ * HEADER_SLIDER, CUSTOM_DOC, and all VIDEO rows. listings.header_slider is left
+ * NULL as specified — no source field maps to it.
+ */
+function mapSurveyMedia(mediaRows: any[]): SurveyMediaUrls {
+  const result: SurveyMediaUrls = {
+    displayImageUrl: null,
+    gstCertUrl: null,
+    panCardUrl: null,
+    establishmentCertUrl: null,
+  };
+
+  for (const m of mediaRows) {
+    const url = buildMediaUrl(m.filePath);
+    if (!url) continue;
+
+    switch (m.photoCategory) {
+      case 'BUILDING_FRONT':
+        if (m.type === 'PHOTO' && !result.displayImageUrl) result.displayImageUrl = url;
+        break;
+      // The Prisma enum value is GST_DOC (what the mobile form writes);
+      // media_mapping.md refers to it as GST_CERT_DOC. Accept both so the
+      // export does not silently drop GST certificates.
+      case 'GST_DOC':
+      case 'GST_CERT_DOC':
+        if (!result.gstCertUrl) result.gstCertUrl = url;
+        break;
+      case 'PAN_CARD_DOC':
+        if (!result.panCardUrl) result.panCardUrl = url;
+        break;
+      case 'ESTABLISHMENT_CERT_DOC':
+        if (!result.establishmentCertUrl) result.establishmentCertUrl = url;
+        break;
+      default:
+        break;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Load exportable media for many surveys in ONE query, keyed by survey id.
+ * Avoids an N+1 round-trip per survey when exporting a large batch.
+ */
+async function fetchExportMedia(surveyIds: string[]): Promise<Map<string, any[]>> {
+  const byId = new Map<string, any[]>();
+  if (surveyIds.length === 0) return byId;
+
+  const rows = await prisma.media.findMany({
+    where: {
+      surveyId: { in: surveyIds },
+      deletedAt: null,
+      type: { in: ['PHOTO', 'DOCUMENT'] },
+    },
+    select: { surveyId: true, type: true, photoCategory: true, filePath: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  for (const r of rows) {
+    const list = byId.get(r.surveyId);
+    if (list) list.push(r);
+    else byId.set(r.surveyId, [r]);
+  }
+  return byId;
+}
+
+function generateExportSQL(surveys: any[], mediaBySurvey: Map<string, any[]> = new Map()): string {
     const CAT_MAP: Record<string, string> = {
       'Accommodations': '24f3916c-a227-42b6-86d5-cb493b0e0a4a',
       'Cuisine': '09247453-eec9-4e8b-9b19-219e07813b00',
@@ -467,11 +578,31 @@ function generateExportSQL(surveys: any[]): string {
       return `'${String(v).replace(/'/g, "''")}'`;
     };
 
+    const totalMediaRows = surveys.reduce((n, s) => n + (mediaBySurvey.get(s.id)?.length || 0), 0);
+
     const lines: string[] = [
       '-- ==========================================================',
       '-- MahaAtithi → Client Listing Platform Export',
       `-- Generated: ${new Date().toISOString()}`,
       `-- Total surveys: ${surveys.length}`,
+      `-- Media records considered: ${totalMediaRows}`,
+      '--',
+      '-- MEDIA URLS',
+      `-- All file URLs below are permanent links of the form:`,
+      `--   ${config.aws.s3PublicBaseUrl}/<s3-object-key>`,
+      '-- They are NOT presigned and therefore do not expire.',
+      '--',
+      '-- IMPORTANT: these URLs resolve only if the storage bucket grants read',
+      '-- access on the exported prefixes. If the bucket is private, the links',
+      '-- will return AccessDenied and the objects must be shared another way',
+      '-- (public prefix policy, CDN distribution, or a direct file handover).',
+      '--',
+      '-- Media mapping applied:',
+      '--   BUILDING_FRONT (PHOTO)            -> listings.display_image_url (first only)',
+      '--   GST_DOC (DOCUMENT)                -> business_documents.document_name_one[_url]',
+      '--   PAN_CARD_DOC (DOCUMENT)           -> business_documents.pan_card_document_url',
+      '--   ESTABLISHMENT_CERT_DOC (DOCUMENT) -> business_documents.document_name_two[_url]',
+      '--   listings.header_slider is intentionally left NULL (no source field).',
       '-- ==========================================================',
       '', 'BEGIN;', '',
     ];
@@ -480,16 +611,29 @@ function generateExportSQL(surveys: any[]): string {
       const catId = s.businessCategory && CAT_MAP[s.businessCategory] ? `'${CAT_MAP[s.businessCategory]}'::uuid` : 'NULL';
       const slug = (s.businessName || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50) + '-' + s.id.slice(0, 8);
 
+      // Permanent S3 URLs for this survey's media (never presigned, never bare keys).
+      const mediaUrls = mapSurveyMedia(mediaBySurvey.get(s.id) || []);
+      // Document slot labels are only set when the matching file actually exists,
+      // so the client never sees a label pointing at a NULL URL.
+      const docNameOne = mediaUrls.gstCertUrl ? esc('GST Certificate') : 'NULL';
+      const docNameTwo = mediaUrls.establishmentCertUrl ? esc('Establishment Certificate') : 'NULL';
+
       lines.push(`-- Survey: ${s.id}`);
+      if (mediaUrls.displayImageUrl || mediaUrls.gstCertUrl || mediaUrls.panCardUrl || mediaUrls.establishmentCertUrl) {
+        lines.push(`--   media: display=${mediaUrls.displayImageUrl ? 'yes' : 'no'} gst=${mediaUrls.gstCertUrl ? 'yes' : 'no'} pan=${mediaUrls.panCardUrl ? 'yes' : 'no'} establishment=${mediaUrls.establishmentCertUrl ? 'yes' : 'no'}`);
+      } else {
+        lines.push(`--   media: none exportable`);
+      }
       lines.push(`WITH new_listing AS (`);
-      lines.push(`  INSERT INTO listing.listings (id, user_id, slug, category_id, name_of_business, name_of_owner, description, tour_policies, agree_terms_conditions, declare_information_correct, financial_losses_risk_decleration, save_listing_as_pending, udyam_aadhar_registration_number, approval_status, platform_fee_status, view_count, admin_remark, created_at, updated_at, is_archived)`);
-      lines.push(`  VALUES (gen_random_uuid(), NULL, ${esc(slug)}, ${catId}, ${esc(s.businessName)}, ${esc(s.ownerName)}, ${esc(s.description)}, ${esc(s.accommodationPolicies)}, ${s.agreedToTerms}, ${s.declaredInfoCorrect}, ${s.acknowledgedDotLiability}, true, ${esc(s.udyamAadharRegNo)}, 'pending', 'pending', 0, ${esc('MIGRATION: survey_id=' + s.id)}, ${esc(s.createdAt?.toISOString())}, ${esc(s.updatedAt?.toISOString())}, false)`);
+      lines.push(`  INSERT INTO listing.listings (id, user_id, slug, category_id, name_of_business, name_of_owner, description, display_image_url, tour_policies, agree_terms_conditions, declare_information_correct, financial_losses_risk_decleration, save_listing_as_pending, udyam_aadhar_registration_number, approval_status, platform_fee_status, view_count, admin_remark, created_at, updated_at, is_archived)`);
+      lines.push(`  VALUES (gen_random_uuid(), NULL, ${esc(slug)}, ${catId}, ${esc(s.businessName)}, ${esc(s.ownerName)}, ${esc(s.description)}, ${esc(mediaUrls.displayImageUrl)}, ${esc(s.accommodationPolicies)}, ${s.agreedToTerms}, ${s.declaredInfoCorrect}, ${s.acknowledgedDotLiability}, true, ${esc(s.udyamAadharRegNo)}, 'pending', 'pending', 0, ${esc('MIGRATION: survey_id=' + s.id)}, ${esc(s.createdAt?.toISOString())}, ${esc(s.updatedAt?.toISOString())}, false)`);
       lines.push(`  RETURNING id`);
       lines.push(`), new_contact AS (`);
       lines.push(`  INSERT INTO listing.contact_details (id, listing_id, business_address, city_name, district_name, pin_code, state_name, country_name, latitude, longitude, email_address, mobile_number, country_code)`);
       lines.push(`  SELECT gen_random_uuid(), id, ${esc(s.businessAddress)}, ${esc(s.city)}, ${esc(s.district)}, ${esc(s.pinCode)}, 'Maharashtra', 'India', ${s.latitude != null ? `'${s.latitude}'` : 'NULL'}, ${s.longitude != null ? `'${s.longitude}'` : 'NULL'}, ${esc(s.email)}, ${esc(s.mobileNumber)}, '+91' FROM new_listing RETURNING listing_id`);
       lines.push(`), new_doc AS (`);
-      lines.push(`  INSERT INTO listing.business_documents (id, listing_id, about_business) SELECT gen_random_uuid(), id, ${esc(s.aboutBusiness)} FROM new_listing RETURNING listing_id`);
+      lines.push(`  INSERT INTO listing.business_documents (id, listing_id, about_business, pan_card_document_url, document_name_one, document_name_one_url, document_name_two, document_name_two_url)`);
+      lines.push(`  SELECT gen_random_uuid(), id, ${esc(s.aboutBusiness)}, ${esc(mediaUrls.panCardUrl)}, ${docNameOne}, ${esc(mediaUrls.gstCertUrl)}, ${docNameTwo}, ${esc(mediaUrls.establishmentCertUrl)} FROM new_listing RETURNING listing_id`);
       lines.push(`)`);
 
       const wh = s.workingHours as any[] | null;

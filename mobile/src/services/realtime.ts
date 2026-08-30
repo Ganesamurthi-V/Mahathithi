@@ -80,7 +80,24 @@ export function disconnectRealtime(): void {
   socket = null;
 }
 
-export async function reauthRealtime(): Promise<void> {
-  disconnectRealtime();
+/**
+ * Ensure the realtime socket is live, reconnecting only if it is actually down.
+ *
+ * Call this when the app returns to the foreground. Android suspends sockets for
+ * backgrounded apps, so after a spell in the pocket the connection is usually
+ * dead while `socket` still holds a stale object — events are silently missed
+ * until something forces a reconnect.
+ *
+ * This replaces the previous reauthRealtime(), which unconditionally destroyed
+ * and rebuilt the connection and was called on every token refresh. That paid a
+ * full TCP + TLS + Socket.IO handshake for no reason: Socket.IO only reads the
+ * auth token at connect time, so renewing the access token cannot invalidate an
+ * established connection. Here the teardown happens only when the socket is
+ * genuinely not connected.
+ */
+export async function ensureRealtimeConnected(): Promise<void> {
+  if (socket?.connected) return;
+  // Release the dead handle before reconnecting so we do not leak listeners.
+  if (socket) disconnectRealtime();
   await connectRealtime();
 }

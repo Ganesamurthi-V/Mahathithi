@@ -1,6 +1,7 @@
 import axios from 'axios';
 import EncryptedStorage from 'react-native-encrypted-storage';
 import Config from 'react-native-config';
+import { shouldRefreshToken } from '../utils/jwt';
 
 // M7 FIX: The API base URL is no longer hardcoded.
 // In a production build, set API_BASE_URL via your CI/CD build environment
@@ -47,10 +48,33 @@ const api = axios.create({
 });
 
 
-// Request interceptor — attach JWT
+// Request interceptor — attach JWT, renewing it first if it is about to expire
 api.interceptors.request.use(async (config) => {
   try {
-    const token = await EncryptedStorage.getItem('access_token');
+    let token = await EncryptedStorage.getItem('access_token');
+
+    // Renew before sending rather than after failing. On app reopen the stored
+    // token is usually already expired, and without this every queued startup
+    // request would go out doomed, 401, and pile into the refresh path. The
+    // single-flight latch in refreshAccessToken() means a burst of requests
+    // triggers exactly one network refresh and then all proceed with the new
+    // token. /auth/* is skipped: login has no token to renew, and refreshing
+    // inside a refresh would recurse.
+    const url = config.url || '';
+    const isAuthRoute = url.includes('/auth/login') || url.includes('/auth/refresh');
+
+    if (token && !isAuthRoute && shouldRefreshToken(token, 120)) {
+      try {
+        const fresh = await refreshAccessToken();
+        if (fresh) token = fresh;
+      } catch {
+        // Could not renew (offline, or refresh rejected). Send the existing
+        // token anyway: if it is merely stale the request 401s and the response
+        // interceptor handles it; if we are offline the request fails as a
+        // normal network error and the sync queue retries it later.
+      }
+    }
+
     if (token) {
       if (config.headers && typeof config.headers.set === 'function') {
         config.headers.set('Authorization', `Bearer ${token}`);
@@ -99,34 +123,147 @@ async function attemptRefresh(refreshToken: string, attempt = 1): Promise<any> {
   }
 }
 
-// Response interceptor — handle token refresh
+// ============================================================================
+// SINGLE-FLIGHT TOKEN REFRESH
+// ============================================================================
+// THIS IS THE FIX for "the app logs me out when I reopen it after a few hours".
+//
+// The access token lives 15 minutes. Reopening the app after longer than that
+// means the stored token is already expired, and startup fires a burst of
+// requests more or less simultaneously: checkSession, runInitialSync,
+// connectRealtime, the dashboard query, and the sync heartbeat.
+//
+// Every one of those got a 401, and every one of them independently ran the
+// refresh handler below with the SAME stored refresh token. The server rotates
+// on refresh — it invalidates the presented session and issues a new one — so
+// exactly one of those calls succeeded. The rest presented a token that had just
+// been invalidated microseconds earlier, got a 401 back from /auth/refresh, were
+// classified as a "confirmed auth failure", and emitted force_logout. The user
+// was signed out despite holding a perfectly valid session.
+//
+// A single-flight promise collapses that burst into one network refresh. The
+// first caller performs it; everyone else awaits the same promise and then
+// retries with whatever token it produced. Combined with the server no longer
+// rotating (see auth.service.ts), a concurrent burst can no longer invalidate
+// the session.
+let refreshPromise: Promise<string | null> | null = null;
+
+/**
+ * Refresh the access token, coalescing concurrent callers onto one request.
+ *
+ * Resolves with the new access token, or null when no refresh token is stored
+ * (i.e. genuinely signed out).
+ *
+ * Throws only for a *confirmed* rejection (401/403 from /auth/refresh) or an
+ * exhausted transient failure. Callers must treat a throw as "could not refresh
+ * right now", NOT as "the user must be signed out" — that decision belongs to
+ * the 401/403 branch alone, because an enumerator working offline for a week
+ * must never lose their session (or their unsynced surveys) to a dropped packet.
+ */
+async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+
+  refreshPromise = (async () => {
+    try {
+      const refreshToken = await EncryptedStorage.getItem('refresh_token');
+      if (!refreshToken) return null;
+
+      const res = await attemptRefresh(refreshToken);
+      const tokens = res.data?.data?.tokens;
+      if (!tokens?.accessToken) {
+        throw new Error('Refresh response did not contain an access token');
+      }
+
+      await EncryptedStorage.setItem('access_token', tokens.accessToken);
+      // The server may or may not issue a new refresh token. It currently keeps
+      // the same one (sliding expiry, no rotation); only overwrite when a new
+      // value actually comes back so we never clobber a working token with
+      // undefined if that behaviour changes.
+      if (tokens.refreshToken) {
+        await EncryptedStorage.setItem('refresh_token', tokens.refreshToken);
+      }
+
+      // PERF: deliberately do NOT reconnect the websocket here.
+      //
+      // This used to call reauthRealtime(), which tears the socket down and
+      // rebuilds it — a fresh TCP connect, TLS handshake and Socket.IO handshake,
+      // several hundred milliseconds of work. Socket.IO only reads `auth.token`
+      // when the connection is established, so a live, already-authenticated
+      // socket is completely unaffected by the access token being renewed. The
+      // reconnect bought nothing.
+      //
+      // It also actively hurt: refreshes now happen proactively on every app
+      // foreground, so every time the enumerator opened the app the realtime
+      // connection was destroyed and rebuilt, dropping events during the gap.
+      // The socket carries its own reconnection logic for genuine drops, and a
+      // reconnect after a real disconnect picks up the newest stored token
+      // anyway.
+
+      return tokens.accessToken as string;
+    } finally {
+      // Clear the latch before resolving so the *next* expiry can refresh again.
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
+/**
+ * Refresh the stored access token if it is expired or close to expiring.
+ *
+ * This is the proactive half of the strategy: called on app start, whenever the
+ * app returns to the foreground, and on a periodic tick, so a token is renewed
+ * *before* anything 401s. Reactive refresh in the interceptor remains as the
+ * safety net for a token that expires mid-flight.
+ *
+ * Deliberately swallows every error. It runs speculatively in the background,
+ * often with no network, and must never surface a failure or sign anyone out.
+ * Returns true when a refresh actually happened.
+ */
+export async function ensureFreshToken(skewSeconds: number = 120): Promise<boolean> {
+  try {
+    const token = await EncryptedStorage.getItem('access_token');
+    if (!token) return false;                       // signed out — nothing to do
+    if (!shouldRefreshToken(token, skewSeconds)) return false; // still good
+
+    await refreshAccessToken();
+    return true;
+  } catch {
+    // Offline, server down, or refresh rejected. If it was a genuine rejection
+    // the reactive path will handle it on the next real request; here we stay
+    // silent so background ticks never disrupt the user.
+    return false;
+  }
+}
+
+// Response interceptor — reactive refresh for a token that expired in flight
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Never try to refresh a failed refresh call — that recurses.
+    const isRefreshCall = typeof originalRequest?.url === 'string' &&
+      originalRequest.url.includes('/auth/refresh');
+
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !isRefreshCall) {
       originalRequest._retry = true;
       try {
-        const refreshToken = await EncryptedStorage.getItem('refresh_token');
-        if (refreshToken) {
-          const res = await attemptRefresh(refreshToken);
-          const { accessToken, refreshToken: newRefresh } = res.data.data.tokens;
+        const accessToken = await refreshAccessToken();
 
-          await EncryptedStorage.setItem('access_token', accessToken);
-          await EncryptedStorage.setItem('refresh_token', newRefresh);
+        // No refresh token stored: genuinely signed out. Surface the original
+        // 401 rather than forcing a logout that would wipe cached data.
+        if (!accessToken) return Promise.reject(error);
 
-          import('./realtime').then(m => m.reauthRealtime());
-
-          originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-          return api(originalRequest);
-        }
+        originalRequest.headers = originalRequest.headers || {};
+        originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+        return api(originalRequest);
       } catch (refreshError: any) {
-        // Only wipe local data if the refresh endpoint explicitly rejected
-        // the refresh token (401/403) — a real, confirmed auth failure. A
-        // network drop, timeout, or 5xx during refresh (even after retries
-        // above) is NOT proof the refresh token is invalid, and must never
-        // destroy unsynced field data on that basis alone.
+        // Only sign out on an explicit rejection from /auth/refresh (401/403):
+        // the refresh token really is invalid, expired, or revoked. A network
+        // drop, timeout, or 5xx is NOT proof of that, and must never cost the
+        // user their session or their unsynced field work.
         const isConfirmedAuthFailure =
           refreshError.response?.status === 401 || refreshError.response?.status === 403;
 

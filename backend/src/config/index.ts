@@ -30,7 +30,22 @@ export const config = {
     // C1 FIX: require at least 32 chars so no one accidentally ships with a weak secret
     secret: requireEnv('JWT_SECRET', 32),
     accessExpiry: process.env.JWT_ACCESS_EXPIRY || '15m',
-    refreshExpiry: process.env.JWT_REFRESH_EXPIRY || '7d',
+
+    /**
+     * Sliding lifetime of a refresh session, in days.
+     *
+     * The refresh token is a random uuid, not a JWT, so the old
+     * JWT_REFRESH_EXPIRY string was never actually enforced anywhere — only
+     * `sessions.expires_at` mattered. This replaces it with the value that is
+     * genuinely used.
+     *
+     * It is a SLIDING window: every successful refresh pushes expires_at out by
+     * this many days again. An enumerator who opens the app at least once inside
+     * the window therefore stays signed in indefinitely, which is the intended
+     * behaviour for field staff on managed devices. 365 days means even a long
+     * break (season change, extended leave) does not force a re-login.
+     */
+    sessionExpiryDays: parseInt(process.env.SESSION_EXPIRY_DAYS || '365', 10),
   },
 
   // SYNC FIX: previously these silently defaulted to '' when unset, which
@@ -50,6 +65,26 @@ export const config = {
     secretAccessKey: requireEnv('AWS_SECRET_ACCESS_KEY'),
     s3Bucket: requireEnv('S3_BUCKET_NAME'),
     s3Endpoint: process.env.S3_ENDPOINT || undefined,
+    /**
+     * Base URL used to build PERMANENT, non-expiring object URLs for the SQL
+     * export handed to the client.
+     *
+     * This is deliberately separate from getPresignedUrl(): presigned URLs carry
+     * X-Amz-Expires (1 hour here) and would be dead long before the client runs
+     * the SQL. The export therefore stores `<base>/<file_path>` instead.
+     *
+     * Set S3_PUBLIC_BASE_URL to override (e.g. a CloudFront domain). Otherwise it
+     * is derived from the bucket and region, honouring a custom S3_ENDPOINT for
+     * local/MinIO setups where URLs are path-style.
+     *
+     * NOTE: these URLs only resolve for the client if the bucket policy grants
+     * read access on the exported prefix. See the caveat in the export header.
+     */
+    s3PublicBaseUrl:
+      process.env.S3_PUBLIC_BASE_URL?.replace(/\/+$/, '') ||
+      (process.env.S3_ENDPOINT
+        ? `${process.env.S3_ENDPOINT.replace(/\/+$/, '')}/${requireEnv('S3_BUCKET_NAME')}`
+        : `https://${requireEnv('S3_BUCKET_NAME')}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com`),
   },
 
   upstash: {

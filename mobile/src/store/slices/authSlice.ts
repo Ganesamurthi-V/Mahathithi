@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import EncryptedStorage from 'react-native-encrypted-storage';
-import { authService } from '../../services/api';
+import { authService, ensureFreshToken } from '../../services/api';
 import { clearAllData } from '../../database';
 
 interface AuthState {
@@ -23,12 +23,31 @@ const initialState: AuthState = {
   error: null,
 };
 
-// Check stored session
+/**
+ * Restore the session on app launch.
+ *
+ * The presence of a stored token and profile is what defines "signed in" — NOT
+ * whether that token is currently valid. This matters for two reasons:
+ *
+ *   1. Enumerators work offline for long stretches. Requiring a successful
+ *      network call here would lock them out of their own local data.
+ *   2. An expired access token is a routine, recoverable state, not a signed-out
+ *      one. The refresh token is what actually governs the session, and it now
+ *      slides forward on every use (see auth.service.ts).
+ *
+ * We kick off a proactive renewal so the burst of requests that follows
+ * authentication (initial sync, realtime, dashboard) starts with a live token
+ * instead of a stale one. It is awaited so those requests do not race it, but a
+ * failure is ignored: offline or server-down must not prevent restoring the
+ * session.
+ */
 export const checkSession = createAsyncThunk('auth/checkSession', async () => {
   const token = await EncryptedStorage.getItem('access_token');
   const userData = await EncryptedStorage.getItem('user_data');
 
   if (token && userData) {
+    // Best-effort; ensureFreshToken never throws and never signs anyone out.
+    await ensureFreshToken();
     return JSON.parse(userData);
   }
   throw new Error('No session');

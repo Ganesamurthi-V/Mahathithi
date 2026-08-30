@@ -135,8 +135,16 @@ export default function SearchScreen({ navigation }: any) {
       // 1. Offline-First: always check the local SQLite cache first.
       //    This is the source of truth whenever it has an answer — fast,
       //    free, and works with zero connectivity.
-      const localResults = await stakeholderDao.search(activeFilters, page);
-      const totalCount = await stakeholderDao.searchCount(activeFilters);
+      //
+      //    PERF: the row fetch and the COUNT(*) used to run sequentially, so the
+      //    results could not render until a count over the local stakeholder
+      //    table had also finished. The count is only used for the "N results
+      //    found" label, so it must never gate the list. It now runs in parallel
+      //    and its own latency is hidden behind the fetch.
+      const [localResults, totalCount] = await Promise.all([
+        stakeholderDao.search(activeFilters, page),
+        stakeholderDao.searchCount(activeFilters).catch(() => 0),
+      ]);
 
       let finalResults = localResults;
       let pageInfo = { page, total: totalCount, hasMore: localResults.length === 20 };

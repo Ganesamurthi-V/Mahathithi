@@ -2,6 +2,7 @@ import { prisma } from '../../config/database';
 import { logger } from '../../utils/logger';
 import { ValidationError } from '../../utils/errors';
 import { getDigiPin } from '../../utils/digipin';
+import { districtScopeFilter } from '../../utils/district-scope';
 
 const MAX_BATCH_ITEMS = 200;
 
@@ -235,7 +236,8 @@ export class SyncService {
     // Get stakeholders that were locked/updated since last sync
     const updatedStakeholders = await prisma.stakeholder.findMany({
       where: {
-        district: { in: districts, mode: 'insensitive' },
+        // PERF: exact match so the (district, updated_at) index path is usable.
+        ...(await districtScopeFilter(districts)),
         updatedAt: { gt: sinceDate },
       },
       select: {

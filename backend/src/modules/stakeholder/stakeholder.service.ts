@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { NotFoundError, ForbiddenError, ConflictError } from '../../utils/errors';
 import { logger } from '../../utils/logger';
+import { districtScopeFilter } from '../../utils/district-scope';
 
 interface SearchParams {
   name?: string;
@@ -38,13 +39,12 @@ export class StakeholderService {
     const conditions: Prisma.StakeholderWhereInput[] = [];
 
     // === DISTRICT RESTRICTION (Critical Security) ===
+    // PERF: exact match on canonicalised names instead of `mode: 'insensitive'`.
+    // The insensitive variant compiled to LOWER(district) IN (...), which no
+    // index on `district` can serve — every search became a Parallel Seq Scan of
+    // 295K rows (422ms warm, 3.4s cold). See utils/district-scope.ts.
     if (!isAdmin) {
-      conditions.push({
-        district: {
-          in: assignedDistricts,
-          mode: 'insensitive',
-        },
-      });
+      conditions.push(await districtScopeFilter(assignedDistricts));
     }
 
     // === SEARCH FILTERS ===

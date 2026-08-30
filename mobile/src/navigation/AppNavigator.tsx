@@ -1,11 +1,12 @@
 import React, { useEffect, useRef } from 'react';
-import { ActivityIndicator, View, StyleSheet, Text, Animated, TouchableOpacity, Platform, DeviceEventEmitter } from 'react-native';
+import { ActivityIndicator, View, StyleSheet, Text, Animated, TouchableOpacity, Platform, DeviceEventEmitter, AppState } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../store';
 import { checkSession, logout } from '../store/slices/authSlice';
 import { runAutoSync } from '../store/slices/syncThunks';
+import { ensureFreshToken } from '../services/api';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, typography, shadows, spacing } from '../theme';
 import { moderateScale, verticalScale } from '../theme/responsive';
@@ -99,7 +100,7 @@ function MainTabs() {
 
 import InitialSyncModal from '../screens/sync/InitialSyncModal';
 import { runInitialSync } from '../store/slices/syncThunks';
-import { connectRealtime, disconnectRealtime } from '../services/realtime';
+import { connectRealtime, disconnectRealtime, ensureRealtimeConnected } from '../services/realtime';
 
 export function AppNavigator() {
   const dispatch = useDispatch<AppDispatch>();
@@ -116,6 +117,48 @@ export function AppNavigator() {
     });
     return () => sub.remove();
   }, [dispatch]);
+
+  // ── Keep the access token alive in the background ────────────────────────
+  // The access token lives 15 minutes; the session behind it lives a year and
+  // slides forward on every renewal. Renewing proactively is what turns that
+  // into a login the enumerator never has to think about.
+  //
+  // Two triggers, because neither alone is sufficient:
+  //
+  //   • Foreground transition — the important one. Android freezes timers for
+  //     backgrounded apps, so a phone left in a pocket overnight runs no
+  //     interval at all. Reopening the app is exactly the moment the token is
+  //     stale, and exactly when the old code stampeded the refresh endpoint and
+  //     signed the user out.
+  //
+  //   • Periodic tick — covers a session left open on screen for hours, where
+  //     no foreground transition ever occurs.
+  //
+  // ensureFreshToken() is a no-op unless the token is within its skew window,
+  // and it swallows every error, so both triggers are cheap and cannot disrupt
+  // the user or sign them out.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    ensureFreshToken();
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        ensureFreshToken();
+        // Android suspends sockets for backgrounded apps, so the realtime
+        // connection is usually dead after time in the pocket even though the
+        // handle looks valid. This reconnects only when genuinely disconnected.
+        ensureRealtimeConnected();
+      }
+    });
+
+    const tick = setInterval(() => { ensureFreshToken(); }, 5 * 60 * 1000);
+
+    return () => {
+      sub.remove();
+      clearInterval(tick);
+    };
+  }, [isAuthenticated]);
 
   // Global Auto-Sync Listener & Initial Sync Trigger
   useEffect(() => {
