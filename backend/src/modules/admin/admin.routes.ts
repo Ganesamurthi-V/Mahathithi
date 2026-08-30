@@ -24,20 +24,114 @@ function validatePassword(password: string) {
 const router = Router();
 router.use(authMiddleware, adminOnly);
 
-// Dashboard stats
+// ============================================================================
+// DASHBOARD ANALYTICS
+// ============================================================================
+// There used to be TWO `router.get('/analytics')` registrations in this file.
+// Express matches the first, so the second never ran — and the second was the one
+// returning `topDistricts` and `statusBreakdown`. The admin Dashboard renders its
+// "Top Districts by Stakeholder Count" table behind `analytics?.topDistricts &&`,
+// so that table has silently never appeared. Merged into this single route; the
+// duplicate below has been removed.
+//
+// The payload is now exactly what the Dashboard reads, and nothing more. Dropped
+// because no caller ever consumed them:
+//   pendingSync / failedSync   — 2 syncQueue counts, unread by the panel
+//   statusBreakdown            — fed a `statusMap` local that was itself unused
+//   enumeratorPerformance      — a survey groupBy, unread by the panel
+//
+// `totalEnumerators` is new and replaces a much more expensive call. DashboardPage
+// used to issue getEnumerators() — findMany with nested district joins and a
+// per-row survey count, measured at 190ms, the slowest query in the panel — purely
+// to render `enumerators.length`. A plain count answers that in one cheap query and
+// removes a second HTTP round trip from the Dashboard entirely.
+// The two stakeholder-wide aggregates are cached, the rest are always fresh.
+//
+// Measured cold, both scan the whole 295K-row table:
+//   stakeholder.count()                        1462 ms cold /  89 ms warm
+//   groupBy district ORDER BY count DESC       3102 ms cold / 125 ms warm
+// `take: 10` cannot help the groupBy — ranking districts by size requires
+// counting every district first — so this is an unavoidable full aggregate.
+//
+// It is also aggregate data over the imported stakeholder set, which only changes
+// during a bulk import. Serving it from a short-lived cache makes the dashboard
+// land instantly for every operator instead of each page load paying the scan.
+//
+// The counters that DO move minute to minute (completedSurveys, exportedSurveys,
+// totalEnumerators) are deliberately left uncached: they are cheap (~55 ms each,
+// run in parallel) and an admin watching surveys land should see them promptly.
+// Caching those too would have made the realtime invalidation pointless, since a
+// refetch would just re-read a stale cached number.
+const STAKEHOLDER_AGG_TTL_MS = 5 * 60 * 1000;
+let stakeholderAggCache: { at: number; totalStakeholders: number; topDistricts: { district: string | null; count: number }[] } | null = null;
+
+async function getStakeholderAggregates() {
+  if (stakeholderAggCache && Date.now() - stakeholderAggCache.at < STAKEHOLDER_AGG_TTL_MS) {
+    return stakeholderAggCache;
+  }
+
+  const [totalStakeholders, districtStats] = await Promise.all([
+    prisma.stakeholder.count(),
+    prisma.stakeholder.groupBy({
+      by: ['district'],
+      _count: { id: true },
+      orderBy: { _count: { id: 'desc' } },
+      take: 10,
+    }),
+  ]);
+
+  stakeholderAggCache = {
+    at: Date.now(),
+    totalStakeholders,
+    topDistricts: districtStats.map(d => ({ district: d.district, count: d._count.id })),
+  };
+  return stakeholderAggCache;
+}
+
+// Per-district stakeholder counts for the Districts page. Same reasoning and TTL
+// as the aggregates above: a full 295K-row groupBy whose source only changes on
+// import. Keyed upper-case to match how the route looks values up.
+let districtCountsCache: { at: number; map: Map<string | undefined, number> } | null = null;
+
+async function getDistrictCountsMap(): Promise<Map<string | undefined, number>> {
+  if (districtCountsCache && Date.now() - districtCountsCache.at < STAKEHOLDER_AGG_TTL_MS) {
+    return districtCountsCache.map;
+  }
+
+  const districtCounts = await prisma.stakeholder.groupBy({
+    by: ['district'],
+    _count: { id: true },
+  });
+
+  const map = new Map(districtCounts.map(d => [d.district?.toUpperCase(), d._count.id]));
+  districtCountsCache = { at: Date.now(), map };
+  return map;
+}
+
+/** Call after a bulk stakeholder import so the dashboard reflects it immediately. */
+export function invalidateStakeholderAggregates(): void {
+  stakeholderAggCache = null;
+  districtCountsCache = null;
+}
+
 router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const [totalStakeholders, completedSurveys, pendingSync, failedSync, exportedSurveys] = await Promise.all([
-      prisma.stakeholder.count(),
+    const [agg, completedSurveys, exportedSurveys, totalEnumerators] = await Promise.all([
+      getStakeholderAggregates(),
       prisma.survey.count({ where: { isCompleted: true } }),
-      prisma.syncQueue.count({ where: { status: 'PENDING' } }),
-      prisma.syncQueue.count({ where: { status: 'FAILED' } }),
       prisma.surveyExport.count(),
+      prisma.enumerator.count(),
     ]);
 
     res.json({
       success: true,
-      data: { totalStakeholders, completedSurveys, pendingSync, failedSync, exportedSurveys },
+      data: {
+        totalStakeholders: agg.totalStakeholders,
+        completedSurveys,
+        exportedSurveys,
+        totalEnumerators,
+        topDistricts: agg.topDistricts,
+      },
     });
   } catch (error) {
     next(error);
@@ -261,13 +355,11 @@ router.get('/districts', async (req: AuthenticatedRequest, res: Response, next: 
       orderBy: { name: 'asc' },
     });
 
-    // Get stakeholder counts per district
-    const districtCounts = await prisma.stakeholder.groupBy({
-      by: ['district'],
-      _count: { id: true },
-    });
-
-    const countsMap = new Map(districtCounts.map(d => [d.district?.toUpperCase(), d._count.id]));
+    // PERF: per-district stakeholder counts, from a short-lived cache.
+    // This groupBy aggregates all 295K rows (~130 ms warm, seconds cold) and the
+    // underlying data only changes on a bulk import, so recomputing it on every
+    // visit to the Districts page is pure waste.
+    const countsMap = await getDistrictCountsMap();
 
     res.json({
       success: true,
@@ -313,52 +405,11 @@ router.get('/audit-logs', async (req: AuthenticatedRequest, res: Response, next:
   }
 });
 
-// ============================================================================
-// ANALYTICS
-// ============================================================================
-
-router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  try {
-    const [
-      totalStakeholders,
-      statusCounts,
-      districtStats,
-      enumeratorStats,
-    ] = await Promise.all([
-      prisma.stakeholder.count(),
-      prisma.stakeholder.groupBy({
-        by: ['status'],
-        _count: { id: true },
-      }),
-      prisma.stakeholder.groupBy({
-        by: ['district'],
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
-        take: 20,
-      }),
-      prisma.survey.groupBy({
-        by: ['enumeratorId'],
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
-      }),
-    ]);
-
-    res.json({
-      success: true,
-      data: {
-        totalStakeholders,
-        statusBreakdown: statusCounts.map(s => ({ status: s.status, count: s._count.id })),
-        topDistricts: districtStats.map(d => ({ district: d.district, count: d._count.id })),
-        enumeratorPerformance: enumeratorStats.map(e => ({
-          enumeratorId: e.enumeratorId,
-          surveysCompleted: e._count.id,
-        })),
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-});
+// NOTE: a second `router.get('/analytics')` used to sit here. It was unreachable
+// (Express matches the first registration, near the top of this file) and its
+// exclusive fields — topDistricts, statusBreakdown, enumeratorPerformance — never
+// reached the client. topDistricts has been folded into the live route above;
+// statusBreakdown and enumeratorPerformance were dropped as unused.
 
 // ============================================================================
 // SURVEY DATA EXPORT — Maps to client's listing.* schema

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { getProfile } from './api';
+import api, { getProfile, startSessionKeepAlive, SESSION_EXPIRED_EVENT } from './api';
 import { User } from './types';
 import { connectAdminRealtime, disconnectAdminRealtime } from './realtime';
 
@@ -40,6 +40,24 @@ function RouteFallback() {
   );
 }
 
+function AppRoutes({ user, onLogout }: { user: User; onLogout: () => void }) {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Layout user={user} onLogout={onLogout} />}>
+          <Route index element={<Suspense fallback={<RouteFallback />}><DashboardPage /></Suspense>} />
+          <Route path="stakeholders" element={<Suspense fallback={<RouteFallback />}><StakeholdersPage /></Suspense>} />
+          <Route path="enumerators" element={<Suspense fallback={<RouteFallback />}><EnumeratorsPage /></Suspense>} />
+          <Route path="districts" element={<Suspense fallback={<RouteFallback />}><DistrictsPage /></Suspense>} />
+          <Route path="audit" element={<Suspense fallback={<RouteFallback />}><AuditLogsPage /></Suspense>} />
+          <Route path="export" element={<Suspense fallback={<RouteFallback />}><ExportPage /></Suspense>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,10 +70,35 @@ export default function App() {
         }
       })
       .catch(() => {
-        // Not logged in
+        // Not logged in — leave user null so LoginPage renders. Deliberately no
+        // redirect here; see the note in api.ts about the old reload loop.
       })
       .finally(() => setLoading(false));
   }, []);
+
+  // Background cookie renewal, plus a listener for a genuinely dead session.
+  //
+  // The keep-alive is what stops the panel logging itself out after 15 minutes.
+  // SESSION_EXPIRED_EVENT only fires when /auth/refresh is explicitly rejected
+  // (401/403), never on a network blip, so a flaky connection cannot sign the
+  // operator out. Clearing the query cache on the way out avoids showing the next
+  // user data fetched under the previous session.
+  useEffect(() => {
+    if (!user) return;
+
+    const stopKeepAlive = startSessionKeepAlive();
+
+    const onExpired = () => {
+      setUser(null);
+      queryClient.clear();
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+
+    return () => {
+      stopKeepAlive();
+      window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    };
+  }, [user]);
 
   useEffect(() => {
     if (!user) {
@@ -66,38 +109,36 @@ export default function App() {
     return () => disconnectAdminRealtime();
   }, [user]);
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-        <div style={{ color: 'var(--text-muted)' }}>Loading...</div>
-      </div>
-    );
-  }
+  const handleLogout = async () => {
+    try {
+      await api.post('/auth/logout');
+    } catch (e) {
+      // Even if the server call fails, drop local state — the cookies are
+      // cleared server-side on success and the session is unusable either way.
+    }
+    setUser(null);
+    queryClient.clear();
+  };
 
-  if (!user) {
-    return <LoginPage onLogin={setUser} />;
-  }
-
+  // QueryClientProvider is mounted ABOVE the auth branch on purpose.
+  //
+  // It used to sit inside the authenticated return, below `if (!user) return
+  // <LoginPage/>`. That meant the entire React Query tree was unmounted whenever
+  // user was null, so signing in constructed a brand-new provider subtree and
+  // every cached query was thrown away. Hoisting it keeps one stable cache for
+  // the app's lifetime; queryClient.clear() above handles discarding data
+  // explicitly at logout, which is the only point it should actually be dropped.
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Layout user={user} onLogout={async () => {
-            try {
-              await import('./api').then(m => m.default.post('/auth/logout'));
-            } catch (e) {}
-            setUser(null);
-          }} />}>
-            <Route index element={<Suspense fallback={<RouteFallback />}><DashboardPage /></Suspense>} />
-            <Route path="stakeholders" element={<Suspense fallback={<RouteFallback />}><StakeholdersPage /></Suspense>} />
-            <Route path="enumerators" element={<Suspense fallback={<RouteFallback />}><EnumeratorsPage /></Suspense>} />
-            <Route path="districts" element={<Suspense fallback={<RouteFallback />}><DistrictsPage /></Suspense>} />
-            <Route path="audit" element={<Suspense fallback={<RouteFallback />}><AuditLogsPage /></Suspense>} />
-            <Route path="export" element={<Suspense fallback={<RouteFallback />}><ExportPage /></Suspense>} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      {loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
+          <div style={{ color: 'var(--text-muted)' }}>Loading...</div>
+        </div>
+      ) : !user ? (
+        <LoginPage onLogin={setUser} />
+      ) : (
+        <AppRoutes user={user} onLogout={handleLogout} />
+      )}
     </QueryClientProvider>
   );
 }

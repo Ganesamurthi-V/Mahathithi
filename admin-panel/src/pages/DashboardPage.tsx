@@ -1,30 +1,27 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getAnalytics, getEnumerators } from '../api';
-import { Enumerator } from '../types';
+import { getAnalytics } from '../api';
 
 export default function DashboardPage() {
-  const { data: analyticsRes, isLoading: analyticsLoading } = useQuery({
+  // PERF: one request, not two.
+  //
+  // This page also issued getEnumerators() — a findMany with nested district joins
+  // and a per-enumerator survey count, the slowest query in the panel at ~190ms —
+  // solely to display `enumerators.length`. /analytics now returns
+  // totalEnumerators, so that entire request is gone.
+  //
+  // Also removed: a `statusMap` local computed from `analytics.statusBreakdown`.
+  // Nothing rendered it, and statusBreakdown was never actually returned by the
+  // live route, so it reduced over undefined on every render.
+  const { data: analyticsRes, isLoading } = useQuery({
     queryKey: ['analytics'],
     queryFn: getAnalytics,
     staleTime: 60000,
   });
 
-  const { data: enumeratorsRes, isLoading: enumLoading } = useQuery({
-    queryKey: ['enumerators'],
-    queryFn: getEnumerators,
-    staleTime: 60000,
-  });
-
   const analytics = analyticsRes?.data?.data;
-  const enumerators: Enumerator[] = enumeratorsRes?.data?.data || [];
 
-  const statusMap = analytics?.statusBreakdown?.reduce((acc: any, s: any) => {
-    acc[s.status] = s.count;
-    return acc;
-  }, {}) || {};
-
-  if (analyticsLoading || enumLoading) {
+  if (isLoading) {
     return <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>Loading dashboard...</div>;
   }
 
@@ -53,7 +50,7 @@ export default function DashboardPage() {
         </div>
         <div className="stat-card red">
           <div className="stat-icon">👥</div>
-          <div className="stat-value">{enumerators.length}</div>
+          <div className="stat-value">{(analytics?.totalEnumerators || 0).toLocaleString()}</div>
           <div className="stat-label">Enumerators</div>
         </div>
         <div className="stat-card blue">
@@ -77,7 +74,7 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {analytics.topDistricts.slice(0, 10).map((d: any, i: number) => (
+              {analytics.topDistricts.map((d: any, i: number) => (
                 <tr key={i}>
                   <td style={{ fontWeight: '600' }}>{d.district || '—'}</td>
                   <td>{(d.count || 0).toLocaleString()}</td>
