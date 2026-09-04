@@ -76,7 +76,15 @@ export default function StakeholdersPage() {
   });
 
   const stakeholders = data?.data?.data?.stakeholders || data?.data?.data || [];
-  const total = data?.data?.data?.pagination?.total || data?.data?.data?.total || data?.data?.data?.length || 0;
+  const pagination = data?.data?.data?.pagination;
+  // The server omits the total on filtered searches — the exact COUNT was 7x the
+  // cost of the page itself. `totalKnown` says whether a figure was supplied at
+  // all, so the UI can stay silent rather than display a misleading 0.
+  const totalKnown = pagination?.totalKnown === true || typeof pagination?.total === 'number';
+  const total = totalKnown ? (pagination?.total ?? 0) : null;
+  // Prefer the server's hasMore over `length < limit`: it comes from an over-fetch,
+  // so it is authoritative and works when no total exists.
+  const hasMore = pagination?.hasMore ?? stakeholders.length >= 20;
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,7 +154,11 @@ export default function StakeholdersPage() {
       <div style={{ marginBottom: '16px', fontSize: '13px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '12px' }}>
         {isLoading
           ? <SkeletonBlock width={200} height={13} />
-          : <span>Showing {stakeholders.length} results {total > 0 && `of ${total.toLocaleString()} total`}</span>
+          : <span>
+              Showing {stakeholders.length} results
+              {total !== null && total > 0 && ` of ${total.toLocaleString()} total`}
+              {total === null && hasMore && ' (more available)'}
+            </span>
         }
       </div>
 
@@ -201,7 +213,7 @@ export default function StakeholdersPage() {
         <LoadingButton
           variant="secondary"
           size="sm"
-          disabled={stakeholders.length < 20 || isFetching}
+          disabled={!hasMore || isFetching}
           loading={isFetching && pendingDirection === 'next'}
           loadingText="Loading…"
           onClick={() => { setPendingDirection('next'); setPage(page + 1); }}

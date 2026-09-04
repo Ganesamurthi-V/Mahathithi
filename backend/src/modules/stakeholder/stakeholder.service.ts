@@ -135,7 +135,44 @@ export class StakeholderService {
 
     const skip = (page - 1) * limit;
 
-    const [stakeholders, total] = await Promise.all([
+    // PERF: the exact COUNT was the most expensive part of every filtered search.
+    //
+    // Prisma ran `stakeholder.count({ where })` alongside the page purely to render
+    // "of N total". With a text filter that is a Bitmap Heap Scan re-checking the
+    // ILIKE predicate against every match. Measured live for name=hotel:
+    //
+    //   page query (LIMIT 20)   335 ms,   565 buffers
+    //   COUNT(*) same WHERE    2307 ms,  9067 buffers   <-- 7x the page itself
+    //
+    // So: skip the total entirely once the caller has narrowed the result set, and
+    // derive pagination from an over-fetch instead.
+    //
+    // `hasMore` comes from requesting one row beyond the page and seeing whether it
+    // arrives. That is exact, costs nothing, and does not depend on a total at all.
+    //
+    // The unfiltered view keeps its exact total: with no predicate it is a cheap
+    // index-only scan (~140 ms) and "295,176 total" is the one place the figure is
+    // genuinely useful.
+    //
+    // A bounded count was tried first — `findMany({ select: { id }, take: cap })`,
+    // intending to let Postgres stop at the cap. Prisma appends `ORDER BY id ASC`
+    // to that query, which forces it to locate matches in id order and defeats the
+    // early exit: it measured 7407 ms, i.e. worse than the count it replaced. Hence
+    // no count at all rather than a cheaper one.
+    //
+    // The non-admin district scope is excluded from this test on purpose: it is
+    // always present, so counting it as a filter would mean enumerators never see a
+    // total. It is also an indexed equality, not the expensive part.
+    const hasUserFilters = Boolean(
+      name || org || state || district || pinCode || category ||
+      nicCode || gst || taluka || city || status || digipin
+    );
+
+    const countPromise: Promise<number | null> = hasUserFilters
+      ? Promise.resolve(null)
+      : prisma.stakeholder.count({ where });
+
+    const [rowsPlusOne, exactTotal] = await Promise.all([
       prisma.stakeholder.findMany({
         where,
         select: {
@@ -163,14 +200,18 @@ export class StakeholderService {
           }
         },
         skip,
-        take: limit,
+        // One extra row, discarded before returning — see the hasMore note above.
+        take: limit + 1,
         orderBy: [
           { priorityWeight: 'desc' },
           { companyNameStandardized: 'asc' },
         ],
       }),
-      prisma.stakeholder.count({ where }),
+      countPromise,
     ]);
+
+    const hasMore = rowsPlusOne.length > limit;
+    const stakeholders = hasMore ? rowsPlusOne.slice(0, limit) : rowsPlusOne;
 
     return {
       stakeholders: stakeholders.map(s => ({
@@ -180,9 +221,13 @@ export class StakeholderService {
       pagination: {
         page,
         limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-        hasMore: page * limit < total,
+        // null on a filtered search — the client must not present a total it was
+        // never given. Kept numeric and exact for the unfiltered view.
+        total: exactTotal,
+        totalKnown: exactTotal !== null,
+        totalPages: exactTotal !== null ? Math.ceil(exactTotal / limit) : null,
+        // From the over-fetch, so it is correct whether or not a total exists.
+        hasMore,
       },
     };
   }

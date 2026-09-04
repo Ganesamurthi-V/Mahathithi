@@ -167,11 +167,27 @@ export default function SearchScreen({ navigation }: any) {
               finalResults = remote.stakeholders;
               const remotePage = remote.pagination?.page || page;
               const remoteLimit = remote.pagination?.limit || 20;
-              const remoteTotal = remote.pagination?.total ?? remote.stakeholders.length;
+              // The server no longer returns an exact total on a FILTERED search —
+              // the COUNT(*) cost ~7x the page query itself, so it was dropped.
+              // `total` is therefore null here, and deriving hasMore from it would
+              // be wrong: falling back to stakeholders.length gives 20, and
+              // `1 * 20 < 20` is false, so "load more" would stop after page 1 even
+              // though more rows exist.
+              //
+              // The server sends an authoritative hasMore instead, computed by
+              // fetching one row beyond the page. Prefer it, and only fall back to
+              // arithmetic when talking to an older backend that does not send it.
+              const remoteTotal = remote.pagination?.total ?? null;
               pageInfo = {
                 page: remotePage,
-                total: remoteTotal,
-                hasMore: remotePage * remoteLimit < remoteTotal,
+                // Only used for the "N results found" label.
+                total: remoteTotal ?? remote.stakeholders.length,
+                hasMore:
+                  typeof remote.pagination?.hasMore === 'boolean'
+                    ? remote.pagination.hasMore
+                    : remoteTotal !== null
+                      ? remotePage * remoteLimit < remoteTotal
+                      : remote.stakeholders.length === remoteLimit,
               };
             }
           } catch (e) {
