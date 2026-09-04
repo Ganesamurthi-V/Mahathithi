@@ -48,11 +48,13 @@ router.use(authMiddleware, adminOnly);
 // removes a second HTTP round trip from the Dashboard entirely.
 // The two stakeholder-wide aggregates are cached, the rest are always fresh.
 //
-// Measured cold, both scan the whole 295K-row table:
+// Measured cold, both aggregate over the whole 295K-row table:
 //   stakeholder.count()                        1462 ms cold /  89 ms warm
 //   groupBy district ORDER BY count DESC       3102 ms cold / 125 ms warm
 // `take: 10` cannot help the groupBy — ranking districts by size requires
-// counting every district first — so this is an unavoidable full aggregate.
+// counting every district first — so a full aggregate is unavoidable. It can,
+// however, be made an index-only scan rather than a full table read; see the
+// COUNT(*) note on getStakeholderAggregates below.
 //
 // It is also aggregate data over the imported stakeholder set, which only changes
 // during a bulk import. Serving it from a short-lived cache makes the dashboard
@@ -63,63 +65,117 @@ router.use(authMiddleware, adminOnly);
 // run in parallel) and an admin watching surveys land should see them promptly.
 // Caching those too would have made the realtime invalidation pointless, since a
 // refetch would just re-read a stale cached number.
+// ---------------------------------------------------------------------------
+// Stakeholder aggregates: ONE cached source for both the Dashboard and Districts.
+// ---------------------------------------------------------------------------
+//
+// THE SLOW QUERY, AND WHY IT WAS SLOW
+// This used `_count: { id: true }`, which Prisma compiles to COUNT(id). Because
+// `id` is not part of stakeholders_district_idx (district), Postgres cannot serve
+// that with an index-only scan and falls back to reading the whole 122 MB table.
+// `_count: true` emits COUNT(*), which references no column and therefore rides
+// the existing index. Identical results (verified: 37 groups, 295,176 total).
+//
+// Measured on the live database:
+//
+//   COUNT(id) -> Parallel Seq Scan         15,655 buffers (~122 MB)  187 ms warm
+//   COUNT(*)  -> Parallel Index Only Scan   3,661 buffers (~29 MB)    94 ms warm
+//
+// The buffer count is the number that matters. Warm, both are acceptable — the
+// seq scan is only ~2x slower once the table is already in shared_buffers. But it
+// touches 4.3x more data, so it is far likelier to be evicted and to be read from
+// disk, and a COLD seq scan here measured over 3 s. That is the 2-3 s stall this
+// was reported as; reducing the working set from 122 MB to 29 MB is what fixes it.
+//
+// The `orderBy: { _count: { id: 'desc' } }` was also removed: it reintroduced
+// COUNT(id) into the SQL and added a Sort node on top. There are only ~36 rows in
+// the result, so ordering them in JS is free and keeps the emitted SQL to exactly
+// the shape measured above.
+//
+// There were also TWO of these aggregates — one here and a near-identical
+// getDistrictCountsMap for the Districts page — each with its own cache, so the
+// full scan ran twice as often as it needed to. They are now one cache with two
+// views: an ordered array and an upper-cased lookup map.
+//
+// Remaining cost is heap fetches: the table is only ~88% all-visible, so even the
+// index-only scan touched the heap ~34850 times. See the VACUUM in
+// prisma/migrations/20260904_vacuum_stakeholders/migration.sql.
 const STAKEHOLDER_AGG_TTL_MS = 5 * 60 * 1000;
-let stakeholderAggCache: { at: number; totalStakeholders: number; districts: { district: string | null; count: number }[] } | null = null;
 
-async function getStakeholderAggregates() {
-  if (stakeholderAggCache && Date.now() - stakeholderAggCache.at < STAKEHOLDER_AGG_TTL_MS) {
-    return stakeholderAggCache;
-  }
+interface StakeholderAggregates {
+  at: number;
+  totalStakeholders: number;
+  /** Districts ordered by stakeholder count, descending. */
+  districts: { district: string | null; count: number }[];
+  /** Same counts keyed by UPPER(district) for direct lookup. */
+  byDistrict: Map<string, number>;
+}
 
+let stakeholderAggCache: StakeholderAggregates | null = null;
+// Guards against a stampede: if several requests arrive while a refresh is in
+// flight they all await the same promise instead of each launching a scan.
+let stakeholderAggInflight: Promise<StakeholderAggregates> | null = null;
+
+async function loadStakeholderAggregates(): Promise<StakeholderAggregates> {
   const [totalStakeholders, districtStats] = await Promise.all([
     prisma.stakeholder.count(),
-    // No `take` here on purpose. This used to be `take: 10`, which returned only
-    // the ten largest districts by stakeholder volume — and survey activity does
-    // not correlate with volume, so the districts where enumerators are actually
-    // working were being excluded from the dashboard entirely. Returning every
-    // district (~36 rows) costs nothing extra: as the comment above notes, ranking
-    // by size already requires counting every district, so the scan is identical
-    // and only the row count returned changes. The route now ranks these by survey
-    // activity and trims to ten.
+    // No `take`: returning only the ten largest districts hid the districts where
+    // surveys are actually happening, and ranking by size requires counting every
+    // district anyway, so the scan is identical either way.
     prisma.stakeholder.groupBy({
       by: ['district'],
-      _count: { id: true },
-      orderBy: { _count: { id: 'desc' } },
+      _count: true,
     }),
   ]);
 
-  stakeholderAggCache = {
+  const districts = districtStats
+    .map(d => ({ district: d.district, count: d._count }))
+    .sort((a, b) => b.count - a.count);
+
+  return {
     at: Date.now(),
     totalStakeholders,
-    districts: districtStats.map(d => ({ district: d.district, count: d._count.id })),
+    districts,
+    byDistrict: new Map(districts.map(d => [(d.district || '').toUpperCase(), d.count])),
   };
-  return stakeholderAggCache;
 }
 
-// Per-district stakeholder counts for the Districts page. Same reasoning and TTL
-// as the aggregates above: a full 295K-row groupBy whose source only changes on
-// import. Keyed upper-case to match how the route looks values up.
-let districtCountsCache: { at: number; map: Map<string | undefined, number> } | null = null;
+/**
+ * Serve-stale-while-revalidating.
+ *
+ * A plain TTL cache still makes one unlucky request per period wait out the full
+ * aggregate. Once a value exists, an expired entry is returned immediately and the
+ * refresh happens in the background, so no admin request ever blocks on the scan
+ * again. Only the very first call after boot awaits it.
+ */
+async function getStakeholderAggregates(): Promise<StakeholderAggregates> {
+  const fresh = stakeholderAggCache && Date.now() - stakeholderAggCache.at < STAKEHOLDER_AGG_TTL_MS;
+  if (fresh) return stakeholderAggCache!;
 
-async function getDistrictCountsMap(): Promise<Map<string | undefined, number>> {
-  if (districtCountsCache && Date.now() - districtCountsCache.at < STAKEHOLDER_AGG_TTL_MS) {
-    return districtCountsCache.map;
+  if (!stakeholderAggInflight) {
+    stakeholderAggInflight = loadStakeholderAggregates()
+      .then(next => {
+        stakeholderAggCache = next;
+        return next;
+      })
+      .finally(() => {
+        stakeholderAggInflight = null;
+      });
   }
 
-  const districtCounts = await prisma.stakeholder.groupBy({
-    by: ['district'],
-    _count: { id: true },
-  });
+  // Stale data is fine for an import-driven aggregate; a blocked request is not.
+  if (stakeholderAggCache) return stakeholderAggCache;
+  return stakeholderAggInflight;
+}
 
-  const map = new Map(districtCounts.map(d => [d.district?.toUpperCase(), d._count.id]));
-  districtCountsCache = { at: Date.now(), map };
-  return map;
+/** Per-district stakeholder counts, keyed by UPPER(district). */
+async function getDistrictCountsMap(): Promise<Map<string, number>> {
+  return (await getStakeholderAggregates()).byDistrict;
 }
 
 /** Call after a bulk stakeholder import so the dashboard reflects it immediately. */
 export function invalidateStakeholderAggregates(): void {
   stakeholderAggCache = null;
-  districtCountsCache = null;
 }
 
 /**
