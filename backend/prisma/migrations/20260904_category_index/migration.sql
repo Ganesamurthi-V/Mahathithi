@@ -1,0 +1,54 @@
+-- ============================================================================
+-- PERFORMANCE: make the category search filter index-driven
+-- ============================================================================
+--
+-- ALREADY APPLIED to the live database on 2026-09-04 (CONCURRENTLY, 22 MB).
+-- This file records it so schema history matches production.
+--
+-- THE PROBLEM
+-- StakeholderService.search() filtered category with Prisma's
+--     category: { contains: value, mode: 'insensitive' }
+-- which compiles to `category ILIKE '%value%'`. A leading wildcard cannot use a
+-- b-tree, so the planner walked idx_sh_list_global in priority order applying the
+-- predicate row by row. Measured live for category=Hotels, returning 20 rows:
+--
+--     ILIKE '%Hotels%'                155,073 buffers (~1.2 GB), 154,276 discarded
+--     category IN ('Hotels & Resorts')     23 buffers
+--
+-- That was the most expensive filter in the application, ~6,700x the I/O of the
+-- equivalent exact match.
+--
+-- WHAT WAS RULED OUT FIRST
+--   - Restoring the old stakeholders_category_idx b-tree: byte-identical plan,
+--     same 155,073 buffers. It could never serve a leading wildcard, which is also
+--     why it recorded 0 scans in 45 days.
+--   - A GIN trigram index on category: same plan, no improvement.
+-- The operator was the problem, not a missing index.
+--
+-- THE FIX
+-- utils/category-scope.ts resolves the caller's input against the 11 real category
+-- values and emits an exact `IN` filter, which this index serves. Substring
+-- semantics are preserved, so results are unchanged — verified across 8 inputs
+-- (exact, partial, mid-string, wrong case, nonsense): identical row counts, e.g.
+--   'Hotels'    -> 50,468 rows  (resolves to 'Hotels & Resorts')
+--   'tour'      -> 76,609 rows  (resolves to both tour-operator categories)
+--   'HOSTEL'    ->  2,190 rows  (resolves to 'Worker Hostels')
+--
+-- The trailing columns match the list's ORDER BY (priority_weight DESC,
+-- company_name_standardized), so the index supplies the sort as well as the filter
+-- and no sort node is needed.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sh_category_list
+  ON stakeholders (category, priority_weight DESC, company_name_standardized);
+
+ANALYZE stakeholders;
+
+-- This index also makes reading the distinct category list cheap, which
+-- category-scope.ts depends on. It uses a "loose index scan" — a recursive CTE
+-- that descends the index once per distinct value instead of traversing every
+-- entry:
+--
+--     SELECT DISTINCT category   469 ms, 2,773 buffers
+--     loose index scan             2 ms,    38 buffers
+--
+-- Dropping this index would therefore slow BOTH the filter and the category
+-- lookup that feeds it.

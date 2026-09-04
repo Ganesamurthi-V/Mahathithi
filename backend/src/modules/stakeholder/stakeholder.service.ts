@@ -3,6 +3,7 @@ import { prisma } from '../../config/database';
 import { NotFoundError, ForbiddenError, ConflictError } from '../../utils/errors';
 import { logger } from '../../utils/logger';
 import { districtScopeFilter } from '../../utils/district-scope';
+import { categoryFilter } from '../../utils/category-scope';
 import { broadcastChange } from '../../realtime/events';
 
 interface SearchParams {
@@ -85,9 +86,23 @@ export class StakeholderService {
       conditions.push({ pinCode: { startsWith: pinCode } });
     }
 
-    // Category filter
+    // Category filter.
+    //
+    // PERF: `contains` + mode:'insensitive' compiles to ILIKE '%x%', which no
+    // b-tree can serve, so the planner walked idx_sh_list_global row by row —
+    // 155,073 buffers (~1.2 GB) to return 20 rows, discarding 154,276 along the
+    // way. That was the most expensive filter in the application.
+    //
+    // categoryFilter() resolves the input against the ~12 real category values and
+    // returns an exact `in` filter, which uses idx_sh_category_list: 23 buffers.
+    // Substring semantics are preserved, so 'Hotels' still matches
+    // 'Hotels & Resorts' and the result set is unchanged.
+    //
+    // It returns null only if the canonical list could not be read; in that case
+    // fall back to the original ILIKE rather than silently matching nothing.
     if (category) {
-      conditions.push({ category: { contains: category, mode: 'insensitive' } });
+      const resolved = await categoryFilter(category);
+      conditions.push(resolved ?? { category: { contains: category, mode: 'insensitive' } });
     }
 
     // NIC Code filter
