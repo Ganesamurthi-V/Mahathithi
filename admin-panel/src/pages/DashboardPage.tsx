@@ -80,35 +80,70 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Top Districts */}
+      {/* Top Districts — survey progress.
+          `count` is the district's total stakeholders and `completedSurveys` is
+          how many of them have a completed survey; both come from /admin/analytics
+          keyed on the same district field, so the two are directly comparable. */}
       <div className="table-container" style={{ marginBottom: '24px' }}>
         <div className="table-header">
-          <h3>Top Districts by Stakeholder Count</h3>
+          <h3>Survey Progress by District</h3>
         </div>
         <table>
           <thead>
             <tr>
               <th>District</th>
-              <th>Stakeholders</th>
+              <th style={{ textAlign: 'right' }}>Total Stakeholders</th>
+              <th style={{ textAlign: 'right' }}>Completed Surveys</th>
+              <th style={{ width: '180px' }}>Coverage</th>
             </tr>
           </thead>
           {isLoading ? (
-            <TableSkeleton rows={10} columns={2} widths={['60%', '30%']} />
+            <TableSkeleton rows={10} columns={4} widths={['60%', '40%', '40%', '70%']} />
           ) : (
             <tbody>
               {(!analytics?.topDistricts || analytics.topDistricts.length === 0) && (
                 <tr>
-                  <td colSpan={2} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+                  <td colSpan={4} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
                     No district data available.
                   </td>
                 </tr>
               )}
-              {(analytics?.topDistricts || []).map((d: any, i: number) => (
-                <tr key={i}>
-                  <td style={{ fontWeight: '600' }}>{d.district || '—'}</td>
-                  <td>{(d.count || 0).toLocaleString()}</td>
-                </tr>
-              ))}
+              {(analytics?.topDistricts || []).map((d: any, i: number) => {
+                const total = d.count || 0;
+                const done = d.completedSurveys || 0;
+                // Recomputed client-side rather than trusting the server value, so
+                // an older backend that does not yet send `coverage` still renders.
+                const pct = total > 0 ? (done / total) * 100 : 0;
+                return (
+                  <tr key={i}>
+                    <td style={{ fontWeight: '600' }}>{d.district || '—'}</td>
+                    <td style={{ textAlign: 'right' }}>{total.toLocaleString()}</td>
+                    <td style={{ textAlign: 'right', fontWeight: done > 0 ? 600 : 400, color: done > 0 ? 'var(--text)' : 'var(--text-muted)' }}>
+                      {done.toLocaleString()}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div
+                          style={{ flex: 1, height: '6px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}
+                          role="progressbar"
+                          aria-valuenow={Number(pct.toFixed(2))}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-label={`${d.district || 'District'} survey coverage`}
+                        >
+                          {/* Sub-1% coverage still shows a sliver so "started" is
+                              visually distinct from "nothing yet". */}
+                          <div style={{ width: `${pct > 0 ? Math.max(pct, 1.5) : 0}%`, height: '100%', background: 'var(--primary)' }} />
+                        </div>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', minWidth: '48px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {/* Small non-zero values would read as "0.00%" at 2dp. */}
+                          {done === 0 ? '0%' : pct < 0.01 ? '<0.01%' : `${pct.toFixed(2)}%`}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           )}
         </table>

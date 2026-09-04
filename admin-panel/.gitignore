@@ -1,0 +1,10 @@
+node_modules
+dist
+dist-ssr
+*.local
+*.env
+
+# Playwright visual-review artifacts (scripts/capture-pages.mjs)
+screenshots/
+test-results/
+playwright-report/

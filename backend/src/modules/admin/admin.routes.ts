@@ -64,7 +64,7 @@ router.use(authMiddleware, adminOnly);
 // Caching those too would have made the realtime invalidation pointless, since a
 // refetch would just re-read a stale cached number.
 const STAKEHOLDER_AGG_TTL_MS = 5 * 60 * 1000;
-let stakeholderAggCache: { at: number; totalStakeholders: number; topDistricts: { district: string | null; count: number }[] } | null = null;
+let stakeholderAggCache: { at: number; totalStakeholders: number; districts: { district: string | null; count: number }[] } | null = null;
 
 async function getStakeholderAggregates() {
   if (stakeholderAggCache && Date.now() - stakeholderAggCache.at < STAKEHOLDER_AGG_TTL_MS) {
@@ -73,18 +73,25 @@ async function getStakeholderAggregates() {
 
   const [totalStakeholders, districtStats] = await Promise.all([
     prisma.stakeholder.count(),
+    // No `take` here on purpose. This used to be `take: 10`, which returned only
+    // the ten largest districts by stakeholder volume — and survey activity does
+    // not correlate with volume, so the districts where enumerators are actually
+    // working were being excluded from the dashboard entirely. Returning every
+    // district (~36 rows) costs nothing extra: as the comment above notes, ranking
+    // by size already requires counting every district, so the scan is identical
+    // and only the row count returned changes. The route now ranks these by survey
+    // activity and trims to ten.
     prisma.stakeholder.groupBy({
       by: ['district'],
       _count: { id: true },
       orderBy: { _count: { id: 'desc' } },
-      take: 10,
     }),
   ]);
 
   stakeholderAggCache = {
     at: Date.now(),
     totalStakeholders,
-    topDistricts: districtStats.map(d => ({ district: d.district, count: d._count.id })),
+    districts: districtStats.map(d => ({ district: d.district, count: d._count.id })),
   };
   return stakeholderAggCache;
 }
@@ -115,14 +122,69 @@ export function invalidateStakeholderAggregates(): void {
   districtCountsCache = null;
 }
 
+/**
+ * Completed surveys per district, for the Dashboard's district table.
+ *
+ * Grouped on `stakeholders.district`, NOT `surveys.district`. That matters:
+ * `surveys.district` is a free-text field the enumerator fills in on the form and
+ * is null on every survey created before that field existed, so grouping on it
+ * would silently under-count. `stakeholders.district` is the canonical assignment
+ * and is the same key `topDistricts` is built from, which is what lets the total
+ * and completed figures in a single row be compared meaningfully.
+ *
+ * Deliberately NOT cached, unlike the stakeholder aggregates above. This is the
+ * number that moves as enumerators submit work, and it is cheap — the surveys
+ * table is small and the join is on an indexed primary key, versus the 295K-row
+ * scan that forced caching for the stakeholder side.
+ */
+async function getCompletedSurveysByDistrict(): Promise<Map<string, number>> {
+  const rows = await prisma.$queryRaw<{ district: string | null; count: bigint }[]>`
+    SELECT s.district AS district, COUNT(*) AS count
+    FROM surveys sv
+    JOIN stakeholders s ON s.id = sv.stakeholder_id
+    WHERE sv.is_completed = true
+    GROUP BY s.district
+  `;
+
+  // Keyed upper-case so a casing difference between the two groupings cannot
+  // cause a district to silently report zero completions.
+  return new Map(rows.map(r => [(r.district || '').toUpperCase(), Number(r.count)]));
+}
+
 router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const [agg, completedSurveys, exportedSurveys, totalEnumerators] = await Promise.all([
-      getStakeholderAggregates(),
-      prisma.survey.count({ where: { isCompleted: true } }),
-      prisma.surveyExport.count(),
-      prisma.enumerator.count(),
-    ]);
+    const [agg, completedSurveys, exportedSurveys, totalEnumerators, completedByDistrict] =
+      await Promise.all([
+        getStakeholderAggregates(),
+        prisma.survey.count({ where: { isCompleted: true } }),
+        prisma.surveyExport.count(),
+        prisma.enumerator.count(),
+        getCompletedSurveysByDistrict(),
+      ]);
+
+    // The cached district totals are merged with the live completion counts here
+    // rather than inside getStakeholderAggregates, so the completed figures stay
+    // fresh even while the 5-minute stakeholder cache is still being served.
+    //
+    // Ordering is by survey activity first, stakeholder volume second. Ranking
+    // purely by volume put ten districts with zero completions on the dashboard
+    // while hiding the only district with any, which is the opposite of what a
+    // progress table is for. Districts with no activity still appear once the
+    // active ones run out, so large untouched districts remain visible.
+    const topDistricts = agg.districts
+      .map(d => {
+        const completed = completedByDistrict.get((d.district || '').toUpperCase()) || 0;
+        return {
+          district: d.district,
+          count: d.count,
+          completedSurveys: completed,
+          // Share of that district's stakeholders with a completed survey. Guarded
+          // against a zero denominator, which would otherwise yield NaN in the UI.
+          coverage: d.count > 0 ? Number(((completed / d.count) * 100).toFixed(2)) : 0,
+        };
+      })
+      .sort((a, b) => b.completedSurveys - a.completedSurveys || b.count - a.count)
+      .slice(0, 10);
 
     res.json({
       success: true,
@@ -131,7 +193,7 @@ router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: 
         completedSurveys,
         exportedSurveys,
         totalEnumerators,
-        topDistricts: agg.topDistricts,
+        topDistricts,
       },
     });
   } catch (error) {
@@ -392,15 +454,30 @@ router.get('/districts', async (req: AuthenticatedRequest, res: Response, next: 
     // This groupBy aggregates all 295K rows (~130 ms warm, seconds cold) and the
     // underlying data only changes on a bulk import, so recomputing it on every
     // visit to the Districts page is pure waste.
-    const countsMap = await getDistrictCountsMap();
+    //
+    // The completion counts are fetched alongside but deliberately uncached, for
+    // the same reason as on the dashboard: they move as enumerators submit work.
+    const [countsMap, completedByDistrict] = await Promise.all([
+      getDistrictCountsMap(),
+      getCompletedSurveysByDistrict(),
+    ]);
 
     res.json({
       success: true,
-      data: districts.map(d => ({
-        ...d,
-        enumeratorsCount: d._count.enumerators,
-        stakeholdersCount: countsMap.get(d.name.toUpperCase()) || 0,
-      })),
+      data: districts.map(d => {
+        const key = d.name.toUpperCase();
+        const stakeholdersCount = countsMap.get(key) || 0;
+        const completedSurveysCount = completedByDistrict.get(key) || 0;
+        return {
+          ...d,
+          enumeratorsCount: d._count.enumerators,
+          stakeholdersCount,
+          completedSurveysCount,
+          coverage: stakeholdersCount > 0
+            ? Number(((completedSurveysCount / stakeholdersCount) * 100).toFixed(2))
+            : 0,
+        };
+      }),
     });
   } catch (error) {
     next(error);

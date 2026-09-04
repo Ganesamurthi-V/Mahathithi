@@ -23,4 +23,8 @@ export interface District {
   state: string;
   enumeratorsCount: number;
   stakeholdersCount: number;
+  /** Surveys completed on stakeholders in this district. */
+  completedSurveysCount: number;
+  /** completedSurveysCount as a percentage of stakeholdersCount. */
+  coverage: number;
 }
