@@ -24,11 +24,56 @@
  *   npx tsx scripts/import-excel.ts --batch-size=3000
  *   npx tsx scripts/import-excel.ts --file=path/to/other.xlsx
  *
- * Excel columns (19 total):
- *   Primary_Key_ID, UIN, Data_Source, CIN_Number, GST_Number, TIN_Number,
- *   Company_Name_Standardized, Company_Name_Original, Full_Address_Raw,
- *   Address_Line_1, Address_Line_2, City, District, State, PIN_Code,
- *   NIC_Code, NIC_Description, Category, Priority
+ * ============================================================================
+ * WHAT THIS IMPORTS, AND WHAT IT DELIBERATELY DOES NOT
+ * ============================================================================
+ * The 'Combined Master' sheet has 24 columns (not 19, as this comment previously
+ * claimed). Measured fill rates over the first 5,000 rows of the live workbook:
+ *
+ *   IMPORTED — carry real data
+ *     Primary_Key_ID              100%      UIN                        100%
+ *     Data_Source                 100%      CIN_Number                89.9%
+ *     Company_Name_Standardized   100%      Company_Name_Original      100%
+ *     Full_Address_Raw            100%      Address_Line_1             100%
+ *     Address_Line_2              100%      City                       100%
+ *     District                    100%      State                      100%
+ *     PIN_Code                    100%      NIC_Code                   100%
+ *     NIC_Description             100%      Category                   100%
+ *     Priority                    100%
+ *
+ *   IGNORED — genuinely empty in all 295,176 rows
+ *     GST_Number, TIN_Number, and one unnamed trailing column.
+ *
+ *   IGNORED — HAVE DATA, but stakeholders has no column to receive them.
+ *   These are dropped, and that is a decision worth revisiting. Counts are from a
+ *   FULL scan of the workbook, not a sample:
+ *
+ *     'Email ID'           109,116 rows (36.97%)   <-- substantial contact data
+ *     'Mobile Number'        5,554 rows (1.88%)
+ *     Region                 4,429 rows (1.50%)
+ *     'FSSAI License No.'   11,922 rows (4.04%), but 11,402 of those are
+ *                           placeholders whose last 8 digits are zero
+ *                           (e.g. 11524000000000). Only ~520 look like real
+ *                           licences (176 distinct).
+ *
+ *   NOTE ON MEASUREMENT: these four were initially assessed from the first 5,000
+ *   rows and ALL looked empty. They are not. The workbook is ordered MCA-first
+ *   then Udyam, and the contact columns are only populated in the later portion.
+ *   auditIgnoredColumns() therefore scans every row — sampling a non-uniformly
+ *   distributed column produces confident wrong answers.
+ *
+ * This importer previously wrote 18 fields that could never be anything but null,
+ * because the Excel has no such column at all: taluka, village, company_class,
+ * company_status, company_category, authorized_capital, paidup_capital,
+ * listing_status, registration_date, fuzzy_similarity_score, cross_source_match,
+ * human_review_required, dedup_match_status, source_lineage_notes, latitude,
+ * longitude, digipin — plus gst_number and tin_number, whose columns exist in the
+ * sheet but are 100% empty. Verified against the live database: all of those are
+ * 0% populated across all 295,176 rows.
+ *
+ * They are no longer written. The columns still exist on the table and remain
+ * nullable, so nothing breaks; the import simply stops pretending to populate
+ * them. Every field below is one that actually receives a value.
  */
 
 import * as fs from 'fs';
@@ -36,7 +81,6 @@ import * as path from 'path';
 import xlsx from 'xlsx';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
-import { getDigiPin } from '../src/utils/digipin';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
@@ -260,16 +304,6 @@ function cleanNic(v: unknown): string | null {
 }
 
 /**
- * GST numbers from MCA data sometimes contain "Derivable from CIN …" — not a real GST.
- */
-function cleanGst(v: unknown): string | null {
-  const s = toStr(v);
-  if (!s) return null;
-  if (s.toLowerCase().startsWith('derivable')) return null;
-  return s;
-}
-
-/**
  * Safe numeric parse. Returns null for NaN, null, undefined, 0-ish strings.
  */
 function toNum(v: unknown): number | null {
@@ -279,6 +313,81 @@ function toNum(v: unknown): number | null {
   if (!s || s.toLowerCase() === 'nan') return null;
   const n = parseFloat(s);
   return isNaN(n) ? null : n;
+}
+
+// ============================================================================
+// IGNORED-COLUMN AUDIT
+// ============================================================================
+
+/**
+ * Source columns this importer deliberately does not read, with the reason.
+ *
+ * These were all measured empty (or effectively empty) in the current workbook. The
+ * risk of hard-coding that decision is that a LATER workbook starts populating one
+ * of them and the data is dropped silently — so instead of assuming, the import
+ * samples these columns and warns loudly if any of them now contains values.
+ *
+ * That turns a silent data loss into a visible prompt to wire the column up.
+ */
+const IGNORED_COLUMNS: Record<string, string> = {
+  'GST_Number':         'empty in all rows; stakeholders.gst_number also confirmed 0% populated',
+  'TIN_Number':         'empty in all rows; stakeholders.tin_number also confirmed 0% populated',
+  'Region':             'no region column on stakeholders (4,429 rows carry a value)',
+  'Email ID':           'no email column on stakeholders — 109,116 rows carry a value, worth adding one',
+  'Mobile Number':      'no mobile column on stakeholders (5,554 rows carry a value)',
+  'FSSAI License No.':  'no fssai column on stakeholders; 11,922 populated but 11,402 are zero-padded placeholders, ~520 real',
+};
+
+/** Values that mean "no data" rather than data. */
+function isBlank(v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  const s = String(v).trim().toLowerCase();
+  return s === '' || s === 'nan' || s === 'null' || s === 'n/a' || s === 'na';
+}
+
+/**
+ * Warn if a column we chose to skip actually has data in this workbook.
+ *
+ * Scans EVERY row, not a sample. This originally sampled the first 5,000 rows and
+ * was badly misleading: the workbook is ordered MCA-first then Udyam, and the
+ * contact columns are only populated in the later portion. The sample reported
+ * 'Email ID' as completely empty when it is in fact 36.97% populated — 109,116
+ * values. Sampling a non-uniformly distributed column is worse than not checking,
+ * because it produces confident wrong answers.
+ *
+ * The rows are already in memory, so a full scan costs a few hundred milliseconds.
+ */
+function auditIgnoredColumns(rows: Record<string, unknown>[]): void {
+  if (rows.length === 0) return;
+
+  console.log(`\n🔍 Auditing skipped columns across all ${rows.length.toLocaleString()} rows...`);
+  let surprises = 0;
+
+  for (const [col, reason] of Object.entries(IGNORED_COLUMNS)) {
+    // Column names are normalised (whitespace -> underscore) before mapRow, so
+    // check both the raw and normalised spellings.
+    const key = Object.keys(rows[0]!).find(
+      k => k === col || k.trim().replace(/\s+/g, '_') === col.trim().replace(/\s+/g, '_')
+    );
+    if (!key) continue;
+
+    const populated = rows.filter(r => !isBlank(r[key])).length;
+    if (populated === 0) {
+      console.log(`  ✅ ${col.padEnd(20)} empty in all rows — safe to skip`);
+    } else {
+      surprises++;
+      const pct = ((populated / rows.length) * 100).toFixed(2);
+      console.warn(`  ⚠️  ${col.padEnd(20)} HAS DATA: ${populated.toLocaleString()} rows (${pct}%) — being DROPPED`);
+      console.warn(`     ${reason}`);
+    }
+  }
+
+  if (surprises > 0) {
+    console.warn(
+      `\n  ${surprises} skipped column(s) contain data. Storing them needs a schema change;\n` +
+      `  see the header of this file for the measured breakdown.`
+    );
+  }
 }
 
 // ============================================================================
@@ -306,56 +415,36 @@ function mapRow(row: Record<string, unknown>, lineNum: number): Record<string, u
 
   const district = normalizeDistrict(toStr(row['District']));
 
-  const latitude = toNum(row['Latitude']) ?? null;
-  const longitude = toNum(row['Longitude']) ?? null;
-  let digipin = null;
-  if (latitude !== null && longitude !== null) {
-    try {
-      digipin = getDigiPin(latitude, longitude);
-    } catch (e) {
-      console.warn(`  ⚠️  Line ${lineNum}: DIGIPIN generation failed for coords (${latitude}, ${longitude})`);
-    }
-  }
-
   return {
     primaryKeyId,
     uin:                     toStr(row['UIN']),
     dataSource:              toStr(row['Data_Source']),
-    cinNumber:               toStr(row['CIN_Number']),
-    gstNumber:               cleanGst(row['GST_Number']),
-    tinNumber:               toStr(row['TIN_Number']),
+    cinNumber:               toStr(row['CIN_Number']),          // 89.9% populated — real data
     companyNameStandardized: companyNameStandardized,
     companyNameOriginal:     toStr(row['Company_Name_Original']),
     fullAddressRaw:          toStr(row['Full_Address_Raw']),
     addressLine1:            toStr(row['Address_Line_1']),
     addressLine2:            toStr(row['Address_Line_2']),
     city:                    toStr(row['City']),
-    taluka:                  toStr(row['Taluka']) ?? null,      // not present in current Excel
-    village:                 toStr(row['Village']) ?? null,     // not present in current Excel
     district:                district,
     state:                   toStr(row['State']),
-    pinCode:                 cleanPin(row['PIN_Code']),          // ← core fix
-    nicCode:                 cleanNic(row['NIC_Code']),          // ← numeric → string
+    pinCode:                 cleanPin(row['PIN_Code']),         // numeric in Excel; 0 means missing
+    nicCode:                 cleanNic(row['NIC_Code']),         // numeric in Excel → string
     nicDescription:          toStr(row['NIC_Description']),
     category:                toStr(row['Category']),
-    priorityWeight:          toNum(row['Priority']),             // column is "Priority" not "Priority_Weight"
-    // Fields not present in this Excel version — left as null (schema allows nullable)
-    companyClass:            toStr(row['Company_Class'])    ?? null,
-    companyStatus:           toStr(row['Company_Status'])   ?? null,
-    companyCategory:         toStr(row['Company_Category']) ?? null,
-    authorizedCapital:       toNum(row['Authorized_Capital']),
-    paidupCapital:           toNum(row['Paidup_Capital']),
-    listingStatus:           toStr(row['Listing_Status'])   ?? null,
-    registrationDate:        toStr(row['Registration_Date']) ?? null,
-    fuzzySimilarityScore:    toNum(row['Fuzzy_Similarity_Score']),
-    crossSourceMatch:        toStr(row['Cross_Source_Match']) ?? null,
-    humanReviewRequired:     toStr(row['Human_Review_Required']) ?? null,
-    dedupMatchStatus:        toStr(row['Dedup_Match_Status']) ?? null,
-    sourceLineageNotes:      toStr(row['Source_Lineage_Notes']) ?? null,
+
+    // Source column is "Priority", not "Priority_Weight".
+    //
+    // Defaulted to 0 rather than null on purpose. `ORDER BY priority_weight DESC`
+    // means NULLS FIRST in Postgres, so a null here sorts AHEAD of every scored
+    // record and lands unscored rows on page 1 of the admin list. That was a live
+    // bug, fixed by backfilling 104,412 nulls to 0 (see
+    // migrations/20260904_priority_weight_backfill). Writing null again would
+    // silently reintroduce it on the next import. Real priorities are 1..6, so 0 is
+    // an unused, explicit "not scored" value that correctly sorts last.
+    priorityWeight:          toNum(row['Priority']) ?? 0,
+
     status:                  'OPEN' as const,
-    latitude,
-    longitude,
-    digipin,
   };
 }
 
@@ -423,13 +512,27 @@ async function insertBatch(
 // TRIGRAM INDEXES
 // ============================================================================
 
+/**
+ * Ensure the trigram indexes the search path actually uses.
+ *
+ * NOTE: idx_stakeholders_address_trgm (full_address_raw) was deliberately REMOVED
+ * from this list. It was 59 MB — the largest index on the table — with 0 scans
+ * across 45 days of production, because no query filters on full_address_raw:
+ * StakeholderService.search() accepts name, org, state, district, pinCode,
+ * category, nicCode, gst, taluka, city, status and digipin, and address is not
+ * among them. It was dropped in migrations/20260904_drop_unused_indexes, and
+ * recreating it here would silently undo that on the next import.
+ *
+ * The three kept below all back live query paths: the two name trigrams serve the
+ * `name`/`org` ILIKE search (55 and 56 scans), and the city trigram serves the
+ * `city` ILIKE filter.
+ */
 async function createIndexes(): Promise<void> {
   console.log('\n📊 Creating/verifying trigram indexes...');
   const indexes: [string, string][] = [
     ['idx_stakeholders_name_std_trgm',  'company_name_standardized gin_trgm_ops'],
     ['idx_stakeholders_name_orig_trgm', 'company_name_original gin_trgm_ops'],
     ['idx_stakeholders_city_trgm',      'city gin_trgm_ops'],
-    ['idx_stakeholders_address_trgm',   'full_address_raw gin_trgm_ops'],
   ];
   for (const [name, col] of indexes) {
     try {
@@ -530,6 +633,18 @@ async function main(): Promise<void> {
     console.error('❌ No data rows found in the sheet.');
     process.exit(1);
   }
+
+  // Make the import's scope explicit before any writes happen, and flag any
+  // skipped column that has started carrying data.
+  auditIgnoredColumns(rawRows);
+
+  console.log('\n📝 Fields written to stakeholders (17 + status):');
+  console.log('   primaryKeyId, uin, dataSource, cinNumber, companyNameStandardized,');
+  console.log('   companyNameOriginal, fullAddressRaw, addressLine1, addressLine2, city,');
+  console.log('   district, state, pinCode, nicCode, nicDescription, category,');
+  console.log('   priorityWeight (null -> 0), status=OPEN');
+  console.log('   Not written: taluka, village, gst/tin, company_*, *_capital,');
+  console.log('   listing_status, registration_date, fuzzy/dedup/lineage, lat/long/digipin');
 
   // --------------------------------------------------------------------------
   // Stats
