@@ -174,7 +174,10 @@ const DISTRICT_ALIAS_MAP: Record<string, string> = {
   'AURANGABAD': 'Aurangabad', 'CHHATRAPATI SAMBHAJINAGAR': 'Aurangabad', 'SAMBHAJINAGAR': 'Aurangabad',
   'BEED': 'Beed', 'BID': 'Beed',
   'BHANDARA': 'Bhandara',
-  'BULDHANA': 'Buldhana', 'BULDANA': 'Buldhana', 'BULDHANA': 'Buldhana',
+  // 'BULDHANA' was listed twice here (TS1117). Both mapped to the same value so it
+  // was harmless at runtime, but a third spelling variant was likely intended.
+  // Left at the two real variants rather than inventing one.
+  'BULDHANA': 'Buldhana', 'BULDANA': 'Buldhana',
   'CHANDRAPUR': 'Chandrapur',
   'DHULE': 'Dhule', 'DHULIA': 'Dhule',
   'GADCHIROLI': 'Gadchiroli',
