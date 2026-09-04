@@ -1,0 +1,67 @@
+-- ============================================================================
+-- PERFORMANCE: index the global stakeholder-list ordering
+-- ============================================================================
+--
+-- ALREADY APPLIED to the live database on 2026-09-04 (built CONCURRENTLY, 8.7 s,
+-- 16 MB, indisvalid = true). This file records it so the schema history matches
+-- production. Re-running is a no-op thanks to IF NOT EXISTS.
+--
+-- MEASURED PROBLEM
+-- StakeholderService.search() orders every page by
+--     ORDER BY priority_weight DESC, company_name_standardized ASC
+-- and for an admin there is no district filter. The only index covering those
+-- columns was idx_sh_list_hot (district, priority_weight DESC,
+-- company_name_standardized), whose leading column is district — so it cannot
+-- supply this ordering without a district predicate.
+--
+-- Postgres therefore read the entire table and sorted it, for every page view:
+--
+--   BEFORE  Parallel Seq Scan + top-N Sort   15,771 buffers   4,117 ms warm
+--   AFTER   Index Scan, no Sort                  42 buffers       9.0 ms
+--
+-- Production logs had this at 6,916 ms and 10,184 ms, making it the slowest
+-- query in the application.
+--
+-- COLUMN ORDER AND NULLS BOTH MATTER
+-- Prisma emits plain DESC / ASC. In Postgres, DESC defaults to NULLS FIRST and
+-- ASC to NULLS LAST, so this index is created with those same defaults in order
+-- to match the query exactly. Deviating on either makes the planner ignore it —
+-- that is precisely why the old idx_sh_district_priority
+-- (priority_weight DESC NULLS LAST) sat at 0 scans and was dropped in
+-- 20260830_perf_district_index.
+--
+-- LOCKING: CONCURRENTLY cannot run inside a transaction, so this will fail in the
+-- Supabase SQL editor with "ERROR: 25001". It is already applied; if you ever need
+-- to rebuild it, run from psql or any non-transactional client:
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sh_list_global
+--     ON stakeholders (priority_weight DESC, company_name_standardized);
+--
+-- Without CONCURRENTLY a plain CREATE INDEX takes a ShareLock and blocks writes
+-- for roughly 9 s on 295K rows.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sh_list_global
+  ON stakeholders (priority_weight DESC, company_name_standardized);
+
+ANALYZE stakeholders;
+
+-- ============================================================================
+-- OPEN ISSUE, NOT CHANGED HERE: the ordering puts the WORST rows first
+-- ============================================================================
+-- 104,412 of 295,176 rows have priority_weight IS NULL, and priority_weight DESC
+-- means NULLS FIRST. So every admin's first page is NULL-priority records:
+--
+--   page 1 today          -> pw=NULL  "!!! SHREE SWAMI SAMARTH ...", "0", "1"
+--   with NULLS LAST       -> pw=6     "A 1 PAAN SHOP", "A K LIGHTINGS", ...
+--
+-- priority_weight ranges 1..6, so descending order is meant to surface the
+-- highest-priority stakeholders. Instead the 104K unscored rows bury them.
+--
+-- Fixing it needs BOTH sides changed together, or the new index stops matching:
+--   1. stakeholder.service.ts:
+--        orderBy: [{ priorityWeight: { sort: 'desc', nulls: 'last' } }, ...]
+--   2. a replacement index:
+--        CREATE INDEX CONCURRENTLY idx_sh_list_global_nl
+--          ON stakeholders (priority_weight DESC NULLS LAST, company_name_standardized);
+--
+-- Left alone deliberately: it changes what every admin sees on page 1, which is a
+-- product decision rather than a performance one.
