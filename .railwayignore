@@ -1,0 +1,23 @@
+# Paths excluded from `railway up` uploads.
+#
+# The Railway service builds with rootDirectory=/backend, so the upload must keep
+# the repo structure (backend/ at the archive root) — but nothing outside backend/
+# is needed to build it. Of ~13.4 MB tracked, docs/ alone is 5.77 MB of sample
+# media used only by seed scripts.
+#
+# Excluding these cuts the CI upload roughly in half.
+docs/
+mobile/
+admin-panel/
+MahaAtithi_Logo_updated.png
+
+# Artefacts and local-only files that must never reach a build.
+**/.env
+**/.env.*
+!**/.env.example
+**/screenshots/
+**/graphify-out/
+**/logs/
+.vs/
+.vscode/
+.kiro/
