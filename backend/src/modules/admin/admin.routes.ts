@@ -5,10 +5,11 @@ import { config } from '../../config';
 import bcrypt from 'bcryptjs';
 import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
-import { ValidationError, NotFoundError } from '../../utils/errors';
+import { AppError, ValidationError, NotFoundError } from '../../utils/errors';
 import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { broadcastChange } from '../../realtime/events';
+import { logger } from '../../utils/logger';
 
 /**
  * L1 FIX: enforce minimum password strength before hashing.
@@ -621,56 +622,134 @@ router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Respon
   }
 });
 
-// POST: export specific surveys by IDs and mark them as exported
-router.post('/export/surveys', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+/**
+ * Shared export handler for both the POST (selected ids) and GET (everything)
+ * routes.
+ *
+ * THREE BUGS THIS FIXES
+ *
+ * 1. Surveys were marked exported BEFORE the file reached the operator.
+ *    The upserts ran, then `res.send(sql)` was called. If that response never
+ *    completed — closed tab, dropped connection, proxy timeout mid-download — the
+ *    rows were already flipped to "Exported" while the operator had no file. The
+ *    Export page then reports "0 new", so the obvious next action ("Select New
+ *    Only" -> Export) produces an empty export and the work looks lost. Marking
+ *    now happens on the response's `finish` event, which fires only once the body
+ *    has actually been flushed.
+ *
+ * 2. An empty selection silently produced a valid-looking but useless file.
+ *    With no matching surveys, generateExportSQL still returns a header plus
+ *    BEGIN/COMMIT and zero INSERTs. That downloads as a .sql file containing no
+ *    rows, which is indistinguishable from a broken export. It now returns 404
+ *    with an explicit message instead.
+ *
+ * 3. The two routes disagreed. POST marked surveys exported; GET (used by
+ *    api.ts whenever no ids are passed) did not mark anything at all, so a
+ *    full export left every row still showing as "New". Both now behave
+ *    identically.
+ *
+ * Also: exports were never written to the audit log, so there was no record of who
+ * extracted survey data or when — the one action in this panel that removes data
+ * from the system. It is audited now.
+ */
+async function handleSurveyExport(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+  ids?: string[]
+) {
   try {
-    const { ids } = req.body;
     const where: any = { isCompleted: true, isDraft: false };
-    if (ids && Array.isArray(ids) && ids.length > 0) {
-      where.id = { in: ids };
-    }
+    if (ids && ids.length > 0) where.id = { in: ids };
+
     const surveys = await prisma.survey.findMany({ where, orderBy: { createdAt: 'desc' } });
+
+    // Bug 2: refuse to hand back an export with no rows in it.
+    //
+    // AppError directly rather than NotFoundError: that helper takes a resource
+    // NAME and builds "<name> not found", so passing a full sentence produced
+    // "...since the list was loaded. not found".
+    if (surveys.length === 0) {
+      throw new AppError(
+        ids && ids.length > 0
+          ? 'None of the selected surveys are available to export. They may have been reopened or deleted since the list was loaded.'
+          : 'There are no completed surveys to export yet.',
+        404,
+        'NOT_FOUND'
+      );
+    }
+
     const mediaBySurvey = await fetchExportMedia(surveys.map(s => s.id));
     const sql = generateExportSQL(surveys, mediaBySurvey);
 
-    // Mark these surveys as exported
+    const exportedIds = surveys.map(s => s.id);
     const exportedBy = req.enumerator?.id || null;
-    for (const s of surveys) {
-      await prisma.surveyExport.upsert({
-        where: { surveyId: s.id },
-        update: { exportedAt: new Date(), exportedBy },
-        create: { surveyId: s.id, exportedBy },
-      });
-    }
 
-    // Rows just flipped from "New" to "Exported" and the dashboard's exported
-    // counter moved. Without this, a second admin would keep seeing them as new
-    // and could export the same surveys again.
-    broadcastChange(['exports', 'analytics'], { action: 'update' });
+    // Bug 1: only record the export once the bytes have actually gone out.
+    // `finish` fires after the final chunk is handed to the socket; an aborted
+    // download emits `close` without `finish`, so nothing is marked.
+    res.on('finish', () => {
+      // Deliberately fire-and-forget: the response is already sent, so there is
+      // no way to report a failure here. It is logged instead, and the rows stay
+      // "New" — which is the safe direction to fail, since the operator can simply
+      // export again.
+      void (async () => {
+        try {
+          // One batched write instead of a sequential upsert per survey. The old
+          // loop was N round trips, which on a cross-region database meant the
+          // request sat there for seconds on a large selection.
+          await prisma.$transaction([
+            prisma.surveyExport.deleteMany({ where: { surveyId: { in: exportedIds } } }),
+            prisma.surveyExport.createMany({
+              data: exportedIds.map(surveyId => ({ surveyId, exportedBy })),
+            }),
+          ]);
+
+          if (exportedBy) {
+            await prisma.auditLog.create({
+              data: {
+                action: 'surveys_exported',
+                entityType: 'survey',
+                entityId: exportedIds[0]!,
+                enumeratorId: exportedBy,
+                details: {
+                  count: exportedIds.length,
+                  scope: ids && ids.length > 0 ? 'selected' : 'all',
+                  bytes: Buffer.byteLength(sql, 'utf8'),
+                },
+              },
+            });
+          }
+
+          // Rows flip from "New" to "Exported" and the dashboard counter moves.
+          // Without this a second admin keeps seeing them as new and re-exports.
+          broadcastChange(['exports', 'analytics', 'auditLogs'], { action: 'update' });
+        } catch (e) {
+          logger.error('Failed to record survey export after delivery', e);
+        }
+      })();
+    });
 
     res.setHeader('Content-Type', 'application/sql');
-    res.setHeader('Content-Disposition', `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0,10)}.sql"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0, 10)}.sql"`
+    );
     res.send(sql);
   } catch (error) {
     next(error);
   }
+}
+
+// POST: export specific surveys by id (or everything, if `ids` is omitted).
+router.post('/export/surveys', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const { ids } = req.body ?? {};
+  await handleSurveyExport(req, res, next, Array.isArray(ids) ? ids : undefined);
 });
 
-// GET: export all completed surveys
+// GET: export every completed survey.
 router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  try {
-    const surveys = await prisma.survey.findMany({
-      where: { isCompleted: true, isDraft: false },
-      orderBy: { createdAt: 'desc' },
-    });
-    const mediaBySurvey = await fetchExportMedia(surveys.map(s => s.id));
-    const sql = generateExportSQL(surveys, mediaBySurvey);
-    res.setHeader('Content-Type', 'application/sql');
-    res.setHeader('Content-Disposition', `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0,10)}.sql"`);
-    res.send(sql);
-  } catch (error) {
-    next(error);
-  }
+  await handleSurveyExport(req, res, next);
 });
 
 // ============================================================================

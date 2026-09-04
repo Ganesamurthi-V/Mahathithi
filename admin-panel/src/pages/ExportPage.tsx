@@ -80,9 +80,26 @@ export default function ExportPage() {
         queryClient.invalidateQueries({ queryKey: ['export-surveys-list'] });
         queryClient.invalidateQueries({ queryKey: ['analytics'] });
       })
-      .catch((e: any) => {
+      .catch(async (e: any) => {
         setExportNote('');
-        alert('Export failed: ' + (e.response?.data?.error?.message || e.message || 'Unknown error'));
+        // The request sets responseType: 'blob', so an error body arrives as a Blob
+        // rather than parsed JSON — reading e.response.data.error.message directly
+        // yields undefined and the operator sees a useless "Unknown error". The
+        // server sends a specific explanation (for example that the selected
+        // surveys were reopened since the list loaded), so unwrap it.
+        let message = e.message || 'Unknown error';
+        const body = e.response?.data;
+        try {
+          if (body instanceof Blob) {
+            const parsed = JSON.parse(await body.text());
+            message = parsed?.error?.message || message;
+          } else if (body?.error?.message) {
+            message = body.error.message;
+          }
+        } catch {
+          // Not JSON — keep the transport-level message.
+        }
+        alert('Export failed: ' + message);
       })
       .finally(() => {
         setExporting(false);
