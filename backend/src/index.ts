@@ -68,11 +68,34 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(generalLimiter);
 
 // M6 FIX: in production, redirect plain HTTP to HTTPS.
-// Railway already terminates TLS, but making the app enforce it too provides
-// a safety net in case the TLS offload config is ever changed.
+// Railway already terminates TLS and its edge 301s http->https before a request
+// ever reaches this process, so this is a safety net for the case where that TLS
+// offload config changes.
+//
+// It deliberately fails OPEN. The previous condition was
+//     if (req.headers['x-forwarded-proto'] !== 'https') redirect
+// which redirects whenever the header is anything other than exactly 'https' —
+// including ABSENT. Any request without the header therefore redirects to a URL
+// that also arrives without it, i.e. an infinite loop that takes the API down.
+// Requests legitimately arrive with no such header: platform healthchecks and
+// anything hitting the container directly on the private network. The strict
+// comparison also mishandles chained proxies, which produce a comma-separated
+// list like 'https,http'.
+//
+// So: only redirect when the proxy has positively told us the ORIGINAL request
+// was plain HTTP. Unknown or missing means leave it alone. The worst case is a
+// plain-HTTP request served rather than upgraded — which cannot happen anyway
+// while Railway's edge is doing the upgrade first — and that is a far better
+// failure mode than a redirect loop.
 if (config.env === 'production') {
   app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (req.headers['x-forwarded-proto'] !== 'https') {
+    // Left-most entry is the original client-facing protocol.
+    const proto = String(req.headers['x-forwarded-proto'] || '')
+      .split(',')[0]
+      .trim()
+      .toLowerCase();
+
+    if (proto === 'http' && req.headers.host) {
       return res.redirect(301, `https://${req.headers.host}${req.url}`);
     }
     next();
