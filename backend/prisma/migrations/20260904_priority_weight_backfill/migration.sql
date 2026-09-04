@@ -1,0 +1,52 @@
+-- ============================================================================
+-- DATA FIX: priority_weight NULL -> 0, so the admin list orders correctly
+-- ============================================================================
+--
+-- ALREADY APPLIED to the live database on 2026-09-04 via
+-- backend/scripts/backfill-priority-weight.ts (batched, 181.8 s, then
+-- VACUUM ANALYZE). This file records it so schema history matches production.
+--
+-- THE PROBLEM
+-- StakeholderService.search() orders every page by
+--     ORDER BY priority_weight DESC, company_name_standardized ASC
+-- In Postgres, DESC means NULLS FIRST. 104,412 of 295,176 stakeholders had no
+-- priority_weight, so every admin's first page was unscored records:
+--
+--   before:  pw=NULL  "!!! SHREE SWAMI SAMARTH ...", "'Z CAFE", "0", "1"
+--   after :  pw=6     "A 1 PAAN SHOP", "A K LIGHTINGS", "A R SUPPLIERS"
+--
+-- Real scores are 1..6, so 0 was unused and serves as an explicit "not scored"
+-- sentinel that sorts last under DESC.
+--
+-- WHY NOT `ORDER BY ... DESC NULLS LAST`
+-- That would stop matching idx_sh_list_global (priority_weight DESC,
+-- company_name_standardized) and need a replacement index. Fixing the data instead
+-- keeps the existing index exactly right and needs no application change.
+--
+-- MEASURED RESULT — it improved search cost as well as ordering, which was NOT the
+-- expected trade-off. Worst case across ten terms, common to rare:
+--
+--   before: homestay  65,128 buffers (~509 MB)  1,934 ms
+--   after : resort     5,042 buffers (~39 MB)      22 ms
+--
+-- Unfiltered page 1 stayed on the index with no sort, at 1.5 ms. The reason is
+-- that selective matches cluster among the unscored rows; with NULLS FIRST those
+-- 104K rows sat at the front of the index and every walk crossed them, whereas now
+-- they sort last and the planner switches to the trigram bitmap for rare terms.
+--
+-- Distribution after: 0=104,412  1=36,488  2=4,297  3=115,788  4=17,761
+--                     5=14,215   6=2,215
+--
+-- Applied in batches rather than one statement so no single transaction held locks
+-- over 104K rows. Safe to re-run: the WHERE clause makes it idempotent.
+UPDATE stakeholders SET priority_weight = 0 WHERE priority_weight IS NULL;
+
+-- 104K updated rows leave 104K dead tuples, which would push the index-only scans
+-- this table depends on back onto the heap. Cannot run inside a transaction, so it
+-- will fail in the Supabase SQL editor — run from psql, or use
+-- `npx tsx scripts/vacuum-stakeholders.ts`.
+-- VACUUM (ANALYZE) stakeholders;    -- already done: all-visible back to 100.0%
+
+-- To reverse (only valid while no legitimate score of 0 exists):
+--   npx tsx scripts/backfill-priority-weight.ts --revert
+--   UPDATE stakeholders SET priority_weight = NULL WHERE priority_weight = 0;
