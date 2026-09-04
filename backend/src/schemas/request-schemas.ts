@@ -51,6 +51,29 @@ const uuid = z.string().uuid();
 const latitude = z.number().min(-90).max(90);
 const longitude = z.number().min(-180).max(180);
 
+/**
+ * Aadhaar number — 12 digits, optional.
+ *
+ * Mirrors the rule SurveyFormScreen already enforces on the client
+ * (`pattern: /^\d{12}$/`). Validated server-side too because a client-side rule
+ * is advice, not a constraint: the endpoint is reachable directly.
+ *
+ * Accepts '', null and undefined the same way optText does, so an unset SQLite
+ * TEXT column arriving as null does not fail a sync.
+ *
+ * NOTE: the value is currently persisted as plaintext. If the AES-256-GCM
+ * encryption described in the plan is added, ciphertext will not be 12 digits and
+ * this rule must move to the pre-encryption boundary rather than the wire schema.
+ */
+const optAadhaar = z
+  .string()
+  .trim()
+  .regex(/^\d{12}$/, 'Aadhar Number must be exactly 12 digits')
+  .nullable()
+  .optional()
+  .or(z.literal(''))
+  .transform((v) => (v === null ? undefined : v));
+
 // ────────────────────────────────────────────────────────────────────────────
 // Survey
 // ────────────────────────────────────────────────────────────────────────────
@@ -103,6 +126,16 @@ export const createSurveySchema = z.object({
   landline: optText(20),
   alternateMobile: optText(20),
   alternateEmail: optText(200),
+  // SYNC FIX: aadharNumber and udyamAadharRegNo are real Survey columns
+  // (aadhar_number, udyam_aadhar_reg_no) and survey.service.ts already maps both
+  // into the Prisma write — but neither was declared here. Because this schema is
+  // .strict(), every ONLINE submit from SurveyFormScreen was rejected with a 400
+  // before reaching the service, on an unknown-key error. aadharNumber is a
+  // required field on that form, so the online save path could never succeed at
+  // all; only the offline queue worked, and only because syncSurveyItemSchema uses
+  // .passthrough() and let them through unvalidated.
+  aadharNumber: optAadhaar,
+  udyamAadharRegNo: optText(50),
   panNumber: optText(20),
   establishmentCertNo: optText(100),
   fssaiNumber: optText(50),
@@ -208,6 +241,13 @@ export const syncSurveyItemSchema = z.object({
   gstNumber: optText(15),
   organizationType: optText(200),
   remarks: optText(2000),
+  // Declared explicitly rather than relying on .passthrough(). Passthrough carries
+  // a field to the service with NO length cap, which defeats the per-field limits
+  // this file exists to enforce — the mobile sync payload is the one path that can
+  // send large values. Both are real Survey columns and are mapped by
+  // sync.service.ts.
+  nearestPoliceStation: optText(300),
+  nearestHealthcareCenter: optText(300),
   latitude: latitude.optional(),
   longitude: longitude.optional(),
   gpsAccuracy: z.number().min(0).max(10000).optional(),
@@ -231,6 +271,10 @@ export const syncSurveyItemSchema = z.object({
   landline: optText(20),
   alternateMobile: optText(20),
   alternateEmail: optText(200),
+  // Same reasoning as createSurveySchema: real columns, mapped by sync.service.ts,
+  // previously only reaching it via .passthrough() with no validation at all.
+  aadharNumber: optAadhaar,
+  udyamAadharRegNo: optText(50),
   panNumber: optText(20),
   establishmentCertNo: optText(100),
   fssaiNumber: optText(50),
