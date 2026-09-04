@@ -1,0 +1,97 @@
+name: Backend CI
+
+# WHAT DEPLOYS, AND WHY THIS IS SEPARATE FROM IT
+# Railway deploys the backend itself, triggered by pushes to main through its
+# GitHub integration. This workflow does NOT deploy. It exists because Railway's
+# integration has no notion of "don't ship this" — it builds and releases whatever
+# lands on main, so a compile error reaches production and only shows up as a
+# crash-looping container.
+#
+# This runs the checks Railway does not, in parallel with its build. It is a signal,
+# not a gate: a red tick here does not stop the deploy that is already running.
+# Making it an actual gate needs a Railway project token, which the trial plan does
+# not offer — the deploy job that did that lived here until then and is kept in git
+# history if the plan changes.
+#
+# Background: Railway's trigger silently vanished once already. The service still
+# reported source.repo as connected, but the DeploymentTrigger that reacts to a push
+# was gone, so pushes were ignored for weeks while the dashboard looked healthy.
+# Repaired with:
+#     railway service source connect --repo Ganesamurthi-V/Mahathithi \
+#       --branch main --service Mahathithi
+# backend/scripts/railway-repo-trigger.ts diagnoses it and can repair it with --fix.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  # Supersede an in-flight run for the same ref. Safe to cancel here, unlike a
+  # deploy: nothing outside the runner is affected.
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the version Railway resolves in production ("lts" -> 24.19.0),
+          # so this cannot pass on a version the runtime does not use.
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        # Required before any typecheck: the code imports types from
+        # @prisma/client, which only exist once generated. package.json has no
+        # postinstall hook, so `npm ci` alone does not produce them and tsc would
+        # fail on missing types rather than on real errors.
+        run: npx prisma generate
+
+      - name: Typecheck src
+        run: npx tsc --noEmit
+
+      - name: Typecheck scripts
+        # tsconfig.json sets exclude: [node_modules, dist, prisma, scripts], so the
+        # command above never looks at scripts/. That gap let a duplicate object key
+        # (TS1117) sit in import-excel.ts while `tsc --noEmit` reported success —
+        # only the editor's language server caught it.
+        #
+        # Passing files explicitly makes tsc ignore tsconfig entirely, so every
+        # option has to be repeated here. These mirror backend/tsconfig.json.
+        run: |
+          npx tsc --noEmit \
+            --strict \
+            --esModuleInterop \
+            --skipLibCheck \
+            --target ES2022 \
+            --lib ES2022 \
+            --module commonjs \
+            --moduleResolution node \
+            --resolveJsonModule \
+            scripts/*.ts
+
+      - name: Build
+        # Proves `npm run build` (tsc -> dist/) succeeds, which is what the
+        # production start command depends on.
+        run: npm run build
