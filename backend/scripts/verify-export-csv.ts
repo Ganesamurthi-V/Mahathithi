@@ -38,8 +38,11 @@ const surveys: any[] = [
     mobileNumber: '+919876543210',                            // leading +
     email: 'tony@example.com',
     district: 'Sindhudurg',
+    taluka: 'Malvan',
     city: 'Malvan',
+    village: 'Tarkarli',
     pinCode: '416606',
+    gstNumber: '27ABCDE1234F1Z5',
     businessAddress: 'Line one\nLine two, near jetty',        // real newline
     latitude: 16.0594,
     longitude: 73.4629,
@@ -57,6 +60,9 @@ const surveys: any[] = [
       { day: 'Monday', type: 'open_all_day' },
       { day: 'Tuesday', type: 'closed' },
       { day: 'Wednesday', type: 'hours', from: '09:00', to: '18:00' },
+      // Real shape from the mobile form: Custom Hours chosen, times left blank as
+      // "" rather than null. Used to render as a bare "-".
+      { day: 'Thursday', type: 'hours', from: '', to: '' },
     ],
     rooms: [
       { name: 'Deluxe', type: 'Double', capacity: 2, price: 2500 },
@@ -181,8 +187,19 @@ check('sub_categories joined',
   JSON.stringify(row1[col('sub_categories')]));
 
 check('working_hours flattened readably',
-  row1[col('working_hours')] === 'Monday: Open all day; Tuesday: Closed; Wednesday: 09:00-18:00',
+  row1[col('working_hours')] ===
+    'Monday: Open all day; Tuesday: Closed; Wednesday: 09:00-18:00; Thursday: Hours not specified',
   JSON.stringify(row1[col('working_hours')]));
+
+check('blank custom hours do not render as a bare "-"',
+  !/:\s*-\s*(;|$)/.test(row1[col('working_hours')]),
+  JSON.stringify(row1[col('working_hours')]));
+
+check('taluka, village and gst_number are exported',
+  row1[col('taluka')] === 'Malvan' &&
+  row1[col('village')] === 'Tarkarli' &&
+  row1[col('gst_number')] === '27ABCDE1234F1Z5',
+  `taluka=${row1[col('taluka')]} village=${row1[col('village')]} gst=${row1[col('gst_number')]}`);
 
 check('rooms flattened readably',
   row1[col('rooms')] === 'Deluxe (Double, cap 2, price 2500); Dorm (Dormitory, cap 8, price 600)',
@@ -220,6 +237,24 @@ check('rooms_count is 0 when rooms is null',
 check('media URL columns present even with no media',
   ['display_image_url', 'gst_document_url', 'pan_card_document_url', 'establishment_cert_url']
     .every(c => header.includes(c)));
+
+// The CSV must be a plain table and nothing else. The SQL export is a separate
+// artefact; none of its syntax belongs in a file destined for a spreadsheet.
+// Opening the SQL file in Excel is what produced a sheet full of #NAME? errors,
+// because Excel evaluates its leading "--" comment lines as formulas.
+const SQL_MARKERS = [
+  'BEGIN;', 'COMMIT;', 'INSERT INTO', 'WITH new_listing', 'gen_random_uuid',
+  'RETURNING', '::uuid', '-- ===', 'SELECT 1;',
+];
+const leaked = SQL_MARKERS.filter(m => csv.includes(m));
+check('CSV contains no SQL syntax at all', leaked.length === 0,
+  `found: ${leaked.join(', ')}`);
+
+check('no row begins with a SQL comment marker',
+  !parsed.some(r => (r[0] ?? '').startsWith('--')));
+
+check('header row is the very first line, no preamble',
+  header[0] === 'survey_id', JSON.stringify(header[0]));
 
 console.log('');
 console.log(`=== ${failures === 0 ? 'ALL PASSED' : `${failures} FAILURE(S)`} ===`);

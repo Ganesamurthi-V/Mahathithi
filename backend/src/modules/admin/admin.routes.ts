@@ -984,7 +984,16 @@ function csvWorkingHours(value: any): string {
       switch (d?.type) {
         case 'open_all_day': return `${day}: Open all day`;
         case 'closed':       return `${day}: Closed`;
-        case 'hours':        return `${day}: ${d.from ?? '?'}-${d.to ?? '?'}`;
+        case 'hours': {
+          // The mobile form stores from/to as "" — not null — when the operator
+          // picks Custom Hours and never fills the times in, so `??` does not
+          // catch it and the cell rendered as a meaningless bare "-". Live data
+          // does contain this case.
+          const from = String(d.from ?? '').trim();
+          const to = String(d.to ?? '').trim();
+          if (!from && !to) return `${day}: Hours not specified`;
+          return `${day}: ${from || '?'}-${to || '?'}`;
+        }
         default:             return `${day}: ${d?.type ?? 'unspecified'}`;
       }
     })
@@ -1040,7 +1049,9 @@ export function generateExportCSV(surveys: any[], mediaBySurvey: Map<string, any
     { header: 'email',                     value: s => s.email },
 
     { header: 'district',                  value: s => s.district },
+    { header: 'taluka',                    value: s => s.taluka },
     { header: 'city',                      value: s => s.city },
+    { header: 'village',                   value: s => s.village },
     { header: 'pin_code',                  value: s => s.pinCode },
     { header: 'business_address',          value: s => s.businessAddress },
 
@@ -1055,6 +1066,7 @@ export function generateExportCSV(surveys: any[], mediaBySurvey: Map<string, any
     { header: 'aadhar_number',             value: s => s.aadharNumber },
     { header: 'udyam_aadhar_reg_no',       value: s => s.udyamAadharRegNo },
     { header: 'pan_number',                value: s => s.panNumber },
+    { header: 'gst_number',                value: s => s.gstNumber },
 
     { header: 'description',               value: s => s.description },
     { header: 'accommodation_facilities',  value: s => csvList(s.accommodationFacilities) },
