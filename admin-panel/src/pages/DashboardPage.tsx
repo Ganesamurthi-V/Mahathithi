@@ -46,7 +46,7 @@ export default function DashboardPage() {
               under the operator with no explanation. */}
           {isRefreshing && <InlineLoader label="Refreshing…" />}
           <button className="btn btn-primary" onClick={() => navigate('/export')}>
-            📥 Export Surveys (SQL)
+            📥 Export Surveys
           </button>
         </div>
       </div>

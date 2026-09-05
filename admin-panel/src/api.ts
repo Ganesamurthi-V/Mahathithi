@@ -219,9 +219,18 @@ export const getMediaBySurvey = (surveyId: string) => api.get(`/media/survey/${s
 
 // Export
 export const getCompletedSurveys = () => api.get('/admin/export/surveys/list');
-export const exportSurveysSQL = (ids?: string[]) =>
+export type ExportFormat = 'sql' | 'csv';
+
+/**
+ * Download a survey export.
+ *
+ * `sql` is the migration artefact for the client's listing schema; `csv` is one
+ * flat row per survey for reading in a spreadsheet. Both mark the surveys as
+ * exported server-side, but only once the bytes have actually been delivered.
+ */
+export const exportSurveys = (ids?: string[], format: ExportFormat = 'sql') =>
   ids && ids.length > 0
-    ? api.post('/admin/export/surveys', { ids }, { responseType: 'blob' })
-    : api.get('/admin/export/surveys', { responseType: 'blob' });
+    ? api.post('/admin/export/surveys', { ids, format }, { responseType: 'blob' })
+    : api.get('/admin/export/surveys', { params: { format }, responseType: 'blob' });
 
 export default api;

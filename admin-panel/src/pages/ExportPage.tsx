@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getCompletedSurveys, exportSurveysSQL } from '../api';
+import { getCompletedSurveys, exportSurveys, type ExportFormat } from '../api';
 import {
   LoadingButton,
   TableSkeletonWithHeader,
@@ -17,7 +17,11 @@ export default function ExportPage() {
 
   const surveys: any[] = data?.data?.data || [];
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [exporting, setExporting] = useState(false);
+  // Which format is currently downloading, or null. Tracked as the format rather
+  // than a boolean so only the button that was clicked shows a spinner, while both
+  // are still disabled — two exports at once would mark the same rows twice.
+  const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
+  const exporting = exportingFormat !== null;
   // Progress/result text so the operator knows the size of the job and when it
   // finished, instead of just watching a spinner.
   const [exportNote, setExportNote] = useState('');
@@ -44,7 +48,7 @@ export default function ExportPage() {
   const selectNew = () => setSelected(new Set(surveys.filter((s: any) => !s.isExported).map((s: any) => s.id)));
 
   /**
-   * Generate and download the SQL.
+   * Generate and download an export in the requested format.
    *
    * This one cannot be made truly fire-and-forget: the result IS a file the
    * browser has to receive, so the request must stay open until the bytes arrive.
@@ -56,25 +60,30 @@ export default function ExportPage() {
    * storage and a "your export is ready" notification. That is a larger change
    * and worth doing only if exports grow past a few thousand surveys.
    */
-  const handleExport = () => {
+  const handleExport = (format: ExportFormat) => {
     if (selected.size === 0) { alert('Select at least one survey to export.'); return; }
 
     const count = selected.size;
-    setExporting(true);
-    setExportNote(`Preparing ${count} survey${count === 1 ? '' : 's'}…`);
+    const label = format.toUpperCase();
+    setExportingFormat(format);
+    setExportNote(`Preparing ${count} survey${count === 1 ? '' : 's'} as ${label}…`);
 
     // Deliberately not awaited: the click handler returns immediately so the
     // browser never treats the tab as busy, and the promise settles on its own.
-    exportSurveysSQL([...selected])
+    exportSurveys([...selected], format)
       .then((res) => {
-        const blob = new Blob([res.data], { type: 'application/sql' });
+        // The blob's type must match the format, or the browser can rewrite the
+        // extension on save — a CSV served as application/sql lands as .sql and
+        // will not open in Excel by double-click.
+        const mime = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/sql';
+        const blob = new Blob([res.data], { type: mime });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `mahaatithi_export_${new Date().toISOString().slice(0, 10)}.sql`;
+        a.download = `mahaatithi_export_${new Date().toISOString().slice(0, 10)}.${format}`;
         a.click();
         window.URL.revokeObjectURL(url);
-        setExportNote(`Downloaded ${count} survey${count === 1 ? '' : 's'}.`);
+        setExportNote(`Downloaded ${count} survey${count === 1 ? '' : 's'} as ${label}.`);
         // The server marked these exported and broadcast the change, so other
         // sessions update too; this refreshes ours without waiting for the event.
         queryClient.invalidateQueries({ queryKey: ['export-surveys-list'] });
@@ -102,7 +111,7 @@ export default function ExportPage() {
         alert('Export failed: ' + message);
       })
       .finally(() => {
-        setExporting(false);
+        setExportingFormat(null);
         window.setTimeout(() => setExportNote(''), 4000);
       });
   };
@@ -119,7 +128,7 @@ export default function ExportPage() {
         <div className="page-header">
           <div>
             <h2>Export Surveys</h2>
-            <p>Select surveys to export as SQL for the client's listing platform</p>
+            <p>Export as SQL for the client's listing platform, or as CSV for spreadsheets</p>
           </div>
         </div>
         <TableSkeletonWithHeader
@@ -138,18 +147,32 @@ export default function ExportPage() {
           <h2>Export Surveys</h2>
           <p>Select surveys to export as SQL for the client's listing platform</p>
         </div>
-        {/* Generating the SQL walks every selected survey plus its media, so on a
-            large selection this is genuinely slow — the busy state matters here. */}
-        <LoadingButton
-          variant="primary"
-          loading={exporting}
-          loadingText="Generating SQL…"
-          disabled={selected.size === 0}
-          onClick={handleExport}
-          style={{ whiteSpace: 'nowrap' }}
-        >
-          📥 Export Selected ({selected.size})
-        </LoadingButton>
+        {/* Generating either format walks every selected survey plus its media, so
+            on a large selection this is genuinely slow — the busy state matters.
+            Both buttons disable while one runs: a second export would re-mark the
+            same rows and write a duplicate audit entry. */}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <LoadingButton
+            variant="primary"
+            loading={exportingFormat === 'sql'}
+            loadingText="Generating SQL…"
+            disabled={selected.size === 0 || exporting}
+            onClick={() => handleExport('sql')}
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            📥 Export SQL ({selected.size})
+          </LoadingButton>
+          <LoadingButton
+            variant="secondary"
+            loading={exportingFormat === 'csv'}
+            loadingText="Generating CSV…"
+            disabled={selected.size === 0 || exporting}
+            onClick={() => handleExport('csv')}
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            📄 Export CSV ({selected.size})
+          </LoadingButton>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap', alignItems: 'center' }}>

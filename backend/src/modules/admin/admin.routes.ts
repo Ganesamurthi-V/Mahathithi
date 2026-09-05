@@ -623,6 +623,32 @@ router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Respon
 });
 
 /**
+ * The two shapes a survey export can take.
+ *
+ *   sql — the migration artefact for the client's listing.* schema. Lossless with
+ *         respect to what that schema accepts, and the only format that carries
+ *         the nested working_hours / accommodations_rooms inserts.
+ *   csv — one row per survey, for reading in a spreadsheet. Structurally flat, so
+ *         the JSON columns are summarised rather than reproduced; the SQL export
+ *         stays the source of truth for a full migration.
+ */
+type ExportFormat = 'sql' | 'csv';
+
+/**
+ * Resolve the requested format, rejecting anything unrecognised.
+ *
+ * Deliberately NOT a silent fallback to 'sql'. A request for `?format=xlsx` that
+ * quietly returns SQL hands the operator a file whose contents do not match what
+ * they asked for, and the mismatch only surfaces when the import fails much later.
+ */
+function parseExportFormat(raw: unknown): ExportFormat {
+  if (raw === undefined || raw === null || raw === '') return 'sql';
+  const value = String(raw).toLowerCase();
+  if (value === 'sql' || value === 'csv') return value;
+  throw new ValidationError(`Unsupported export format "${raw}". Use "sql" or "csv".`);
+}
+
+/**
  * Shared export handler for both the POST (selected ids) and GET (everything)
  * routes.
  *
@@ -656,7 +682,8 @@ async function handleSurveyExport(
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction,
-  ids?: string[]
+  ids?: string[],
+  format: ExportFormat = 'sql'
 ) {
   try {
     const where: any = { isCompleted: true, isDraft: false };
@@ -680,7 +707,10 @@ async function handleSurveyExport(
     }
 
     const mediaBySurvey = await fetchExportMedia(surveys.map(s => s.id));
-    const sql = generateExportSQL(surveys, mediaBySurvey);
+    const body =
+      format === 'csv'
+        ? generateExportCSV(surveys, mediaBySurvey)
+        : generateExportSQL(surveys, mediaBySurvey);
 
     const exportedIds = surveys.map(s => s.id);
     const exportedBy = req.enumerator?.id || null;
@@ -715,7 +745,11 @@ async function handleSurveyExport(
                 details: {
                   count: exportedIds.length,
                   scope: ids && ids.length > 0 ? 'selected' : 'all',
-                  bytes: Buffer.byteLength(sql, 'utf8'),
+                  // Which format left the building matters for an audit trail: a
+                  // CSV is a readable copy of the data, an SQL file is a migration
+                  // artefact. "Who took the data" is only half the answer.
+                  format,
+                  bytes: Buffer.byteLength(body, 'utf8'),
                 },
               },
             });
@@ -730,26 +764,49 @@ async function handleSurveyExport(
       })();
     });
 
-    res.setHeader('Content-Type', 'application/sql');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="mahaatithi_to_listing_export_${new Date().toISOString().slice(0, 10)}.sql"`
-    );
-    res.send(sql);
+    const stamp = new Date().toISOString().slice(0, 10);
+
+    if (format === 'csv') {
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="mahaatithi_surveys_${stamp}.csv"`
+      );
+    } else {
+      res.setHeader('Content-Type', 'application/sql');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="mahaatithi_to_listing_export_${stamp}.sql"`
+      );
+    }
+
+    res.send(body);
   } catch (error) {
     next(error);
   }
 }
 
 // POST: export specific surveys by id (or everything, if `ids` is omitted).
+// Format may arrive in the body or the query string; the body wins.
 router.post('/export/surveys', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  const { ids } = req.body ?? {};
-  await handleSurveyExport(req, res, next, Array.isArray(ids) ? ids : undefined);
+  try {
+    const { ids, format } = req.body ?? {};
+    const resolved = parseExportFormat(format ?? req.query.format);
+    await handleSurveyExport(req, res, next, Array.isArray(ids) ? ids : undefined, resolved);
+  } catch (error) {
+    // parseExportFormat throws before the handler's own try block is entered, so
+    // an invalid format would otherwise escape as an unhandled rejection.
+    next(error);
+  }
 });
 
 // GET: export every completed survey.
 router.get('/export/surveys', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  await handleSurveyExport(req, res, next);
+  try {
+    await handleSurveyExport(req, res, next, undefined, parseExportFormat(req.query.format));
+  } catch (error) {
+    next(error);
+  }
 });
 
 // ============================================================================
@@ -858,6 +915,179 @@ async function fetchExportMedia(surveyIds: string[]): Promise<Map<string, any[]>
     else byId.set(r.surveyId, [r]);
   }
   return byId;
+}
+
+// ============================================================================
+// CSV EXPORT
+// ============================================================================
+
+/**
+ * Escape one value into a CSV field, per RFC 4180.
+ *
+ * Quotes only when it is actually needed (the value contains a comma, a quote, or
+ * a newline), which keeps the file readable in a text editor, and doubles any
+ * embedded quote.
+ *
+ * SPREADSHEET FORMULA GUARD
+ * A cell whose text begins with = + - @ or a control character is evaluated as a
+ * formula by Excel and Google Sheets when the file is opened. Business names,
+ * addresses and descriptions here are free text typed by field enumerators, so
+ * that is a live code-execution path into whoever opens the export, not a
+ * theoretical one. Prefixing with an apostrophe forces the cell to text.
+ *
+ * This also fixes a display bug rather than only preventing one: mobile numbers
+ * stored as "+91..." begin with '+', so without the guard Excel renders them as
+ * #NAME? instead of the number.
+ */
+function csvCell(value: any): string {
+  if (value === null || value === undefined) return '';
+
+  let text: string;
+  if (value instanceof Date) text = value.toISOString();
+  else if (typeof value === 'boolean') text = value ? 'TRUE' : 'FALSE';
+  else text = String(value);
+
+  if (text === '') return '';
+
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+
+  if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+/** Render a Postgres text[] or a JSON array of strings as a single readable cell. */
+function csvList(value: any): string {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) {
+    return value
+      .map(v => (v === null || v === undefined ? '' : String(v).trim()))
+      .filter(Boolean)
+      .join(' | ');
+  }
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * Flatten workingHours into one cell.
+ *
+ * Shape written by the mobile form is { day, type: open_all_day|closed|hours,
+ * from?, to? }. A CSV has nowhere to put seven nested rows, so this is a
+ * deliberately lossy human-readable summary — the SQL export remains the format
+ * that reproduces listing.working_hours faithfully.
+ */
+function csvWorkingHours(value: any): string {
+  if (!Array.isArray(value) || value.length === 0) return '';
+  return value
+    .map((d: any) => {
+      const day = d?.day ?? '?';
+      switch (d?.type) {
+        case 'open_all_day': return `${day}: Open all day`;
+        case 'closed':       return `${day}: Closed`;
+        case 'hours':        return `${day}: ${d.from ?? '?'}-${d.to ?? '?'}`;
+        default:             return `${day}: ${d?.type ?? 'unspecified'}`;
+      }
+    })
+    .join('; ');
+}
+
+/** Flatten the rooms array into one cell. Same lossy-summary reasoning as above. */
+function csvRooms(value: any): string {
+  if (!Array.isArray(value) || value.length === 0) return '';
+  return value
+    .map((r: any) => {
+      const name = r?.name || r?.type || 'Room';
+      const bits: string[] = [];
+      if (r?.type && r?.name) bits.push(String(r.type));
+      if (r?.capacity !== undefined && r?.capacity !== null && r.capacity !== '') bits.push(`cap ${r.capacity}`);
+      if (r?.price !== undefined && r?.price !== null && r.price !== '') bits.push(`price ${r.price}`);
+      return bits.length > 0 ? `${name} (${bits.join(', ')})` : String(name);
+    })
+    .join('; ');
+}
+
+/**
+ * One row per survey, for opening in a spreadsheet.
+ *
+ * Two things worth knowing about the output:
+ *
+ * 1. It starts with a UTF-8 BOM. Excel on Windows otherwise decodes the file as
+ *    the system codepage, which mangles every non-ASCII value — and this dataset
+ *    contains plenty ("Café", "Home Décor", Marathi place names). The BOM is what
+ *    makes Excel pick UTF-8; it is invisible in the cell.
+ *
+ * 2. aadhar_number is exported in full, unmasked, as explicitly requested. It is
+ *    stored plaintext in the database, so this is a copy rather than a new
+ *    exposure — but note the SQL export omits the column entirely, so a CSV is
+ *    the one artefact carrying Aadhaar numbers out of the system.
+ */
+// Exported for direct testing: this is pure string building with no request or DB
+// dependency, so it can be verified against nasty inputs (embedded quotes,
+// newlines, formula prefixes, unicode) without standing up a server or mutating
+// export state in the database.
+export function generateExportCSV(surveys: any[], mediaBySurvey: Map<string, any[]> = new Map()): string {
+  const columns: { header: string; value: (s: any, m: SurveyMediaUrls) => any }[] = [
+    { header: 'survey_id',                 value: s => s.id },
+    { header: 'created_at',                value: s => s.createdAt },
+    { header: 'completed_at',              value: s => s.completedAt },
+
+    { header: 'business_name',             value: s => s.businessName },
+    { header: 'owner_name',                value: s => s.ownerName },
+    { header: 'business_category',         value: s => s.businessCategory },
+    { header: 'sub_categories',            value: s => csvList(s.subCategories) },
+
+    { header: 'mobile_number',             value: s => s.mobileNumber },
+    { header: 'email',                     value: s => s.email },
+
+    { header: 'district',                  value: s => s.district },
+    { header: 'city',                      value: s => s.city },
+    { header: 'pin_code',                  value: s => s.pinCode },
+    { header: 'business_address',          value: s => s.businessAddress },
+
+    { header: 'latitude',                  value: s => s.latitude },
+    { header: 'longitude',                 value: s => s.longitude },
+    { header: 'gps_accuracy',              value: s => s.gpsAccuracy },
+    { header: 'digipin',                   value: s => s.digipin },
+    { header: 'nearest_police_station',    value: s => s.nearestPoliceStation },
+    { header: 'nearest_healthcare_center', value: s => s.nearestHealthcareCenter },
+
+    // Full value, unmasked, by explicit instruction. See the note above.
+    { header: 'aadhar_number',             value: s => s.aadharNumber },
+    { header: 'udyam_aadhar_reg_no',       value: s => s.udyamAadharRegNo },
+    { header: 'pan_number',                value: s => s.panNumber },
+
+    { header: 'description',               value: s => s.description },
+    { header: 'accommodation_facilities',  value: s => csvList(s.accommodationFacilities) },
+    { header: 'accommodation_policies',    value: s => s.accommodationPolicies },
+    { header: 'working_hours',             value: s => csvWorkingHours(s.workingHours) },
+    { header: 'rooms_count',               value: s => (Array.isArray(s.rooms) ? s.rooms.length : 0) },
+    { header: 'rooms',                     value: s => csvRooms(s.rooms) },
+    { header: 'about_business',            value: s => s.aboutBusiness },
+
+    { header: 'agreed_to_terms',           value: s => s.agreedToTerms },
+    { header: 'declared_info_correct',     value: s => s.declaredInfoCorrect },
+    { header: 'acknowledged_dot_liability',value: s => s.acknowledgedDotLiability },
+
+    // Permanent (non-presigned) object URLs, same mapping the SQL export uses, so
+    // the two formats cannot disagree about which file is which.
+    { header: 'display_image_url',         value: (_s, m) => m.displayImageUrl },
+    { header: 'gst_document_url',          value: (_s, m) => m.gstCertUrl },
+    { header: 'pan_card_document_url',     value: (_s, m) => m.panCardUrl },
+    { header: 'establishment_cert_url',    value: (_s, m) => m.establishmentCertUrl },
+
+    { header: 'is_synced',                 value: s => s.isSynced },
+    { header: 'synced_at',                 value: s => s.syncedAt },
+  ];
+
+  // CRLF per RFC 4180. Excel accepts LF too, but some older importers do not.
+  const rows: string[] = [columns.map(c => c.header).join(',')];
+
+  for (const s of surveys) {
+    const media = mapSurveyMedia(mediaBySurvey.get(s.id) || []);
+    rows.push(columns.map(c => csvCell(c.value(s, media))).join(','));
+  }
+
+  return '\uFEFF' + rows.join('\r\n') + '\r\n';
 }
 
 function generateExportSQL(surveys: any[], mediaBySurvey: Map<string, any[]> = new Map()): string {
