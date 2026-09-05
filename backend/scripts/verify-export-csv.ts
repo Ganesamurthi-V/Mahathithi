@@ -38,7 +38,10 @@ const surveys: any[] = [
     mobileNumber: '+919876543210',                            // leading +
     email: 'tony@example.com',
     district: 'Sindhudurg',
-    taluka: 'Malvan',
+    // Deliberately different from `city` below. If taluka reused "Malvan" then the
+    // "appears nowhere in the output" assertion could never fail, because city
+    // legitimately puts that same string in the file.
+    taluka: 'Kudal',
     city: 'Malvan',
     village: 'Tarkarli',
     pinCode: '416606',
@@ -195,18 +198,20 @@ check('blank custom hours do not render as a bare "-"',
   !/:\s*-\s*(;|$)/.test(row1[col('working_hours')]),
   JSON.stringify(row1[col('working_hours')]));
 
-check('taluka is exported',
-  row1[col('taluka')] === 'Malvan',
-  JSON.stringify(row1[col('taluka')]));
-
-// village and gst_number were removed on request. The fixture above still SETS
-// both, so these assertions prove the columns are deliberately excluded rather
-// than merely absent from the test data — which is what would silently regress if
-// someone re-added them to the column list.
+// taluka, village and gst_number were all removed on request. The fixture above
+// still SETS all three, so these assertions prove the columns are deliberately
+// excluded rather than merely absent from the test data — the latter would pass
+// whether or not the columns existed, and would not catch someone re-adding them.
+check('taluka column is not present', !header.includes('taluka'));
 check('village column is not present', !header.includes('village'));
 check('gst_number column is not present', !header.includes('gst_number'));
 check('the removed values appear nowhere in the output',
-  !csv.includes('Tarkarli') && !csv.includes('27ABCDE1234F1Z5'));
+  !csv.includes('Kudal') && !csv.includes('Tarkarli') && !csv.includes('27ABCDE1234F1Z5'));
+
+// District and city are the remaining location fields and must survive.
+check('district and city are still exported',
+  row1[col('district')] === 'Sindhudurg' && row1[col('city')] === 'Malvan',
+  `district=${row1[col('district')]} city=${row1[col('city')]}`);
 
 // gst_document_url is a different thing — the uploaded GST certificate file link,
 // not the GST number — and stays.

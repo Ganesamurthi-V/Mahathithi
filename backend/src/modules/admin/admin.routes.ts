@@ -1049,7 +1049,6 @@ export function generateExportCSV(surveys: any[], mediaBySurvey: Map<string, any
     { header: 'email',                     value: s => s.email },
 
     { header: 'district',                  value: s => s.district },
-    { header: 'taluka',                    value: s => s.taluka },
     { header: 'city',                      value: s => s.city },
     { header: 'pin_code',                  value: s => s.pinCode },
     { header: 'business_address',          value: s => s.businessAddress },
