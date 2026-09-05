@@ -195,11 +195,23 @@ check('blank custom hours do not render as a bare "-"',
   !/:\s*-\s*(;|$)/.test(row1[col('working_hours')]),
   JSON.stringify(row1[col('working_hours')]));
 
-check('taluka, village and gst_number are exported',
-  row1[col('taluka')] === 'Malvan' &&
-  row1[col('village')] === 'Tarkarli' &&
-  row1[col('gst_number')] === '27ABCDE1234F1Z5',
-  `taluka=${row1[col('taluka')]} village=${row1[col('village')]} gst=${row1[col('gst_number')]}`);
+check('taluka is exported',
+  row1[col('taluka')] === 'Malvan',
+  JSON.stringify(row1[col('taluka')]));
+
+// village and gst_number were removed on request. The fixture above still SETS
+// both, so these assertions prove the columns are deliberately excluded rather
+// than merely absent from the test data — which is what would silently regress if
+// someone re-added them to the column list.
+check('village column is not present', !header.includes('village'));
+check('gst_number column is not present', !header.includes('gst_number'));
+check('the removed values appear nowhere in the output',
+  !csv.includes('Tarkarli') && !csv.includes('27ABCDE1234F1Z5'));
+
+// gst_document_url is a different thing — the uploaded GST certificate file link,
+// not the GST number — and stays.
+check('gst_document_url (the certificate link) is retained',
+  header.includes('gst_document_url'));
 
 check('rooms flattened readably',
   row1[col('rooms')] === 'Deluxe (Double, cap 2, price 2500); Dorm (Dormitory, cap 8, price 600)',

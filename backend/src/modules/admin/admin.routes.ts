@@ -1051,7 +1051,6 @@ export function generateExportCSV(surveys: any[], mediaBySurvey: Map<string, any
     { header: 'district',                  value: s => s.district },
     { header: 'taluka',                    value: s => s.taluka },
     { header: 'city',                      value: s => s.city },
-    { header: 'village',                   value: s => s.village },
     { header: 'pin_code',                  value: s => s.pinCode },
     { header: 'business_address',          value: s => s.businessAddress },
 
@@ -1066,7 +1065,6 @@ export function generateExportCSV(surveys: any[], mediaBySurvey: Map<string, any
     { header: 'aadhar_number',             value: s => s.aadharNumber },
     { header: 'udyam_aadhar_reg_no',       value: s => s.udyamAadharRegNo },
     { header: 'pan_number',                value: s => s.panNumber },
-    { header: 'gst_number',                value: s => s.gstNumber },
 
     { header: 'description',               value: s => s.description },
     { header: 'accommodation_facilities',  value: s => csvList(s.accommodationFacilities) },
