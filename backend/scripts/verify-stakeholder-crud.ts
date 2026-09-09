@@ -75,12 +75,6 @@ async function main() {
       paidupCapital: 100000.25,
       priorityWeight: 7.5,
 
-      fuzzySimilarityScore: 0.9137,
-      crossSourceMatch: 'MCA+Udyam',
-      humanReviewRequired: 'No',
-      dedupMatchStatus: 'unique',
-      sourceLineageNotes: 'Created by verify-stakeholder-crud.ts',
-
       latitude: 16.0594,
       longitude: 73.4629,
       digipin: '4T32TTT8M8',
@@ -111,7 +105,9 @@ async function main() {
     // ---- every submitted field round-trips ------------------------------
     // Compares against the DATABASE row, not the response body: a field could be
     // echoed back from the request while never being persisted.
-    console.log('\n=== all 34 fields persisted ===');
+    // Count comes from the payload rather than being hardcoded, so this heading
+    // cannot drift out of date when fields are added or removed.
+    console.log(`\n=== all ${Object.keys(FULL_PAYLOAD).length} submitted fields persisted ===`);
     const mismatches: string[] = [];
     for (const [key, sent] of Object.entries(FULL_PAYLOAD)) {
       const stored = (inDb as any)?.[key];
@@ -124,20 +120,34 @@ async function main() {
       mismatches.length === 0,
       mismatches.join(' | '));
 
-    // Every column in the table is either submitted above or server-owned. This
-    // fails if a migration adds a column and the create schema is not updated.
+    // Every column in the table must be accounted for: submitted above, owned by
+    // the server, or deliberately not exposed. This fails if a migration adds a
+    // column and nobody decides which bucket it belongs in.
     const SERVER_OWNED = [
       'id', 'primaryKeyId', 'createdAt', 'updatedAt',
       'status', 'lockedById', 'lockedAt', 'dataSource',
     ];
+    // Removed from both forms and from createStakeholderSchema on request. Listed
+    // explicitly rather than just omitted, so this stays a deliberate exclusion
+    // instead of looking like an oversight.
+    const NOT_EXPOSED = [
+      'fuzzySimilarityScore', 'crossSourceMatch', 'humanReviewRequired',
+      'dedupMatchStatus', 'sourceLineageNotes',
+    ];
     const allColumns = Object.keys(inDb as object);
     const uncovered = allColumns.filter(
-      c => !(c in FULL_PAYLOAD) && !SERVER_OWNED.includes(c)
+      c => !(c in FULL_PAYLOAD) && !SERVER_OWNED.includes(c) && !NOT_EXPOSED.includes(c)
     );
-    check('no stakeholders column is unreachable from the create form',
+    check('every stakeholders column is accounted for',
       uncovered.length === 0,
-      `uncovered: ${uncovered.join(', ')}`);
-    console.log(`        (${allColumns.length} columns total = ${Object.keys(FULL_PAYLOAD).length} settable + ${SERVER_OWNED.length} server-owned)`);
+      `unaccounted: ${uncovered.join(', ')}`);
+    console.log(`        (${allColumns.length} columns = ${Object.keys(FULL_PAYLOAD).length} settable + ${SERVER_OWNED.length} server-owned + ${NOT_EXPOSED.length} not exposed)`);
+
+    // The dedup columns must be absent from a manual row, not silently defaulted.
+    const dedupValues = NOT_EXPOSED.map(k => (inDb as any)?.[k]);
+    check('dedup/lineage columns left null on a manually created row',
+      dedupValues.every(v => v === null || v === undefined),
+      NOT_EXPOSED.map((k, i) => `${k}=${JSON.stringify(dedupValues[i])}`).join(', '));
 
     check('float precision preserved on capital figures',
       inDb?.authorizedCapital === 500000.5 && inDb?.paidupCapital === 100000.25,
@@ -202,6 +212,21 @@ async function main() {
       check('dataSource cannot be spoofed', false, 'request succeeded');
     } catch (e: any) {
       check('dataSource cannot be spoofed', e.response?.status === 400, `status ${e.response?.status}`);
+    }
+
+    // The dedup/lineage fields were removed from both forms AND the schema. If the
+    // schema still took them, the API and the UI would disagree — an endpoint
+    // accepting fields no client offers.
+    try {
+      await axios.post(
+        `${BASE}/api/stakeholders`,
+        { companyNameStandardized: 'ZZ dedup probe', dedupMatchStatus: 'unique' },
+        { headers }
+      );
+      check('removed dedup/lineage field rejected', false, 'request succeeded');
+    } catch (e: any) {
+      check('removed dedup/lineage field rejected',
+        e.response?.status === 400, `status ${e.response?.status}`);
     }
 
     // A numeric column must reject text rather than silently storing NULL.

@@ -331,17 +331,10 @@ const MOBILE_FIELD_GROUPS: { title: string; expanded: boolean; fields: MobileFie
       { key: 'priorityWeight', label: 'Priority Weight', num: true },
     ],
   },
-  {
-    title: 'Dedup & Lineage',
-    expanded: false,
-    fields: [
-      { key: 'fuzzySimilarityScore', label: 'Fuzzy Similarity Score', num: true },
-      { key: 'crossSourceMatch', label: 'Cross Source Match', maxLength: 200 },
-      { key: 'humanReviewRequired', label: 'Human Review Required', maxLength: 50 },
-      { key: 'dedupMatchStatus', label: 'Dedup Match Status', maxLength: 100 },
-      { key: 'sourceLineageNotes', label: 'Source Lineage Notes', maxLength: 1000, multiline: true },
-    ],
-  },
+  // NOTE: a "Dedup & Lineage" group (fuzzySimilarityScore, crossSourceMatch,
+  // humanReviewRequired, dedupMatchStatus, sourceLineageNotes) was removed on
+  // request. Those are outputs of the import's record-matching pipeline rather
+  // than facts about a business, and the server no longer accepts them either.
   {
     title: 'Location',
     expanded: false,

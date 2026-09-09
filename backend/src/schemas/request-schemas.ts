@@ -300,22 +300,14 @@ export const createStakeholderSchema = z.object({
   // ── Ranking ──
   priorityWeight: optNumber(),
 
-  // ── Dedup / lineage ──
-  // These are outputs of the import's matching pipeline rather than facts about
-  // the business. Exposed because every column was asked for, but they are grouped
-  // separately in both clients so it is clear they are not ordinary inputs.
-  fuzzySimilarityScore: optNumber(),
-  crossSourceMatch: optText(200),
-  humanReviewRequired: optText(50),
-  dedupMatchStatus: optText(100),
-  sourceLineageNotes: optText(1000),
-
   // ── Location ──
   latitude: latitude.optional(),
   longitude: longitude.optional(),
   digipin: optText(10),
 
-  // DELIBERATELY ABSENT, and why — these 8 stay server-owned:
+  // DELIBERATELY ABSENT — 13 of the table's 42 columns are not client-settable.
+  //
+  // Server-owned (8):
   //   id, primaryKeyId  assigned server-side; primaryKeyId is a unique Int taken
   //                     from MAX+1 and a client value could collide with a future
   //                     import row
@@ -327,6 +319,15 @@ export const createStakeholderSchema = z.object({
   //                     separates hand-entered rows from MCA/Udyam-imported ones;
   //                     if it were settable, a manual record could claim to be
   //                     registry-sourced and there would be no way to tell.
+  //
+  // Dedup / lineage (5) — removed on request:
+  //   fuzzySimilarityScore, crossSourceMatch, humanReviewRequired,
+  //   dedupMatchStatus, sourceLineageNotes
+  //     Outputs of the import's record-matching pipeline, not facts about the
+  //     business. They were briefly accepted here; dropping them from the schema as
+  //     well as the forms keeps the API and the UI agreed, rather than leaving an
+  //     endpoint that quietly takes fields no client offers. The import still
+  //     populates them for its own rows.
 }).strict();
 
 // ────────────────────────────────────────────────────────────────────────────
