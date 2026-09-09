@@ -209,6 +209,9 @@ npx prisma db execute
 npx tsx scripts/import-excel.ts
 npx tsx scripts/truncate.ts
 
+railway service source connect --repo Ganesamurthi-V/Mahathithi --branch main --service Mahathithi
+
+
 cd "C:\Gym Management system\gymflow\gymflow-mobile\android"
 .\gradlew clean
 .\gradlew assembleRelease 
