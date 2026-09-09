@@ -48,6 +48,23 @@ const optText = (max: number) =>
 /** UUID string (stakeholder IDs, survey IDs, etc.) */
 const uuid = z.string().uuid();
 
+/**
+ * Optional finite number, tolerating the shapes a form and SQLite actually send.
+ *
+ * Mirrors optText's null -> undefined normalisation so the inferred output type
+ * stays `number | undefined`. Also accepts '' because an untouched numeric input
+ * in both clients submits an empty string, and rejecting that would make every
+ * blank optional number a 400.
+ *
+ * `.finite()` matters: z.number() alone accepts NaN and Infinity, and either would
+ * be written straight into a double precision column.
+ */
+const optNumber = () =>
+  z
+    .union([z.number().finite(), z.literal(''), z.null()])
+    .optional()
+    .transform((v) => (v === '' || v === null ? undefined : v));
+
 const latitude = z.number().min(-90).max(90);
 const longitude = z.number().min(-180).max(180);
 
@@ -236,27 +253,80 @@ export const updateStakeholderSchema = z.object({
  * colliding with a future import row.
  */
 export const createStakeholderSchema = z.object({
+  // ── Identity ──
   // NOT text(500): that is z.string().trim().max(n), which accepts ''. A nameless
   // stakeholder renders as '—' in every list in both clients and is effectively
   // unfindable afterwards, so the one mandatory field is required for real.
   companyNameStandardized: z.string().trim().min(1, 'Organization name is required').max(500),
   companyNameOriginal: optText(500),
-  district: optText(200),
+  uin: optText(100),
+
+  // ── Registration numbers ──
+  cinNumber: optText(50),
+  gstNumber: optText(20),
+  tinNumber: optText(50),
+
+  // ── Address ──
+  fullAddressRaw: optText(1000),
   addressLine1: optText(500),
   addressLine2: optText(500),
-  fullAddressRaw: optText(1000),
   city: optText(200),
   taluka: optText(200),
   village: optText(200),
+  district: optText(200),
   state: optText(200),
   pinCode: optText(10),
-  category: optText(200),
-  gstNumber: optText(20),
+
+  // ── Classification ──
   nicCode: optText(20),
   nicDescription: optText(500),
+  category: optText(200),
+  companyClass: optText(100),
+  companyStatus: optText(100),
+  companyCategory: optText(100),
+  listingStatus: optText(100),
+
+  // ── Financials ──
+  // Plain numbers, not currency-parsed: the import writes raw doubles and this
+  // must round-trip identically or a manual row would sort differently.
+  authorizedCapital: optNumber(),
+  paidupCapital: optNumber(),
+
+  // registration_date is TEXT in the database, not a date column — the import
+  // stores whatever format the source sheet used. Kept as text so a manual entry
+  // matches imported rows rather than silently normalising to ISO.
+  registrationDate: optText(50),
+
+  // ── Ranking ──
+  priorityWeight: optNumber(),
+
+  // ── Dedup / lineage ──
+  // These are outputs of the import's matching pipeline rather than facts about
+  // the business. Exposed because every column was asked for, but they are grouped
+  // separately in both clients so it is clear they are not ordinary inputs.
+  fuzzySimilarityScore: optNumber(),
+  crossSourceMatch: optText(200),
+  humanReviewRequired: optText(50),
+  dedupMatchStatus: optText(100),
+  sourceLineageNotes: optText(1000),
+
+  // ── Location ──
   latitude: latitude.optional(),
   longitude: longitude.optional(),
   digipin: optText(10),
+
+  // DELIBERATELY ABSENT, and why — these 8 stay server-owned:
+  //   id, primaryKeyId  assigned server-side; primaryKeyId is a unique Int taken
+  //                     from MAX+1 and a client value could collide with a future
+  //                     import row
+  //   createdAt/updatedAt  timestamps
+  //   status            new records always start OPEN; changing it is the existing
+  //                     admin-only PATCH /:id/status
+  //   lockedById/lockedAt  owned by the lock/unlock workflow
+  //   dataSource        forced to 'MANUAL'. This is the provenance marker that
+  //                     separates hand-entered rows from MCA/Udyam-imported ones;
+  //                     if it were settable, a manual record could claim to be
+  //                     registry-sourced and there would be no way to tell.
 }).strict();
 
 // ────────────────────────────────────────────────────────────────────────────

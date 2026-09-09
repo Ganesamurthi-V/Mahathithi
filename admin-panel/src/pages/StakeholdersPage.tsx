@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
+﻿import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey } from '../api';
 import { getDigiPin } from '../utils/digipin';
@@ -18,23 +18,23 @@ const getStatusBadge = (status: string) => {
   return map[status] || 'badge-pending';
 };
 
-// PERF: memoized table row — only re-renders when its own stakeholder/handler
+// PERF: memoized table row â€” only re-renders when its own stakeholder/handler
 // change, so typing in the filter inputs no longer re-renders every row.
 const StakeholderRow = memo(function StakeholderRow({ s, onSelect }: { s: any; onSelect: (s: any) => void }) {
   return (
     <tr style={{ cursor: 'pointer' }} onClick={() => onSelect(s)}>
       <td style={{ fontWeight: '600', color: 'var(--text-primary)', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {s.companyNameStandardized || s.companyNameOriginal || '—'}
+        {s.companyNameStandardized || s.companyNameOriginal || 'â€”'}
       </td>
-      <td>{s.district || '—'}</td>
-      <td style={{ fontSize: '13px' }}>{s.city || s.taluka || '—'}</td>
-      <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.pinCode || '—'}</code></td>
-      <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.digipin || '—'}</code></td>
-      <td style={{ fontSize: '12px' }}>{s.category || '—'}</td>
+      <td>{s.district || 'â€”'}</td>
+      <td style={{ fontSize: '13px' }}>{s.city || s.taluka || 'â€”'}</td>
+      <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.pinCode || 'â€”'}</code></td>
+      <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.digipin || 'â€”'}</code></td>
+      <td style={{ fontSize: '12px' }}>{s.category || 'â€”'}</td>
       <td><span className={`badge ${getStatusBadge(s.status)}`}>{(s.status || 'PENDING').replace('_', ' ')}</span></td>
       <td>
         <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); onSelect(s); }}>
-          📸 View Gallery
+          ðŸ“¸ View Gallery
         </button>
       </td>
     </tr>
@@ -78,7 +78,7 @@ export default function StakeholdersPage() {
 
   const stakeholders = data?.data?.data?.stakeholders || data?.data?.data || [];
   const pagination = data?.data?.data?.pagination;
-  // The server omits the total on filtered searches — the exact COUNT was 7x the
+  // The server omits the total on filtered searches â€” the exact COUNT was 7x the
   // cost of the page itself. `totalKnown` says whether a figure was supplied at
   // all, so the UI can stay silent rather than display a misleading 0.
   const totalKnown = pagination?.totalKnown === true || typeof pagination?.total === 'number';
@@ -112,7 +112,7 @@ export default function StakeholdersPage() {
           <p>Browse and verify stakeholder submissions with photos and videos</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ whiteSpace: 'nowrap' }}>
-          ➕ Add Stakeholder
+          âž• Add Stakeholder
         </button>
       </div>
 
@@ -145,16 +145,16 @@ export default function StakeholdersPage() {
             </select>
           </div>
           {/* Was `isLoading ? '...' : 'Search'`, which only reacted to the very
-              first fetch — pressing Search again after results existed gave no
+              first fetch â€” pressing Search again after results existed gave no
               feedback at all. isFetching covers every subsequent search too. */}
           <LoadingButton
             type="submit"
             variant="primary"
             loading={isFetching}
-            loadingText="Searching…"
+            loadingText="Searchingâ€¦"
             style={{ height: '42px' }}
           >
-            🔍 Search
+            ðŸ” Search
           </LoadingButton>
         </form>
       </div>
@@ -181,7 +181,7 @@ export default function StakeholdersPage() {
       ) : (
         // Paging or re-searching with results already on screen: dim the existing
         // rows rather than tearing them down, so the operator keeps their place.
-        <RefetchOverlay active={isRefreshing} label="Loading results…">
+        <RefetchOverlay active={isRefreshing} label="Loading resultsâ€¦">
           <table>
             <thead>
               <tr>
@@ -212,10 +212,10 @@ export default function StakeholdersPage() {
           size="sm"
           disabled={page <= 1 || isFetching}
           loading={isFetching && pendingDirection === 'prev'}
-          loadingText="Loading…"
+          loadingText="Loadingâ€¦"
           onClick={() => { setPendingDirection('prev'); setPage(page - 1); }}
         >
-          ← Previous
+          â† Previous
         </LoadingButton>
         <span style={{ display: 'flex', alignItems: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>Page {page}</span>
         <LoadingButton
@@ -223,10 +223,10 @@ export default function StakeholdersPage() {
           size="sm"
           disabled={!hasMore || isFetching}
           loading={isFetching && pendingDirection === 'next'}
-          loadingText="Loading…"
+          loadingText="Loadingâ€¦"
           onClick={() => { setPendingDirection('next'); setPage(page + 1); }}
         >
-          Next →
+          Next â†’
         </LoadingButton>
       </div>
 
@@ -293,7 +293,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
       await queryClient.cancelQueries({ queryKey: ['stakeholders'] });
       const previous = queryClient.getQueriesData({ queryKey: ['stakeholders'] });
 
-      // ['stakeholders', filters, page] — patch the row wherever it appears.
+      // ['stakeholders', filters, page] â€” patch the row wherever it appears.
       queryClient.setQueriesData({ queryKey: ['stakeholders'] }, (old: any) => {
         const list = old?.data?.data?.stakeholders;
         if (!Array.isArray(list)) return old;
@@ -335,7 +335,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
    * The row stays put until the server confirms.
    *
    * The server refuses with 409 when surveys are attached, and that message is the
-   * useful one ("has 2 surveys attached…"), so it is surfaced verbatim.
+   * useful one ("has 2 surveys attachedâ€¦"), so it is surfaced verbatim.
    */
   const deleteMut = useMutation({
     mutationFn: () => deleteStakeholder(stakeholder.id),
@@ -356,16 +356,16 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
     // something the operator can do here.
     if (!window.confirm(
       `Permanently delete "${name}"?\n\n` +
-      `District: ${stakeholder.district || '—'}\n\n` +
+      `District: ${stakeholder.district || 'â€”'}\n\n` +
       `This cannot be undone from the admin panel.`
     )) return;
     deleteMut.mutate();
   };
 
   const categoryLabels: Record<string, string> = {
-    BUILDING_FRONT: '🏢 Building Front', SIGNBOARD: '🪧 Signboard', INTERIOR: '🏠 Interior', STAKEHOLDER: '👤 Stakeholder', ADDITIONAL: '📸 Additional',
-    DISPLAY_IMAGE: '🖼️ Display Image', HEADER_SLIDER: '🎠 Header Slider',
-    GST_DOC: '📄 GST Certificate', PAN_CARD_DOC: '📄 PAN Card', ESTABLISHMENT_CERT_DOC: '📄 Establishment Certificate', CUSTOM_DOC: '📄 Custom Doc',
+    BUILDING_FRONT: 'ðŸ¢ Building Front', SIGNBOARD: 'ðŸª§ Signboard', INTERIOR: 'ðŸ  Interior', STAKEHOLDER: 'ðŸ‘¤ Stakeholder', ADDITIONAL: 'ðŸ“¸ Additional',
+    DISPLAY_IMAGE: 'ðŸ–¼ï¸ Display Image', HEADER_SLIDER: 'ðŸŽ  Header Slider',
+    GST_DOC: 'ðŸ“„ GST Certificate', PAN_CARD_DOC: 'ðŸ“„ PAN Card', ESTABLISHMENT_CERT_DOC: 'ðŸ“„ Establishment Certificate', CUSTOM_DOC: 'ðŸ“„ Custom Doc',
   };
 
   const isLoading = isSurveyLoading || isMediaLoading;
@@ -377,7 +377,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
           <div>
             <h3 style={{ margin: 0 }}>{stakeholder.companyNameStandardized || stakeholder.companyNameOriginal}</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
-              {stakeholder.district} • {stakeholder.pinCode} • <span className={`badge ${stakeholder.status === 'CLOSED' ? 'badge-active' : 'badge-pending'}`}>{(stakeholder.status || 'OPEN').replace('_', ' ')}</span>
+              {stakeholder.district} â€¢ {stakeholder.pinCode} â€¢ <span className={`badge ${stakeholder.status === 'CLOSED' ? 'badge-active' : 'badge-pending'}`}>{(stakeholder.status || 'OPEN').replace('_', ' ')}</span>
             </p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -385,12 +385,12 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
               variant="danger"
               size="sm"
               loading={deleteMut.isPending}
-              loadingText="Deleting…"
+              loadingText="Deletingâ€¦"
               onClick={confirmDelete}
             >
-              🗑 Delete
+              ðŸ—‘ Delete
             </LoadingButton>
-            <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
+            <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>âœ•</button>
           </div>
         </div>
 
@@ -398,19 +398,19 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
           // Two chained requests back this modal: the survey, then its media
           // (which is `enabled` only once a survey id exists). The label reflects
           // which stage is running so a slow media fetch does not look stalled.
-          <PageLoader label={isSurveyLoading ? 'Loading survey…' : 'Loading photos and documents…'} />
+          <PageLoader label={isSurveyLoading ? 'Loading surveyâ€¦' : 'Loading photos and documentsâ€¦'} />
         ) : (
           <div className="gallery-body">
             <div className="gallery-section">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h4 className="gallery-section-title" style={{ margin: 0 }}>📋 Stakeholder Details</h4>
+                <h4 className="gallery-section-title" style={{ margin: 0 }}>ðŸ“‹ Stakeholder Details</h4>
                 {editMode ? (
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button className="btn btn-secondary btn-sm" onClick={() => setEditMode(false)} disabled={updateMut.isPending}>Cancel</button>
                     <button className="btn btn-primary btn-sm" onClick={() => updateMut.mutate(editData)} disabled={updateMut.isPending}>{updateMut.isPending ? 'Saving...' : 'Save'}</button>
                   </div>
                 ) : (
-                  <button className="btn btn-secondary btn-sm" onClick={() => setEditMode(true)}>✏️ Edit</button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setEditMode(true)}>âœï¸ Edit</button>
                 )}
               </div>
               {editMode ? (
@@ -483,9 +483,9 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   <div style={{ marginTop: '12px', padding: '12px', backgroundColor: 'var(--bg-input)', borderRadius: '8px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>Locked Identifiers</div>
                     <div className="gallery-info-grid">
-                      <div className="gallery-info-item"><span className="gallery-info-label">GST</span><span className="gallery-info-value">{stakeholder.gstNumber || '—'}</span></div>
-                      <div className="gallery-info-item"><span className="gallery-info-label">NIC Code</span><span className="gallery-info-value">{stakeholder.nicCode || '—'}</span></div>
-                      <div className="gallery-info-item"><span className="gallery-info-label">Original Name</span><span className="gallery-info-value">{stakeholder.companyNameOriginal || '—'}</span></div>
+                      <div className="gallery-info-item"><span className="gallery-info-label">GST</span><span className="gallery-info-value">{stakeholder.gstNumber || 'â€”'}</span></div>
+                      <div className="gallery-info-item"><span className="gallery-info-label">NIC Code</span><span className="gallery-info-value">{stakeholder.nicCode || 'â€”'}</span></div>
+                      <div className="gallery-info-item"><span className="gallery-info-label">Original Name</span><span className="gallery-info-value">{stakeholder.companyNameOriginal || 'â€”'}</span></div>
                     </div>
                   </div>
                 </div>
@@ -505,7 +505,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             
             {survey && (
               <div className="gallery-section">
-                <h4 className="gallery-section-title">📝 Survey Data</h4>
+                <h4 className="gallery-section-title">ðŸ“ Survey Data</h4>
                 <div className="gallery-info-grid">
                   {[
                     { label: 'Mobile', value: survey.mobileNumber }, { label: 'Email', value: survey.email },
@@ -514,7 +514,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   ))}
                 </div>
 
-                {/* ─── New Plan: Category & Sub-categories ─── */}
+                {/* â”€â”€â”€ New Plan: Category & Sub-categories â”€â”€â”€ */}
                 {survey.businessCategory && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Business Category</div>
@@ -527,7 +527,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* ─── New Plan: Business Info ─── */}
+                {/* â”€â”€â”€ New Plan: Business Info â”€â”€â”€ */}
                 {(survey.businessName || survey.ownerName) && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>Business Information</div>
@@ -546,7 +546,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* ─── Government IDs & Registrations ─── */}
+                {/* â”€â”€â”€ Government IDs & Registrations â”€â”€â”€ */}
                 {(survey.aadharNumber || survey.panNumber || survey.udyamAadharRegNo) && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>Government IDs & Registrations</div>
@@ -562,7 +562,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* ─── New Plan: Details ─── */}
+                {/* â”€â”€â”€ New Plan: Details â”€â”€â”€ */}
                 {survey.description && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Description</div>
@@ -583,7 +583,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '4px' }}>
                       {survey.workingHours.map((wh: any, i: number) => (
                         <div key={i} style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
-                          <strong>{wh.day?.slice(0, 3)}:</strong> {wh.type === 'open_all_day' ? 'Open' : wh.type === 'closed' ? 'Closed' : `${wh.from}–${wh.to}`}
+                          <strong>{wh.day?.slice(0, 3)}:</strong> {wh.type === 'open_all_day' ? 'Open' : wh.type === 'closed' ? 'Closed' : `${wh.from}â€“${wh.to}`}
                         </div>
                       ))}
                     </div>
@@ -601,7 +601,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* ─── New Plan: Rooms & Pricing (Accommodations) ─── */}
+                {/* â”€â”€â”€ New Plan: Rooms & Pricing (Accommodations) â”€â”€â”€ */}
                 {survey.rooms && Array.isArray(survey.rooms) && survey.rooms.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Rooms & Pricing</div>
@@ -609,7 +609,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                       <thead><tr style={{ borderBottom: '1px solid var(--border)' }}><th style={{ textAlign: 'left', padding: '4px' }}>Name</th><th>Type</th><th>Guests</th><th>Price/Night</th></tr></thead>
                       <tbody>
                         {survey.rooms.map((r: any, i: number) => (
-                          <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}><td style={{ padding: '4px' }}>{r.name}</td><td style={{ textAlign: 'center' }}>{r.type}</td><td style={{ textAlign: 'center' }}>{r.capacity}</td><td style={{ textAlign: 'center' }}>₹{r.price}</td></tr>
+                          <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}><td style={{ padding: '4px' }}>{r.name}</td><td style={{ textAlign: 'center' }}>{r.type}</td><td style={{ textAlign: 'center' }}>{r.capacity}</td><td style={{ textAlign: 'center' }}>â‚¹{r.price}</td></tr>
                         ))}
                       </tbody>
                     </table>
@@ -618,7 +618,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* ─── New Plan: Social Links ─── */}
+                {/* â”€â”€â”€ New Plan: Social Links â”€â”€â”€ */}
                 {survey.socialLinks && Array.isArray(survey.socialLinks) && survey.socialLinks.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Social Links</div>
@@ -630,7 +630,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* ─── New Plan: Business Documents ─── */}
+                {/* â”€â”€â”€ New Plan: Business Documents â”€â”€â”€ */}
                 {survey.aboutBusiness && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>About Business</div>
@@ -638,14 +638,14 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* ─── New Plan: Terms ─── */}
+                {/* â”€â”€â”€ New Plan: Terms â”€â”€â”€ */}
                 {(survey.agreedToTerms || survey.declaredInfoCorrect || survey.acknowledgedDotLiability) && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Terms & Conditions</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px' }}>
-                      <div>{survey.agreedToTerms ? '✅' : '❌'} Agreed to Terms & Conditions</div>
-                      <div>{survey.declaredInfoCorrect ? '✅' : '❌'} Declared info correct</div>
-                      <div>{survey.acknowledgedDotLiability ? '✅' : '❌'} Acknowledged DOT liability</div>
+                      <div>{survey.agreedToTerms ? 'âœ…' : 'âŒ'} Agreed to Terms & Conditions</div>
+                      <div>{survey.declaredInfoCorrect ? 'âœ…' : 'âŒ'} Declared info correct</div>
+                      <div>{survey.acknowledgedDotLiability ? 'âœ…' : 'âŒ'} Acknowledged DOT liability</div>
                     </div>
                   </div>
                 )}
@@ -656,14 +656,14 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                       <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>OFFICIAL DIGIPIN</span>
                       <span style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--text-primary)', letterSpacing: '2px', fontFamily: 'monospace' }}>{survey.digipin || stakeholder.digipin}</span>
                     </div>
-                    <CopyButton value={survey.digipin || stakeholder.digipin} label="📋 Copy" size="sm" />
+                    <CopyButton value={survey.digipin || stakeholder.digipin} label="ðŸ“‹ Copy" size="sm" />
                   </div>
                 )}
               </div>
             )}
             
             <div className="gallery-section">
-              <h4 className="gallery-section-title">📷 Verification Photos ({photos.length})</h4>
+              <h4 className="gallery-section-title">ðŸ“· Verification Photos ({photos.length})</h4>
               {photos.length > 0 ? (
                 <div className="photo-grid">
                   {photos.map((photo: any) => (
@@ -679,7 +679,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             </div>
 
             <div className="gallery-section">
-              <h4 className="gallery-section-title">📄 Business Documents</h4>
+              <h4 className="gallery-section-title">ðŸ“„ Business Documents</h4>
               {(() => {
                 const docs = media.filter((m: any) => m.type === 'DOCUMENT' || DOC_CATEGORIES.includes(m.photoCategory));
                 return docs.length > 0 ? (
@@ -691,7 +691,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                           <img src={doc.fileUrl} alt={doc.fileName} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '6px', cursor: 'pointer', marginBottom: '8px' }} onClick={() => setLightbox(doc.fileUrl)} />
                         ) : (
                           <div style={{ width: '100%', height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-surface)', borderRadius: '6px', marginBottom: '8px' }}>
-                            <span style={{ fontSize: '32px' }}>📄</span>
+                            <span style={{ fontSize: '32px' }}>ðŸ“„</span>
                           </div>
                         )}
                         <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '12px', color: 'var(--primary)', wordBreak: 'break-all' }}>{doc.fileName || 'View Document'}</a>
@@ -703,7 +703,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             </div>
 
             <div className="gallery-section">
-              <h4 className="gallery-section-title">🎥 Verification Video ({videos.length})</h4>
+              <h4 className="gallery-section-title">ðŸŽ¥ Verification Video ({videos.length})</h4>
               {videos.length > 0 ? (
                 <div className="video-grid">
                   {videos.map((video: any) => (
@@ -720,43 +720,129 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
       {lightbox && (
         <div className="lightbox-overlay" onClick={() => setLightbox(null)}>
           <img src={lightbox} alt="Full size" />
-          <button className="lightbox-close" onClick={() => setLightbox(null)}>✕</button>
+          <button className="lightbox-close" onClick={() => setLightbox(null)}>âœ•</button>
         </div>
       )}
     </div>
   );
 }
 
+// Every client-settable stakeholders column, grouped the way an operator reads a
+// record rather than the order the table happens to store them in. 34 fields is
+// too many for a flat list, so the two groups that are rarely touched
+// (Registration & Classification detail, Dedup & Lineage) start collapsed.
+//
+// `num: true` marks the double precision columns. Those must be sent as JSON
+// numbers, not strings, or the .strict() schema rejects them.
+type FieldSpec = {
+  key: string;
+  label: string;
+  num?: boolean;
+  placeholder?: string;
+  maxLength?: number;
+  wide?: boolean;
+};
+
+const STAKEHOLDER_FIELD_GROUPS: { title: string; collapsed?: boolean; fields: FieldSpec[] }[] = [
+  {
+    title: 'Identity',
+    fields: [
+      { key: 'companyNameOriginal', label: 'Original Name', maxLength: 500, wide: true },
+      { key: 'uin', label: 'UIN', maxLength: 100, placeholder: 'e.g. MAH-TOUR-000001' },
+    ],
+  },
+  {
+    title: 'Registration Numbers',
+    fields: [
+      { key: 'cinNumber', label: 'CIN Number', maxLength: 50, placeholder: 'e.g. U55101PN2014PTC151643' },
+      { key: 'gstNumber', label: 'GST Number', maxLength: 20 },
+      { key: 'tinNumber', label: 'TIN Number', maxLength: 50 },
+    ],
+  },
+  {
+    title: 'Address',
+    fields: [
+      { key: 'fullAddressRaw', label: 'Full Address (raw)', maxLength: 1000, wide: true },
+      { key: 'addressLine1', label: 'Address Line 1', maxLength: 500 },
+      { key: 'addressLine2', label: 'Address Line 2', maxLength: 500 },
+      { key: 'district', label: 'District', maxLength: 200, placeholder: 'e.g. Pune' },
+      { key: 'taluka', label: 'Taluka', maxLength: 200 },
+      { key: 'city', label: 'City', maxLength: 200 },
+      { key: 'village', label: 'Village', maxLength: 200 },
+      { key: 'state', label: 'State', maxLength: 200 },
+      { key: 'pinCode', label: 'PIN Code', maxLength: 10 },
+    ],
+  },
+  {
+    title: 'Classification',
+    collapsed: true,
+    fields: [
+      { key: 'category', label: 'Category', maxLength: 200, placeholder: 'e.g. Hotels & Resorts' },
+      { key: 'nicCode', label: 'NIC Code', maxLength: 20 },
+      { key: 'nicDescription', label: 'NIC Description', maxLength: 500, wide: true },
+      { key: 'companyClass', label: 'Company Class', maxLength: 100 },
+      { key: 'companyStatus', label: 'Company Status', maxLength: 100 },
+      { key: 'companyCategory', label: 'Company Category', maxLength: 100 },
+      { key: 'listingStatus', label: 'Listing Status', maxLength: 100 },
+      { key: 'registrationDate', label: 'Registration Date', maxLength: 50, placeholder: 'as written in the source' },
+      { key: 'authorizedCapital', label: 'Authorized Capital', num: true },
+      { key: 'paidupCapital', label: 'Paid-up Capital', num: true },
+      { key: 'priorityWeight', label: 'Priority Weight', num: true },
+    ],
+  },
+  {
+    title: 'Dedup & Lineage',
+    collapsed: true,
+    fields: [
+      { key: 'fuzzySimilarityScore', label: 'Fuzzy Similarity Score', num: true },
+      { key: 'crossSourceMatch', label: 'Cross Source Match', maxLength: 200 },
+      { key: 'humanReviewRequired', label: 'Human Review Required', maxLength: 50 },
+      { key: 'dedupMatchStatus', label: 'Dedup Match Status', maxLength: 100 },
+      { key: 'sourceLineageNotes', label: 'Source Lineage Notes', maxLength: 1000, wide: true },
+    ],
+  },
+];
+
+const NUMERIC_FIELD_KEYS = new Set(
+  STAKEHOLDER_FIELD_GROUPS.flatMap(g => g.fields.filter(f => f.num).map(f => f.key))
+    .concat(['latitude', 'longitude'])
+);
+
 /**
  * Create a stakeholder by hand.
  *
- * Only the organization name is required; the server fills in primary_key_id and
- * stamps dataSource='MANUAL' so these stay distinguishable from rows the MCA/Udyam
- * import produced.
+ * Covers all 34 client-settable columns of the stakeholders table. The 8 it omits
+ * are server-owned and listed in createStakeholderSchema: id, primaryKeyId,
+ * createdAt, updatedAt, status, lockedById, lockedAt and dataSource.
  *
- * Registry provenance fields (CIN, TIN, capital figures, dedup/lineage columns) are
- * deliberately absent from this form. They are owned by the import pipeline, and a
- * hand-typed value there would make a record look sourced from a government
- * registry when it was not. The server's schema rejects them too.
+ * dataSource is the one worth calling out — it is forced to 'MANUAL' server-side.
+ * It is the provenance marker distinguishing hand-entered rows from MCA/Udyam
+ * imports, so making it editable would let a manual record claim to be
+ * registry-sourced with no way to tell the difference afterwards.
  */
 function AddStakeholderModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({
-    companyNameStandardized: '',
-    district: '',
-    city: '',
-    taluka: '',
-    village: '',
-    state: 'Maharashtra',
-    pinCode: '',
-    addressLine1: '',
-    addressLine2: '',
-    category: '',
-    gstNumber: '',
-    nicCode: '',
-    latitude: '',
-    longitude: '',
-    digipin: '',
+
+  const [form, setForm] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {
+      companyNameStandardized: '',
+      latitude: '',
+      longitude: '',
+      digipin: '',
+      state: 'Maharashtra',
+    };
+    for (const group of STAKEHOLDER_FIELD_GROUPS) {
+      for (const f of group.fields) {
+        if (!(f.key in initial)) initial[f.key] = '';
+      }
+    }
+    return initial;
+  });
+
+  const [open, setOpen] = useState<Record<string, boolean>>(() => {
+    const state: Record<string, boolean> = {};
+    for (const g of STAKEHOLDER_FIELD_GROUPS) state[g.title] = !g.collapsed;
+    return state;
   });
 
   const set = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
@@ -777,20 +863,22 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
 
   const createMut = useMutation({
     mutationFn: () => {
-      // The server schema is .strict(), so unknown keys are a 400. Blank text
-      // fields are accepted as '', but latitude/longitude are typed as numbers —
-      // sending '' for those fails validation, so they are omitted when empty
-      // rather than coerced to 0, which would place every such record off the
-      // coast of Africa.
+      // The server schema is .strict(), so unknown keys are a 400. Empty text
+      // fields are dropped rather than sent as '' to keep the payload readable,
+      // and the numeric columns are parsed to real numbers — sending '' or a
+      // string for a double precision column fails validation, and coercing a
+      // blank to 0 would be a wrong value rather than an absent one (0 capital,
+      // or coordinates off the coast of Africa).
       const payload: any = {};
       for (const [key, value] of Object.entries(form)) {
-        if (key === 'latitude' || key === 'longitude') continue;
-        if (value !== '') payload[key] = value;
+        if (value === '' || value.trim() === '') continue;
+        if (NUMERIC_FIELD_KEYS.has(key)) {
+          const n = parseFloat(value);
+          if (!isNaN(n)) payload[key] = n;
+        } else {
+          payload[key] = value.trim();
+        }
       }
-      const lat = parseFloat(form.latitude);
-      const lon = parseFloat(form.longitude);
-      if (!isNaN(lat)) payload.latitude = lat;
-      if (!isNaN(lon)) payload.longitude = lon;
       return createStakeholder(payload);
     },
     onSuccess: () => {
@@ -816,37 +904,52 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
     createMut.mutate();
   };
 
-  const field = (label: string, key: keyof typeof form, extra: any = {}) => (
-    <div className="form-group" style={{ flex: 1, marginBottom: 0, minWidth: '140px' }}>
-      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>{label}</label>
+  const labelStyle: React.CSSProperties = {
+    display: 'block', fontSize: '12px', fontWeight: 600,
+    color: 'var(--text-muted)', marginBottom: '4px',
+  };
+
+  const renderField = (f: FieldSpec) => (
+    <div
+      key={f.key}
+      className="form-group"
+      style={{ flex: f.wide ? '1 1 100%' : '1 1 200px', marginBottom: 0, minWidth: '180px' }}
+    >
+      <label style={labelStyle}>{f.label}</label>
       <input
         className="form-input"
-        value={form[key]}
-        onChange={(e) => set(key, e.target.value)}
+        // Numeric columns get a numeric keypad and reject stray text at the
+        // browser level; step="any" so decimals like a similarity score work.
+        type={f.num ? 'number' : 'text'}
+        step={f.num ? 'any' : undefined}
+        value={form[f.key] ?? ''}
+        onChange={(e) => set(f.key, e.target.value)}
+        placeholder={f.placeholder}
+        maxLength={f.num ? undefined : f.maxLength}
         disabled={createMut.isPending}
-        {...extra}
       />
     </div>
   );
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="gallery-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '760px' }}>
+      <div className="gallery-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px' }}>
         <div className="gallery-header">
           <div>
             <h3 style={{ margin: 0 }}>Add Stakeholder</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
-              Creates a record manually. It will be marked as source <code>MANUAL</code> and start with status OPEN.
+              All stakeholder fields. Only the organization name is required — the
+              record is created with source <code>MANUAL</code> and status OPEN.
             </p>
           </div>
           <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
         </div>
 
         <div className="gallery-body">
-          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>
-                Organization Name <span style={{ color: 'var(--danger, #e5484d)' }}>*</span>
+              <label style={labelStyle}>
+                Organization Name <span style={{ color: '#e5484d' }}>*</span>
               </label>
               <input
                 className="form-input"
@@ -854,58 +957,67 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
                 onChange={(e) => set('companyNameStandardized', e.target.value)}
                 placeholder="e.g. Sai Angan Hotels Private Limited"
                 disabled={createMut.isPending}
+                maxLength={500}
                 autoFocus
                 required
               />
             </div>
 
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-              {field('District', 'district', { placeholder: 'e.g. Pune' })}
-              {field('State', 'state')}
-              {field('PIN Code', 'pinCode', { inputMode: 'numeric', maxLength: 10 })}
-            </div>
-
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-              {field('City', 'city')}
-              {field('Taluka', 'taluka')}
-              {field('Village', 'village')}
-            </div>
-
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-              {field('Address Line 1', 'addressLine1')}
-              {field('Address Line 2', 'addressLine2')}
-            </div>
-
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-              {field('Category', 'category', { placeholder: 'e.g. Hotels & Resorts' })}
-              {field('GST Number', 'gstNumber', { maxLength: 20 })}
-              {field('NIC Code', 'nicCode', { maxLength: 20 })}
-            </div>
-
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-              <div className="form-group" style={{ flex: 1, marginBottom: 0, minWidth: '140px' }}>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Latitude</label>
-                <input
-                  type="number" step="any" className="form-input" value={form.latitude}
-                  onChange={(e) => setCoord('latitude', e.target.value)}
-                  disabled={createMut.isPending}
-                />
+            {STAKEHOLDER_FIELD_GROUPS.map(group => (
+              <div key={group.title}>
+                <button
+                  type="button"
+                  onClick={() => setOpen(prev => ({ ...prev, [group.title]: !prev[group.title] }))}
+                  style={{
+                    background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                    color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700,
+                    marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px',
+                  }}
+                  aria-expanded={open[group.title]}
+                >
+                  <span>{open[group.title] ? '▾' : '▸'}</span>
+                  {group.title}
+                  <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                    ({group.fields.length})
+                  </span>
+                </button>
+                {open[group.title] && (
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    {group.fields.map(renderField)}
+                  </div>
+                )}
               </div>
-              <div className="form-group" style={{ flex: 1, marginBottom: 0, minWidth: '140px' }}>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Longitude</label>
-                <input
-                  type="number" step="any" className="form-input" value={form.longitude}
-                  onChange={(e) => setCoord('longitude', e.target.value)}
-                  disabled={createMut.isPending}
-                />
+            ))}
+
+            <div>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px' }}>
+                Location
               </div>
-              <div className="form-group" style={{ flex: 1, marginBottom: 0, minWidth: '140px' }}>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>DIGIPIN (derived)</label>
-                <input className="form-input" value={form.digipin} readOnly style={{ backgroundColor: 'var(--bg-surface)' }} />
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <div className="form-group" style={{ flex: '1 1 200px', marginBottom: 0, minWidth: '180px' }}>
+                  <label style={labelStyle}>Latitude</label>
+                  <input
+                    type="number" step="any" className="form-input" value={form.latitude}
+                    onChange={(e) => setCoord('latitude', e.target.value)}
+                    disabled={createMut.isPending}
+                  />
+                </div>
+                <div className="form-group" style={{ flex: '1 1 200px', marginBottom: 0, minWidth: '180px' }}>
+                  <label style={labelStyle}>Longitude</label>
+                  <input
+                    type="number" step="any" className="form-input" value={form.longitude}
+                    onChange={(e) => setCoord('longitude', e.target.value)}
+                    disabled={createMut.isPending}
+                  />
+                </div>
+                <div className="form-group" style={{ flex: '1 1 200px', marginBottom: 0, minWidth: '180px' }}>
+                  <label style={labelStyle}>DIGIPIN (derived)</label>
+                  <input className="form-input" value={form.digipin} readOnly style={{ backgroundColor: 'var(--bg-surface)' }} />
+                </div>
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', paddingTop: '4px' }}>
               <button type="button" className="btn btn-secondary" onClick={onClose} disabled={createMut.isPending}>
                 Cancel
               </button>

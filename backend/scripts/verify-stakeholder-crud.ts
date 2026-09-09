@@ -40,19 +40,53 @@ async function main() {
     console.log('=== create ===');
     const maxBefore = (await prisma.stakeholder.aggregate({ _max: { primaryKeyId: true } }))._max.primaryKeyId ?? 0;
 
-    const createRes = await axios.post(
-      `${BASE}/api/stakeholders`,
-      {
-        companyNameStandardized: NAME,
-        district: 'Pune',
-        city: 'Malvan, "quoted"',
-        pinCode: '416606',
-        category: 'Hotels & Resorts',
-        latitude: 16.0594,
-        longitude: 73.4629,
-      },
-      { headers }
-    );
+    // Every client-settable column, each with a distinct value so a field that is
+    // dropped, swapped or written to the wrong column is visible rather than
+    // coincidentally matching.
+    const FULL_PAYLOAD: Record<string, any> = {
+      companyNameStandardized: NAME,
+      companyNameOriginal: `${NAME} (original)`,
+      uin: 'MAH-TOUR-999999',
+
+      cinNumber: 'U55101PN2014PTC151643',
+      gstNumber: '27ABCDE1234F1Z5',
+      tinNumber: 'TIN-VERIFY-001',
+
+      fullAddressRaw: 'H.NO. 907, KURULI, CHAKAN, PUNE, Maharashtra, 410501-India',
+      addressLine1: 'H.NO. 907, KURULI',
+      addressLine2: 'CHAKAN TALUKA- KHED',
+      city: 'Malvan, "quoted"',
+      taluka: 'Kudal',
+      village: 'Tarkarli',
+      district: 'Pune',
+      state: 'Maharashtra',
+      pinCode: '416606',
+
+      nicCode: '55101',
+      nicDescription: 'Hotels & Resorts — short stay',
+      category: 'Hotels & Resorts',
+      companyClass: 'Private',
+      companyStatus: 'Active',
+      companyCategory: 'Company limited by Shares',
+      listingStatus: 'Unlisted',
+      registrationDate: '12/03/2014',
+
+      authorizedCapital: 500000.5,
+      paidupCapital: 100000.25,
+      priorityWeight: 7.5,
+
+      fuzzySimilarityScore: 0.9137,
+      crossSourceMatch: 'MCA+Udyam',
+      humanReviewRequired: 'No',
+      dedupMatchStatus: 'unique',
+      sourceLineageNotes: 'Created by verify-stakeholder-crud.ts',
+
+      latitude: 16.0594,
+      longitude: 73.4629,
+      digipin: '4T32TTT8M8',
+    };
+
+    const createRes = await axios.post(`${BASE}/api/stakeholders`, FULL_PAYLOAD, { headers });
     createdId = createRes.data?.data?.id ?? null;
     const created = createRes.data?.data;
 
@@ -74,6 +108,43 @@ async function main() {
     const inDb = await prisma.stakeholder.findUnique({ where: { id: createdId! } });
     check('row actually exists in the database', inDb !== null);
 
+    // ---- every submitted field round-trips ------------------------------
+    // Compares against the DATABASE row, not the response body: a field could be
+    // echoed back from the request while never being persisted.
+    console.log('\n=== all 34 fields persisted ===');
+    const mismatches: string[] = [];
+    for (const [key, sent] of Object.entries(FULL_PAYLOAD)) {
+      const stored = (inDb as any)?.[key];
+      const equal = typeof sent === 'number'
+        ? Math.abs((stored ?? NaN) - sent) < 1e-9
+        : stored === sent;
+      if (!equal) mismatches.push(`${key}: sent ${JSON.stringify(sent)}, stored ${JSON.stringify(stored)}`);
+    }
+    check(`all ${Object.keys(FULL_PAYLOAD).length} submitted fields stored exactly`,
+      mismatches.length === 0,
+      mismatches.join(' | '));
+
+    // Every column in the table is either submitted above or server-owned. This
+    // fails if a migration adds a column and the create schema is not updated.
+    const SERVER_OWNED = [
+      'id', 'primaryKeyId', 'createdAt', 'updatedAt',
+      'status', 'lockedById', 'lockedAt', 'dataSource',
+    ];
+    const allColumns = Object.keys(inDb as object);
+    const uncovered = allColumns.filter(
+      c => !(c in FULL_PAYLOAD) && !SERVER_OWNED.includes(c)
+    );
+    check('no stakeholders column is unreachable from the create form',
+      uncovered.length === 0,
+      `uncovered: ${uncovered.join(', ')}`);
+    console.log(`        (${allColumns.length} columns total = ${Object.keys(FULL_PAYLOAD).length} settable + ${SERVER_OWNED.length} server-owned)`);
+
+    check('float precision preserved on capital figures',
+      inDb?.authorizedCapital === 500000.5 && inDb?.paidupCapital === 100000.25,
+      `${inDb?.authorizedCapital}, ${inDb?.paidupCapital}`);
+    check('registrationDate kept verbatim, not normalised to ISO',
+      inDb?.registrationDate === '12/03/2014', String(inDb?.registrationDate));
+
     const createAudit = await prisma.auditLog.findFirst({
       where: { action: 'stakeholder_created', entityId: createdId! },
     });
@@ -88,17 +159,23 @@ async function main() {
       check('empty name rejected', e.response?.status === 400, `status ${e.response?.status}`);
     }
 
+    // NOTE: cinNumber and the other registry columns USED to be rejected here.
+    // They are accepted now — the form is meant to cover every stakeholders column
+    // — and their persistence is asserted by the 34-field round-trip above.
+    // Provenance is protected by dataSource alone, checked below: that is the field
+    // that determines whether a row claims to be registry-sourced, and it is the
+    // only one that cannot be faked.
     try {
-      // cinNumber is an import-owned provenance field and must not be settable by
-      // hand, or a manual row could masquerade as MCA-sourced.
+      // .strict() must still reject genuinely unknown keys, or a typo'd field name
+      // would be silently discarded and the operator would think it saved.
       await axios.post(
         `${BASE}/api/stakeholders`,
-        { companyNameStandardized: 'ZZ strict probe', cinNumber: 'U55101PN2014PTC151643' },
+        { companyNameStandardized: 'ZZ strict probe', notARealColumn: 'x' },
         { headers }
       );
-      check('registry provenance field (cinNumber) rejected', false, 'request succeeded');
+      check('unknown field rejected (typo is not silently dropped)', false, 'request succeeded');
     } catch (e: any) {
-      check('registry provenance field (cinNumber) rejected',
+      check('unknown field rejected (typo is not silently dropped)',
         e.response?.status === 400, `status ${e.response?.status}`);
     }
 
@@ -112,6 +189,50 @@ async function main() {
     } catch (e: any) {
       check('client-supplied primaryKeyId rejected',
         e.response?.status === 400, `status ${e.response?.status}`);
+    }
+
+    // Provenance cannot be spoofed: if dataSource were settable, a hand-entered
+    // row could claim to have come from the MCA registry.
+    try {
+      await axios.post(
+        `${BASE}/api/stakeholders`,
+        { companyNameStandardized: 'ZZ provenance probe', dataSource: 'MCA' },
+        { headers }
+      );
+      check('dataSource cannot be spoofed', false, 'request succeeded');
+    } catch (e: any) {
+      check('dataSource cannot be spoofed', e.response?.status === 400, `status ${e.response?.status}`);
+    }
+
+    // A numeric column must reject text rather than silently storing NULL.
+    try {
+      await axios.post(
+        `${BASE}/api/stakeholders`,
+        { companyNameStandardized: 'ZZ numeric probe', authorizedCapital: 'not a number' },
+        { headers }
+      );
+      check('text in a numeric column rejected', false, 'request succeeded');
+    } catch (e: any) {
+      check('text in a numeric column rejected', e.response?.status === 400, `status ${e.response?.status}`);
+    }
+
+    // Both clients submit '' for an untouched numeric input, so that must be
+    // treated as absent rather than rejected — otherwise every blank optional
+    // number is a 400 the operator cannot explain.
+    try {
+      const blankRes = await axios.post(
+        `${BASE}/api/stakeholders`,
+        { companyNameStandardized: 'ZZ blank numeric probe', authorizedCapital: '', priorityWeight: '' },
+        { headers }
+      );
+      check('blank numeric accepted as absent (untouched form input)',
+        blankRes.status === 201 && blankRes.data?.data?.authorizedCapital === null,
+        `status ${blankRes.status}, stored ${JSON.stringify(blankRes.data?.data?.authorizedCapital)}`);
+      // Clean this probe up immediately; it is a real row.
+      await prisma.stakeholder.deleteMany({ where: { id: blankRes.data.data.id } });
+    } catch (e: any) {
+      check('blank numeric accepted as absent (untouched form input)', false,
+        `status ${e.response?.status}: ${msgOf(e)}`);
     }
 
     // ---- delete: refused when surveys exist -----------------------------
