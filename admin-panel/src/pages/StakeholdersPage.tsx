@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey } from '../api';
 import { getDigiPin } from '../utils/digipin';
@@ -18,23 +18,23 @@ const getStatusBadge = (status: string) => {
   return map[status] || 'badge-pending';
 };
 
-// PERF: memoized table row â€” only re-renders when its own stakeholder/handler
+// PERF: memoized table row — only re-renders when its own stakeholder/handler
 // change, so typing in the filter inputs no longer re-renders every row.
 const StakeholderRow = memo(function StakeholderRow({ s, onSelect }: { s: any; onSelect: (s: any) => void }) {
   return (
     <tr style={{ cursor: 'pointer' }} onClick={() => onSelect(s)}>
       <td style={{ fontWeight: '600', color: 'var(--text-primary)', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {s.companyNameStandardized || s.companyNameOriginal || 'â€”'}
+        {s.companyNameStandardized || s.companyNameOriginal || '—'}
       </td>
-      <td>{s.district || 'â€”'}</td>
-      <td style={{ fontSize: '13px' }}>{s.city || s.taluka || 'â€”'}</td>
-      <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.pinCode || 'â€”'}</code></td>
-      <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.digipin || 'â€”'}</code></td>
-      <td style={{ fontSize: '12px' }}>{s.category || 'â€”'}</td>
+      <td>{s.district || '—'}</td>
+      <td style={{ fontSize: '13px' }}>{s.city || s.taluka || '—'}</td>
+      <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.pinCode || '—'}</code></td>
+      <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.digipin || '—'}</code></td>
+      <td style={{ fontSize: '12px' }}>{s.category || '—'}</td>
       <td><span className={`badge ${getStatusBadge(s.status)}`}>{(s.status || 'PENDING').replace('_', ' ')}</span></td>
       <td>
         <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); onSelect(s); }}>
-          ðŸ“¸ View Gallery
+          📸 View Gallery
         </button>
       </td>
     </tr>
@@ -78,7 +78,7 @@ export default function StakeholdersPage() {
 
   const stakeholders = data?.data?.data?.stakeholders || data?.data?.data || [];
   const pagination = data?.data?.data?.pagination;
-  // The server omits the total on filtered searches â€” the exact COUNT was 7x the
+  // The server omits the total on filtered searches — the exact COUNT was 7x the
   // cost of the page itself. `totalKnown` says whether a figure was supplied at
   // all, so the UI can stay silent rather than display a misleading 0.
   const totalKnown = pagination?.totalKnown === true || typeof pagination?.total === 'number';
@@ -112,7 +112,7 @@ export default function StakeholdersPage() {
           <p>Browse and verify stakeholder submissions with photos and videos</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ whiteSpace: 'nowrap' }}>
-          âž• Add Stakeholder
+          ➕ Add Stakeholder
         </button>
       </div>
 
@@ -145,16 +145,16 @@ export default function StakeholdersPage() {
             </select>
           </div>
           {/* Was `isLoading ? '...' : 'Search'`, which only reacted to the very
-              first fetch â€” pressing Search again after results existed gave no
+              first fetch — pressing Search again after results existed gave no
               feedback at all. isFetching covers every subsequent search too. */}
           <LoadingButton
             type="submit"
             variant="primary"
             loading={isFetching}
-            loadingText="Searchingâ€¦"
+            loadingText="Searching…"
             style={{ height: '42px' }}
           >
-            ðŸ” Search
+            🔍 Search
           </LoadingButton>
         </form>
       </div>
@@ -181,7 +181,7 @@ export default function StakeholdersPage() {
       ) : (
         // Paging or re-searching with results already on screen: dim the existing
         // rows rather than tearing them down, so the operator keeps their place.
-        <RefetchOverlay active={isRefreshing} label="Loading resultsâ€¦">
+        <RefetchOverlay active={isRefreshing} label="Loading results…">
           <table>
             <thead>
               <tr>
@@ -212,10 +212,10 @@ export default function StakeholdersPage() {
           size="sm"
           disabled={page <= 1 || isFetching}
           loading={isFetching && pendingDirection === 'prev'}
-          loadingText="Loadingâ€¦"
+          loadingText="Loading…"
           onClick={() => { setPendingDirection('prev'); setPage(page - 1); }}
         >
-          â† Previous
+          ← Previous
         </LoadingButton>
         <span style={{ display: 'flex', alignItems: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>Page {page}</span>
         <LoadingButton
@@ -223,10 +223,10 @@ export default function StakeholdersPage() {
           size="sm"
           disabled={!hasMore || isFetching}
           loading={isFetching && pendingDirection === 'next'}
-          loadingText="Loadingâ€¦"
+          loadingText="Loading…"
           onClick={() => { setPendingDirection('next'); setPage(page + 1); }}
         >
-          Next â†’
+          Next →
         </LoadingButton>
       </div>
 
@@ -293,7 +293,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
       await queryClient.cancelQueries({ queryKey: ['stakeholders'] });
       const previous = queryClient.getQueriesData({ queryKey: ['stakeholders'] });
 
-      // ['stakeholders', filters, page] â€” patch the row wherever it appears.
+      // ['stakeholders', filters, page] — patch the row wherever it appears.
       queryClient.setQueriesData({ queryKey: ['stakeholders'] }, (old: any) => {
         const list = old?.data?.data?.stakeholders;
         if (!Array.isArray(list)) return old;
@@ -335,7 +335,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
    * The row stays put until the server confirms.
    *
    * The server refuses with 409 when surveys are attached, and that message is the
-   * useful one ("has 2 surveys attachedâ€¦"), so it is surfaced verbatim.
+   * useful one ("has 2 surveys attached…"), so it is surfaced verbatim.
    */
   const deleteMut = useMutation({
     mutationFn: () => deleteStakeholder(stakeholder.id),
@@ -356,16 +356,16 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
     // something the operator can do here.
     if (!window.confirm(
       `Permanently delete "${name}"?\n\n` +
-      `District: ${stakeholder.district || 'â€”'}\n\n` +
+      `District: ${stakeholder.district || '—'}\n\n` +
       `This cannot be undone from the admin panel.`
     )) return;
     deleteMut.mutate();
   };
 
   const categoryLabels: Record<string, string> = {
-    BUILDING_FRONT: 'ðŸ¢ Building Front', SIGNBOARD: 'ðŸª§ Signboard', INTERIOR: 'ðŸ  Interior', STAKEHOLDER: 'ðŸ‘¤ Stakeholder', ADDITIONAL: 'ðŸ“¸ Additional',
-    DISPLAY_IMAGE: 'ðŸ–¼ï¸ Display Image', HEADER_SLIDER: 'ðŸŽ  Header Slider',
-    GST_DOC: 'ðŸ“„ GST Certificate', PAN_CARD_DOC: 'ðŸ“„ PAN Card', ESTABLISHMENT_CERT_DOC: 'ðŸ“„ Establishment Certificate', CUSTOM_DOC: 'ðŸ“„ Custom Doc',
+    BUILDING_FRONT: '🏢 Building Front', SIGNBOARD: '🪧 Signboard', INTERIOR: '🏠 Interior', STAKEHOLDER: '👤 Stakeholder', ADDITIONAL: '📸 Additional',
+    DISPLAY_IMAGE: '🖼️ Display Image', HEADER_SLIDER: '🎠 Header Slider',
+    GST_DOC: '📄 GST Certificate', PAN_CARD_DOC: '📄 PAN Card', ESTABLISHMENT_CERT_DOC: '📄 Establishment Certificate', CUSTOM_DOC: '📄 Custom Doc',
   };
 
   const isLoading = isSurveyLoading || isMediaLoading;
@@ -377,7 +377,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
           <div>
             <h3 style={{ margin: 0 }}>{stakeholder.companyNameStandardized || stakeholder.companyNameOriginal}</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
-              {stakeholder.district} â€¢ {stakeholder.pinCode} â€¢ <span className={`badge ${stakeholder.status === 'CLOSED' ? 'badge-active' : 'badge-pending'}`}>{(stakeholder.status || 'OPEN').replace('_', ' ')}</span>
+              {stakeholder.district} • {stakeholder.pinCode} • <span className={`badge ${stakeholder.status === 'CLOSED' ? 'badge-active' : 'badge-pending'}`}>{(stakeholder.status || 'OPEN').replace('_', ' ')}</span>
             </p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -385,12 +385,12 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
               variant="danger"
               size="sm"
               loading={deleteMut.isPending}
-              loadingText="Deletingâ€¦"
+              loadingText="Deleting…"
               onClick={confirmDelete}
             >
-              ðŸ—‘ Delete
+              🗑 Delete
             </LoadingButton>
-            <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>âœ•</button>
+            <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
           </div>
         </div>
 
@@ -398,19 +398,19 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
           // Two chained requests back this modal: the survey, then its media
           // (which is `enabled` only once a survey id exists). The label reflects
           // which stage is running so a slow media fetch does not look stalled.
-          <PageLoader label={isSurveyLoading ? 'Loading surveyâ€¦' : 'Loading photos and documentsâ€¦'} />
+          <PageLoader label={isSurveyLoading ? 'Loading survey…' : 'Loading photos and documents…'} />
         ) : (
           <div className="gallery-body">
             <div className="gallery-section">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h4 className="gallery-section-title" style={{ margin: 0 }}>ðŸ“‹ Stakeholder Details</h4>
+                <h4 className="gallery-section-title" style={{ margin: 0 }}>📋 Stakeholder Details</h4>
                 {editMode ? (
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button className="btn btn-secondary btn-sm" onClick={() => setEditMode(false)} disabled={updateMut.isPending}>Cancel</button>
                     <button className="btn btn-primary btn-sm" onClick={() => updateMut.mutate(editData)} disabled={updateMut.isPending}>{updateMut.isPending ? 'Saving...' : 'Save'}</button>
                   </div>
                 ) : (
-                  <button className="btn btn-secondary btn-sm" onClick={() => setEditMode(true)}>âœï¸ Edit</button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setEditMode(true)}>✏️ Edit</button>
                 )}
               </div>
               {editMode ? (
@@ -483,9 +483,9 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   <div style={{ marginTop: '12px', padding: '12px', backgroundColor: 'var(--bg-input)', borderRadius: '8px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>Locked Identifiers</div>
                     <div className="gallery-info-grid">
-                      <div className="gallery-info-item"><span className="gallery-info-label">GST</span><span className="gallery-info-value">{stakeholder.gstNumber || 'â€”'}</span></div>
-                      <div className="gallery-info-item"><span className="gallery-info-label">NIC Code</span><span className="gallery-info-value">{stakeholder.nicCode || 'â€”'}</span></div>
-                      <div className="gallery-info-item"><span className="gallery-info-label">Original Name</span><span className="gallery-info-value">{stakeholder.companyNameOriginal || 'â€”'}</span></div>
+                      <div className="gallery-info-item"><span className="gallery-info-label">GST</span><span className="gallery-info-value">{stakeholder.gstNumber || '—'}</span></div>
+                      <div className="gallery-info-item"><span className="gallery-info-label">NIC Code</span><span className="gallery-info-value">{stakeholder.nicCode || '—'}</span></div>
+                      <div className="gallery-info-item"><span className="gallery-info-label">Original Name</span><span className="gallery-info-value">{stakeholder.companyNameOriginal || '—'}</span></div>
                     </div>
                   </div>
                 </div>
@@ -505,7 +505,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             
             {survey && (
               <div className="gallery-section">
-                <h4 className="gallery-section-title">ðŸ“ Survey Data</h4>
+                <h4 className="gallery-section-title">📝 Survey Data</h4>
                 <div className="gallery-info-grid">
                   {[
                     { label: 'Mobile', value: survey.mobileNumber }, { label: 'Email', value: survey.email },
@@ -514,7 +514,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   ))}
                 </div>
 
-                {/* â”€â”€â”€ New Plan: Category & Sub-categories â”€â”€â”€ */}
+                {/* ─── New Plan: Category & Sub-categories ─── */}
                 {survey.businessCategory && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Business Category</div>
@@ -527,7 +527,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* â”€â”€â”€ New Plan: Business Info â”€â”€â”€ */}
+                {/* ─── New Plan: Business Info ─── */}
                 {(survey.businessName || survey.ownerName) && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>Business Information</div>
@@ -546,7 +546,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* â”€â”€â”€ Government IDs & Registrations â”€â”€â”€ */}
+                {/* ─── Government IDs & Registrations ─── */}
                 {(survey.aadharNumber || survey.panNumber || survey.udyamAadharRegNo) && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>Government IDs & Registrations</div>
@@ -562,7 +562,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* â”€â”€â”€ New Plan: Details â”€â”€â”€ */}
+                {/* ─── New Plan: Details ─── */}
                 {survey.description && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Description</div>
@@ -583,7 +583,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '4px' }}>
                       {survey.workingHours.map((wh: any, i: number) => (
                         <div key={i} style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
-                          <strong>{wh.day?.slice(0, 3)}:</strong> {wh.type === 'open_all_day' ? 'Open' : wh.type === 'closed' ? 'Closed' : `${wh.from}â€“${wh.to}`}
+                          <strong>{wh.day?.slice(0, 3)}:</strong> {wh.type === 'open_all_day' ? 'Open' : wh.type === 'closed' ? 'Closed' : `${wh.from}–${wh.to}`}
                         </div>
                       ))}
                     </div>
@@ -601,7 +601,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* â”€â”€â”€ New Plan: Rooms & Pricing (Accommodations) â”€â”€â”€ */}
+                {/* ─── New Plan: Rooms & Pricing (Accommodations) ─── */}
                 {survey.rooms && Array.isArray(survey.rooms) && survey.rooms.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Rooms & Pricing</div>
@@ -609,7 +609,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                       <thead><tr style={{ borderBottom: '1px solid var(--border)' }}><th style={{ textAlign: 'left', padding: '4px' }}>Name</th><th>Type</th><th>Guests</th><th>Price/Night</th></tr></thead>
                       <tbody>
                         {survey.rooms.map((r: any, i: number) => (
-                          <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}><td style={{ padding: '4px' }}>{r.name}</td><td style={{ textAlign: 'center' }}>{r.type}</td><td style={{ textAlign: 'center' }}>{r.capacity}</td><td style={{ textAlign: 'center' }}>â‚¹{r.price}</td></tr>
+                          <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}><td style={{ padding: '4px' }}>{r.name}</td><td style={{ textAlign: 'center' }}>{r.type}</td><td style={{ textAlign: 'center' }}>{r.capacity}</td><td style={{ textAlign: 'center' }}>₹{r.price}</td></tr>
                         ))}
                       </tbody>
                     </table>
@@ -618,7 +618,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* â”€â”€â”€ New Plan: Social Links â”€â”€â”€ */}
+                {/* ─── New Plan: Social Links ─── */}
                 {survey.socialLinks && Array.isArray(survey.socialLinks) && survey.socialLinks.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Social Links</div>
@@ -630,7 +630,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* â”€â”€â”€ New Plan: Business Documents â”€â”€â”€ */}
+                {/* ─── New Plan: Business Documents ─── */}
                 {survey.aboutBusiness && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>About Business</div>
@@ -638,14 +638,14 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* â”€â”€â”€ New Plan: Terms â”€â”€â”€ */}
+                {/* ─── New Plan: Terms ─── */}
                 {(survey.agreedToTerms || survey.declaredInfoCorrect || survey.acknowledgedDotLiability) && (
                   <div style={{ marginTop: '16px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Terms & Conditions</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px' }}>
-                      <div>{survey.agreedToTerms ? 'âœ…' : 'âŒ'} Agreed to Terms & Conditions</div>
-                      <div>{survey.declaredInfoCorrect ? 'âœ…' : 'âŒ'} Declared info correct</div>
-                      <div>{survey.acknowledgedDotLiability ? 'âœ…' : 'âŒ'} Acknowledged DOT liability</div>
+                      <div>{survey.agreedToTerms ? '✅' : '❌'} Agreed to Terms & Conditions</div>
+                      <div>{survey.declaredInfoCorrect ? '✅' : '❌'} Declared info correct</div>
+                      <div>{survey.acknowledgedDotLiability ? '✅' : '❌'} Acknowledged DOT liability</div>
                     </div>
                   </div>
                 )}
@@ -656,14 +656,14 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                       <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>OFFICIAL DIGIPIN</span>
                       <span style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--text-primary)', letterSpacing: '2px', fontFamily: 'monospace' }}>{survey.digipin || stakeholder.digipin}</span>
                     </div>
-                    <CopyButton value={survey.digipin || stakeholder.digipin} label="ðŸ“‹ Copy" size="sm" />
+                    <CopyButton value={survey.digipin || stakeholder.digipin} label="📋 Copy" size="sm" />
                   </div>
                 )}
               </div>
             )}
             
             <div className="gallery-section">
-              <h4 className="gallery-section-title">ðŸ“· Verification Photos ({photos.length})</h4>
+              <h4 className="gallery-section-title">📷 Verification Photos ({photos.length})</h4>
               {photos.length > 0 ? (
                 <div className="photo-grid">
                   {photos.map((photo: any) => (
@@ -679,7 +679,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             </div>
 
             <div className="gallery-section">
-              <h4 className="gallery-section-title">ðŸ“„ Business Documents</h4>
+              <h4 className="gallery-section-title">📄 Business Documents</h4>
               {(() => {
                 const docs = media.filter((m: any) => m.type === 'DOCUMENT' || DOC_CATEGORIES.includes(m.photoCategory));
                 return docs.length > 0 ? (
@@ -691,7 +691,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                           <img src={doc.fileUrl} alt={doc.fileName} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '6px', cursor: 'pointer', marginBottom: '8px' }} onClick={() => setLightbox(doc.fileUrl)} />
                         ) : (
                           <div style={{ width: '100%', height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-surface)', borderRadius: '6px', marginBottom: '8px' }}>
-                            <span style={{ fontSize: '32px' }}>ðŸ“„</span>
+                            <span style={{ fontSize: '32px' }}>📄</span>
                           </div>
                         )}
                         <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '12px', color: 'var(--primary)', wordBreak: 'break-all' }}>{doc.fileName || 'View Document'}</a>
@@ -703,7 +703,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             </div>
 
             <div className="gallery-section">
-              <h4 className="gallery-section-title">ðŸŽ¥ Verification Video ({videos.length})</h4>
+              <h4 className="gallery-section-title">🎥 Verification Video ({videos.length})</h4>
               {videos.length > 0 ? (
                 <div className="video-grid">
                   {videos.map((video: any) => (
@@ -720,7 +720,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
       {lightbox && (
         <div className="lightbox-overlay" onClick={() => setLightbox(null)}>
           <img src={lightbox} alt="Full size" />
-          <button className="lightbox-close" onClick={() => setLightbox(null)}>âœ•</button>
+          <button className="lightbox-close" onClick={() => setLightbox(null)}>✕</button>
         </div>
       )}
     </div>
