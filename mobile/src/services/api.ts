@@ -374,6 +374,25 @@ export const stakeholderService = {
     }),
   updateStakeholder: (id: string, data: any) =>
     api.patch(`/stakeholders/${id}`, data),
+  /**
+   * Create a stakeholder by hand.
+   *
+   * ONLINE ONLY. The sync queue can hold arbitrary entity types locally, but the
+   * server's /sync/upload endpoint only processes surveys and media — there is no
+   * handler for a queued stakeholder create, so anything queued here would sit
+   * unsent forever and look like data loss. Callers must check connectivity first.
+   *
+   * The server assigns primary_key_id and confines non-admins to their assigned
+   * districts, so an enumerator cannot create a record outside their area.
+   */
+  create: (data: any) =>
+    api.post('/stakeholders', data),
+  /**
+   * Permanently delete a stakeholder. Admin-only server-side (403 otherwise), and
+   * refused with 409 when any survey is attached. Online only, same reason as above.
+   */
+  remove: (id: string) =>
+    api.delete(`/stakeholders/${id}`),
 };
 
 export const surveyService = {

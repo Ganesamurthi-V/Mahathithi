@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express';
 import { StakeholderService } from './stakeholder.service';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { ValidationError } from '../../utils/errors';
-import { updateStakeholderSchema } from '../../schemas/request-schemas';
+import { updateStakeholderSchema, createStakeholderSchema } from '../../schemas/request-schemas';
 
 const stakeholderService = new StakeholderService();
 
@@ -144,6 +144,35 @@ export class StakeholderController {
       const result = await stakeholderService.updateStakeholder(
         (req.params.id as string),
         validated,
+        req.enumerator!.id
+      );
+
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async create(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const validated = createStakeholderSchema.parse(req.body);
+
+      const result = await stakeholderService.createStakeholder(validated, {
+        id: req.enumerator!.id,
+        districts: req.enumerator!.districts,
+        isAdmin: req.enumerator!.isAdmin,
+      });
+
+      res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async remove(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await stakeholderService.deleteStakeholder(
+        (req.params.id as string),
         req.enumerator!.id
       );
 

@@ -635,6 +635,39 @@ export const stakeholderDao = {
   // Now: a stakeholder is only purged once it has NOTHING left to upload.
   // Any stakeholder still holding an unsynced survey or unsynced media row is
   // skipped entirely and retried on a later sync, after the uploads land.
+  /**
+   * Remove a single stakeholder from the local cache after the server has deleted
+   * it, so the list reflects the deletion without waiting for a full re-sync.
+   *
+   * Unlike removeLockedStakeholders this does NOT protect rows with unsynced
+   * work: the server refuses to delete a stakeholder that has any survey, so by
+   * the time this is called there is nothing pending to preserve. Local survey
+   * rows are cleared too in case a draft was started and abandoned before ever
+   * syncing — those would otherwise be orphaned, referencing a stakeholder id
+   * that no longer exists anywhere.
+   */
+  async deleteById(id: string): Promise<void> {
+    const database = await getDB();
+    const [surveyRes] = await database.executeSql(
+      'SELECT id FROM surveys WHERE stakeholder_id = ?',
+      [id]
+    );
+    const surveyIds: string[] = [];
+    for (let i = 0; i < surveyRes.rows.length; i++) {
+      surveyIds.push(surveyRes.rows.item(i).id);
+    }
+    if (surveyIds.length > 0) {
+      const placeholders = surveyIds.map(() => '?').join(',');
+      await database.executeSql(
+        `DELETE FROM media WHERE survey_id IN (${placeholders})`,
+        surveyIds
+      );
+      await database.executeSql('DELETE FROM surveys WHERE stakeholder_id = ?', [id]);
+    }
+    await database.executeSql('DELETE FROM phone_validations WHERE stakeholder_id = ?', [id]);
+    await database.executeSql('DELETE FROM stakeholders WHERE id = ?', [id]);
+  },
+
   async removeLockedStakeholders(lockedIds: string[]): Promise<void> {
     if (lockedIds.length === 0) return;
     const database = await getDB();

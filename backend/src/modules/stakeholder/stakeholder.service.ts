@@ -532,4 +532,193 @@ export class StakeholderService {
 
     return updated;
   }
+
+  /**
+   * Create a stakeholder by hand.
+   *
+   * PRIMARY KEY
+   * stakeholders.primary_key_id is a unique Int, populated by the Excel import
+   * from the sheet's Primary_Key_ID column — it is not a database sequence, so
+   * there is nothing to auto-increment. New rows take MAX+1.
+   *
+   * That read-then-write is racy: two operators creating at the same moment can
+   * both read the same MAX and the second insert then violates the unique
+   * constraint. Rather than lock the table, the insert is retried on P2002, which
+   * is cheap because the collision window is tiny and the retry re-reads MAX.
+   *
+   * DISTRICT
+   * District is the access-control boundary for enumerators, so a non-admin may
+   * only create inside a district they are assigned to. Left unspecified, it
+   * defaults to their first assigned district rather than NULL — a district-less
+   * row would be invisible to every enumerator (district filters would exclude it)
+   * while still counting in totals.
+   */
+  async createStakeholder(
+    data: any,
+    enumerator: { id: string; districts: string[]; isAdmin: boolean }
+  ) {
+    let district = data.district?.trim() || undefined;
+
+    if (!enumerator.isAdmin) {
+      if (!district) {
+        if (!enumerator.districts || enumerator.districts.length === 0) {
+          throw new ForbiddenError('No districts assigned. Contact your administrator.');
+        }
+        district = enumerator.districts[0];
+      } else {
+        const allowed = enumerator.districts.some(
+          d => d.toUpperCase() === district!.toUpperCase()
+        );
+        if (!allowed) {
+          throw new ForbiddenError(
+            `Access denied. You are not assigned to district: ${district}`
+          );
+        }
+      }
+    }
+
+    const { district: _ignored, ...rest } = data;
+
+    const MAX_ATTEMPTS = 5;
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const highest = await prisma.stakeholder.aggregate({ _max: { primaryKeyId: true } });
+      const nextKey = (highest._max.primaryKeyId ?? 0) + attempt;
+
+      try {
+        const created = await prisma.stakeholder.create({
+          data: {
+            ...rest,
+            district,
+            primaryKeyId: nextKey,
+            // Marks provenance so these are distinguishable from imported rows.
+            // The import writes 'MCA' or 'Udyam' here.
+            dataSource: 'MANUAL',
+            status: 'OPEN',
+          },
+        });
+
+        await prisma.auditLog.create({
+          data: {
+            action: 'stakeholder_created',
+            entityType: 'stakeholder',
+            entityId: created.id,
+            enumeratorId: enumerator.id,
+            details: {
+              primaryKeyId: created.primaryKeyId,
+              name: created.companyNameStandardized,
+              district: created.district,
+            },
+          },
+        });
+
+        broadcastChange(['stakeholders', 'analytics', 'auditLogs'], {
+          action: 'create',
+          entityId: created.id,
+          district: created.district,
+        });
+
+        return created;
+      } catch (error) {
+        // P2002 = unique constraint violation. Only primaryKeyId can realistically
+        // collide here, so retry with a fresh MAX. Anything else is a real fault.
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          lastError = error;
+          logger.warn(
+            `primary_key_id ${nextKey} taken, retrying stakeholder create (attempt ${attempt}/${MAX_ATTEMPTS})`
+          );
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    logger.error('Exhausted primary_key_id retries creating stakeholder', lastError);
+    throw new ConflictError(
+      'Could not allocate an ID for the new stakeholder. Please try again.'
+    );
+  }
+
+  /**
+   * Permanently delete a stakeholder.
+   *
+   * THIS IS A HARD DELETE, AND WHY
+   * The table has no deletedAt/isActive column, and adding one would mean auditing
+   * every existing stakeholder query — search, dashboard counts, district
+   * aggregates, the paginated mobile sync — to exclude soft-deleted rows. Missing
+   * any one of those would leak "deleted" records back into a view. So this
+   * removes the row, and recoverability comes from the audit snapshot below rather
+   * than from a flag.
+   *
+   * SURVEYS BLOCK THE DELETE
+   * Survey.stakeholder declares no onDelete, so Prisma's default is Restrict and
+   * the database would reject this with a raw foreign-key error. A surveyed
+   * stakeholder also represents completed field work that should not vanish as a
+   * side effect of tidying a list. It is refused explicitly, with an actionable
+   * message, instead of surfacing a constraint violation.
+   *
+   * Phone validations are removed with it: they are derived verification attempts
+   * against this record, meaningless once it is gone, and they carry the same
+   * Restrict constraint so they would otherwise block the delete too.
+   */
+  async deleteStakeholder(stakeholderId: string, enumeratorId: string) {
+    const stakeholder = await prisma.stakeholder.findUnique({
+      where: { id: stakeholderId },
+    });
+
+    if (!stakeholder) {
+      throw new NotFoundError('Stakeholder');
+    }
+
+    const surveyCount = await prisma.survey.count({ where: { stakeholderId } });
+    if (surveyCount > 0) {
+      throw new ConflictError(
+        `This stakeholder has ${surveyCount} survey${surveyCount === 1 ? '' : 's'} attached and cannot be deleted. ` +
+        `Delete the survey data first if this record really must be removed.`
+      );
+    }
+
+    // Snapshot before removal. A hard delete is otherwise unrecoverable, and this
+    // is the only trace left of what the row contained.
+    await prisma.auditLog.create({
+      data: {
+        action: 'stakeholder_deleted',
+        entityType: 'stakeholder',
+        entityId: stakeholderId,
+        enumeratorId,
+        details: {
+          name: stakeholder.companyNameStandardized,
+          district: stakeholder.district,
+          primaryKeyId: stakeholder.primaryKeyId,
+          // Full row, so the record can be reconstructed if this was a mistake.
+          snapshot: JSON.parse(JSON.stringify(stakeholder)),
+        },
+      },
+    });
+
+    // One transaction: if the stakeholder delete fails, its phone validations must
+    // not already be gone.
+    await prisma.$transaction([
+      prisma.phoneValidation.deleteMany({ where: { stakeholderId } }),
+      prisma.stakeholder.delete({ where: { id: stakeholderId } }),
+    ]);
+
+    logger.info(
+      `Stakeholder ${stakeholderId} (${stakeholder.companyNameStandardized}) deleted by ${enumeratorId}`
+    );
+
+    // analytics included: the totals and per-district counts on the dashboard both
+    // move when a row disappears.
+    broadcastChange(['stakeholders', 'analytics', 'auditLogs'], {
+      action: 'delete',
+      entityId: stakeholderId,
+      district: stakeholder.district,
+    });
+
+    return { id: stakeholderId, deleted: true };
+  }
 }

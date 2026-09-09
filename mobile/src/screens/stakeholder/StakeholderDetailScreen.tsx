@@ -3,9 +3,9 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Animated, 
 import { stakeholderService, surveyService } from '../../services/api';
 import { stakeholderDao, syncQueueDao, surveyDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { runAutoSync } from '../../store/slices/syncThunks';
-import { AppDispatch } from '../../store';
+import { AppDispatch, RootState } from '../../store';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { moderateScale } from '../../theme/responsive';
@@ -103,6 +103,60 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editData, setEditData] = useState<any>({});
+  const [deleting, setDeleting] = useState(false);
+  // Delete is admin-only server-side, so the button is hidden for ordinary
+  // enumerators rather than shown and then 403-ing on tap.
+  const { user } = useSelector((state: RootState) => state.auth);
+  const canDelete = user?.isAdmin === true;
+
+  /**
+   * Permanently delete this stakeholder.
+   *
+   * Online only — the sync queue has no server-side handler for stakeholder
+   * deletes, so a queued one would never be sent.
+   *
+   * The server refuses with 409 if any survey is attached; that message names the
+   * count and is more useful than anything generated here, so it is shown as-is.
+   */
+  const confirmDelete = () => {
+    const name = stakeholder?.companyNameStandardized || stakeholder?.companyNameOriginal || 'this stakeholder';
+    Alert.alert(
+      'Delete stakeholder?',
+      `"${name}" will be permanently removed. This cannot be undone from the app.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const net = await NetInfo.fetch();
+            if (!net.isConnected) {
+              Alert.alert('No connection', 'Deleting a stakeholder requires an internet connection.');
+              return;
+            }
+            setDeleting(true);
+            try {
+              await stakeholderService.remove(stakeholderId);
+              // Drop it locally too, so going back does not show a row that no
+              // longer exists on the server.
+              await stakeholderDao.deleteById(stakeholderId);
+              DeviceEventEmitter.emit('stakeholders:changed');
+              Alert.alert('Deleted', `"${name}" was removed.`, [
+                { text: 'OK', onPress: () => navigation.goBack() },
+              ]);
+            } catch (e: any) {
+              Alert.alert(
+                'Could not delete',
+                e.response?.data?.error?.message || 'Please try again.'
+              );
+            } finally {
+              setDeleting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
   const insets = useSafeAreaInsets();
   const dispatch = useDispatch<AppDispatch>();
 
@@ -348,6 +402,20 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
               onPress={() => navigation.navigate('SurveyForm', { stakeholderId, stakeholder: s, survey })}
             />
           </View>
+          {canDelete && (
+            <TouchableOpacity
+              style={styles.deleteLink}
+              onPress={confirmDelete}
+              disabled={deleting}
+              accessibilityRole="button"
+              accessibilityLabel="Delete stakeholder"
+            >
+              <Icon name="trash-can-outline" size={16} color={colors.error} />
+              <Text style={styles.deleteLinkText}>
+                {deleting ? 'Deleting…' : 'Delete stakeholder'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -486,6 +554,14 @@ const styles = StyleSheet.create({
   actionPrimaryText: { ...typography.button, color: '#FFF', fontSize: moderateScale(16) },
   
   actionRow: { flexDirection: 'row', gap: spacing.md },
+  // Deliberately a low-emphasis text link rather than a third button in actionRow:
+  // it sits next to Survey, the action taken dozens of times a day, and giving a
+  // destructive irreversible action equal visual weight invites mis-taps.
+  deleteLink: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingTop: spacing.md, gap: 6,
+  },
+  deleteLinkText: { ...typography.caption, color: colors.error, fontWeight: '600' },
   actionSecondary: {
     flexDirection: 'row', justifyContent: 'center', backgroundColor: colors.bgCard, 
     borderRadius: borderRadius.full, padding: spacing.md, alignItems: 'center', 

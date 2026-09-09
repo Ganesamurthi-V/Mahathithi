@@ -209,6 +209,13 @@ export const getDashboardStats = () => api.get('/dashboard/stats');
 export const searchStakeholders = (params: any) => api.get('/stakeholders/search', { params });
 export const getStakeholderById = (id: string) => api.get(`/stakeholders/${id}`);
 export const updateStakeholder = (id: string, data: any) => api.patch(`/stakeholders/${id}`, data);
+export const createStakeholder = (data: any) => api.post('/stakeholders', data);
+/**
+ * Permanently delete a stakeholder. Admin-only server-side, and refused with a 409
+ * if any survey is attached. The server writes a full row snapshot to the audit log
+ * first, which is the only way back from this.
+ */
+export const deleteStakeholder = (id: string) => api.delete(`/stakeholders/${id}`);
 
 // Surveys
 export const getSurveyByStakeholder = (stakeholderId: string) =>

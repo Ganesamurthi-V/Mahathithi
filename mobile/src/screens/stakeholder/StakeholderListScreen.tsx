@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Animated, Easing, DeviceEventEmitter } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Animated, Easing, DeviceEventEmitter, Modal, TextInput, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSelector } from 'react-redux';
@@ -103,6 +103,7 @@ export default function StakeholderListScreen({ navigation }: any) {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [totalCount, setTotalCount] = useState(0);
+  const [showAdd, setShowAdd] = useState(false);
 
   const loadStakeholders = async (p = 1, isPullToRefresh = false) => {
     if (isPullToRefresh) setLoading(true);
@@ -176,12 +177,33 @@ export default function StakeholderListScreen({ navigation }: any) {
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.title}>Stakeholders</Text>
-          {!initialLoading && (
-            <View style={styles.countBadge}>
-              <Text style={styles.countText}>{totalCount} items</Text>
-            </View>
-          )}
+          <View style={styles.headerRight}>
+            {!initialLoading && (
+              <View style={styles.countBadge}>
+                <Text style={styles.countText}>{totalCount} items</Text>
+              </View>
+            )}
+            <TouchableOpacity
+              style={styles.addBtn}
+              onPress={() => setShowAdd(true)}
+              accessibilityLabel="Add stakeholder"
+              accessibilityRole="button"
+            >
+              <Icon name="plus" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
         </View>
+
+        <AddStakeholderModal
+          visible={showAdd}
+          onClose={() => setShowAdd(false)}
+          onCreated={() => {
+            setShowAdd(false);
+            // Reload from page 1 so the new record is visible immediately rather
+            // than only after the next full sync.
+            loadStakeholders(1, true);
+          }}
+        />
 
         {initialLoading ? (
           <View style={styles.list}>
@@ -215,6 +237,13 @@ export default function StakeholderListScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgPrimary },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.xl },
+  headerRight: { flexDirection: 'row', alignItems: 'center' },
+  addBtn: {
+    backgroundColor: colors.primary,
+    width: 38, height: 38, borderRadius: 19,
+    alignItems: 'center', justifyContent: 'center',
+    marginLeft: spacing.sm,
+  },
   title: { ...typography.h2, color: colors.textPrimary },
   countBadge: { backgroundColor: colors.bgCard, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: colors.border },
   countText: { ...typography.caption, color: colors.textSecondary },
@@ -236,4 +265,193 @@ const styles = StyleSheet.create({
   skeletonTextLarge: { width: '60%', height: 20, backgroundColor: colors.border, borderRadius: 4 },
   skeletonBadge: { width: 60, height: 20, backgroundColor: colors.border, borderRadius: 10 },
   skeletonTextSmall: { width: '30%', height: 14, backgroundColor: colors.border, borderRadius: 4 },
+});
+
+/**
+ * Add a stakeholder from the field.
+ *
+ * ONLINE ONLY, and it says so rather than failing obscurely. The local sync_queue
+ * can hold any entity type, but the server's /sync/upload only processes surveys
+ * and media — a queued stakeholder create would never be sent, so offering this
+ * offline would silently discard the operator's work. Connectivity is checked
+ * before the request, and refused with an explanation if absent.
+ *
+ * District is intentionally not an input. The server assigns the enumerator's own
+ * assigned district and rejects anything else, so a field device cannot create
+ * records outside its area; showing an editable field would imply otherwise.
+ */
+function AddStakeholderModal({
+  visible,
+  onClose,
+  onCreated,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    companyNameStandardized: '',
+    city: '',
+    taluka: '',
+    pinCode: '',
+    addressLine1: '',
+    category: '',
+  });
+
+  const set = (key: keyof typeof form, value: string) =>
+    setForm(prev => ({ ...prev, [key]: value }));
+
+  const reset = () =>
+    setForm({ companyNameStandardized: '', city: '', taluka: '', pinCode: '', addressLine1: '', category: '' });
+
+  const submit = async () => {
+    if (!form.companyNameStandardized.trim()) {
+      Alert.alert('Name required', 'Enter the organization name.');
+      return;
+    }
+
+    const net = await NetInfo.fetch();
+    if (!net.isConnected) {
+      Alert.alert(
+        'No connection',
+        'Adding a stakeholder needs an internet connection. Surveys still work offline — only new stakeholder records require being online.'
+      );
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // Only send non-empty keys: the server schema is .strict() and rejects
+      // unknown fields, though it does accept '' for the optional text ones.
+      const payload: Record<string, string> = {};
+      for (const [key, value] of Object.entries(form)) {
+        if (value.trim() !== '') payload[key] = value.trim();
+      }
+
+      const res = await stakeholderService.create(payload);
+      const created = res.data?.data;
+
+      // Write straight into SQLite so the row appears without waiting for the next
+      // full sync, which on this dataset is a multi-page download.
+      if (created?.id) {
+        await stakeholderDao.upsertMany([created]);
+      }
+
+      reset();
+      Alert.alert('Added', `"${created?.companyNameStandardized || 'Stakeholder'}" was created.`);
+      onCreated();
+    } catch (e: any) {
+      const detail = e.response?.data?.error?.details?.[0];
+      Alert.alert(
+        'Could not add stakeholder',
+        (detail ? `${detail.path?.join('.') || 'field'}: ${detail.message}` : null) ||
+          e.response?.data?.error?.message ||
+          'Please try again.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const rows: { label: string; key: keyof typeof form; placeholder?: string; keyboardType?: any; maxLength?: number }[] = [
+    { label: 'Organization Name *', key: 'companyNameStandardized', placeholder: 'e.g. Sai Angan Hotels Pvt Ltd' },
+    { label: 'Address', key: 'addressLine1' },
+    { label: 'City', key: 'city' },
+    { label: 'Taluka', key: 'taluka' },
+    { label: 'PIN Code', key: 'pinCode', keyboardType: 'number-pad', maxLength: 10 },
+    { label: 'Category', key: 'category', placeholder: 'e.g. Hotels & Resorts' },
+  ];
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={addStyles.overlay}>
+        <View style={addStyles.sheet}>
+          <View style={addStyles.sheetHeader}>
+            <Text style={addStyles.sheetTitle}>Add Stakeholder</Text>
+            <TouchableOpacity onPress={onClose} disabled={saving} accessibilityLabel="Close">
+              <Icon name="close" size={24} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={addStyles.note}>
+            Created in your assigned district. Requires an internet connection.
+          </Text>
+
+          <ScrollView style={addStyles.body} keyboardShouldPersistTaps="handled">
+            {rows.map(r => (
+              <View key={r.key} style={addStyles.field}>
+                <Text style={addStyles.label}>{r.label}</Text>
+                <TextInput
+                  style={addStyles.input}
+                  value={form[r.key]}
+                  onChangeText={t => set(r.key, t)}
+                  placeholder={r.placeholder}
+                  placeholderTextColor={colors.textMuted}
+                  editable={!saving}
+                  keyboardType={r.keyboardType}
+                  maxLength={r.maxLength}
+                />
+              </View>
+            ))}
+          </ScrollView>
+
+          <View style={addStyles.actions}>
+            <TouchableOpacity
+              style={[addStyles.btn, addStyles.btnSecondary]}
+              onPress={onClose}
+              disabled={saving}
+            >
+              <Text style={addStyles.btnSecondaryText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[addStyles.btn, addStyles.btnPrimary, saving && addStyles.btnDisabled]}
+              onPress={submit}
+              disabled={saving}
+            >
+              {saving
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Text style={addStyles.btnPrimaryText}>Create</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const addStyles = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: colors.bgPrimary,
+    borderTopLeftRadius: borderRadius.lg,
+    borderTopRightRadius: borderRadius.lg,
+    maxHeight: '90%',
+    paddingBottom: spacing.xl,
+  },
+  sheetHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    padding: spacing.xl, borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  sheetTitle: { ...typography.h3, color: colors.textPrimary },
+  note: {
+    ...typography.caption, color: colors.textMuted,
+    paddingHorizontal: spacing.xl, paddingTop: spacing.md,
+  },
+  body: { paddingHorizontal: spacing.xl, paddingTop: spacing.md },
+  field: { marginBottom: spacing.md },
+  label: { ...typography.caption, color: colors.textMuted, marginBottom: 4 },
+  input: {
+    backgroundColor: colors.bgCard,
+    borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    color: colors.textPrimary,
+  },
+  actions: { flexDirection: 'row', gap: spacing.md, paddingHorizontal: spacing.xl, paddingTop: spacing.md },
+  btn: { flex: 1, paddingVertical: spacing.md, borderRadius: borderRadius.md, alignItems: 'center', justifyContent: 'center' },
+  btnPrimary: { backgroundColor: colors.primary },
+  btnPrimaryText: { color: '#fff', fontWeight: '600' },
+  btnSecondary: { backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.border },
+  btnSecondaryText: { color: colors.textPrimary, fontWeight: '600' },
+  btnDisabled: { opacity: 0.6 },
 });

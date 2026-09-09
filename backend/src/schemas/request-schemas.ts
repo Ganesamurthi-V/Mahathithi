@@ -218,6 +218,47 @@ export const updateStakeholderSchema = z.object({
   digipin: optText(10),
 }).strict();
 
+/**
+ * Create a stakeholder by hand, rather than via the Excel bulk import.
+ *
+ * Only the business name is mandatory. Everything the registry import supplies
+ * (CIN, TIN, NIC codes, capital figures, dedup/lineage columns) is deliberately
+ * NOT accepted here: those are provenance fields owned by the import pipeline, and
+ * letting an operator type them in would produce records that look sourced from
+ * MCA/Udyam when they are not.
+ *
+ * `district` is accepted but authorisation over it is enforced in the service, not
+ * here — a non-admin may only create inside their assigned districts. `status` is
+ * not accepted; new records always start OPEN.
+ *
+ * primaryKeyId is assigned server-side. It is a unique Int the import populates
+ * from the spreadsheet's Primary_Key_ID, so a client-supplied value would risk
+ * colliding with a future import row.
+ */
+export const createStakeholderSchema = z.object({
+  // NOT text(500): that is z.string().trim().max(n), which accepts ''. A nameless
+  // stakeholder renders as '—' in every list in both clients and is effectively
+  // unfindable afterwards, so the one mandatory field is required for real.
+  companyNameStandardized: z.string().trim().min(1, 'Organization name is required').max(500),
+  companyNameOriginal: optText(500),
+  district: optText(200),
+  addressLine1: optText(500),
+  addressLine2: optText(500),
+  fullAddressRaw: optText(1000),
+  city: optText(200),
+  taluka: optText(200),
+  village: optText(200),
+  state: optText(200),
+  pinCode: optText(10),
+  category: optText(200),
+  gstNumber: optText(20),
+  nicCode: optText(20),
+  nicDescription: optText(500),
+  latitude: latitude.optional(),
+  longitude: longitude.optional(),
+  digipin: optText(10),
+}).strict();
+
 // ────────────────────────────────────────────────────────────────────────────
 // Sync upload — per-item sub-schemas
 // ────────────────────────────────────────────────────────────────────────────

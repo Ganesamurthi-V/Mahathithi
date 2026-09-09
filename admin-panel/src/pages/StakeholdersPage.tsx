@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { searchStakeholders, updateStakeholder, getSurveyByStakeholder, getMediaBySurvey } from '../api';
+import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey } from '../api';
 import { getDigiPin } from '../utils/digipin';
 import {
   LoadingButton,
@@ -48,6 +48,7 @@ export default function StakeholdersPage() {
   const [debouncedFilters, setDebouncedFilters] = useState(filters);
   const [page, setPage] = useState(1);
   const [selectedStakeholder, setSelectedStakeholder] = useState<any>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
   // Which pagination button was pressed, so only that one shows a spinner.
   const [pendingDirection, setPendingDirection] = useState<'prev' | 'next' | null>(null);
 
@@ -105,10 +106,17 @@ export default function StakeholdersPage() {
 
   return (
     <>
-      <div className="page-header">
-        <h2>Stakeholders</h2>
-        <p>Browse and verify stakeholder submissions with photos and videos</p>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+        <div>
+          <h2>Stakeholders</h2>
+          <p>Browse and verify stakeholder submissions with photos and videos</p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ whiteSpace: 'nowrap' }}>
+          ➕ Add Stakeholder
+        </button>
       </div>
+
+      {showAddForm && <AddStakeholderModal onClose={() => setShowAddForm(false)} />}
 
       <div className="card" style={{ marginBottom: '24px' }}>
         <form onSubmit={handleSearch} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -318,6 +326,42 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
     },
   });
 
+  /**
+   * Permanent delete.
+   *
+   * Not optimistic, unlike the edit above. An edit that fails can be rolled back
+   * into the cache and the editor reopened; a delete that fails after the row has
+   * already vanished from the table leaves the operator unsure whether it happened.
+   * The row stays put until the server confirms.
+   *
+   * The server refuses with 409 when surveys are attached, and that message is the
+   * useful one ("has 2 surveys attached…"), so it is surfaced verbatim.
+   */
+  const deleteMut = useMutation({
+    mutationFn: () => deleteStakeholder(stakeholder.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stakeholders'] });
+      queryClient.invalidateQueries({ queryKey: ['analytics'] });
+      onClose();
+    },
+    onError: (err: any) => {
+      alert(err.response?.data?.error?.message || 'Failed to delete stakeholder');
+    },
+  });
+
+  const confirmDelete = () => {
+    const name = stakeholder.companyNameStandardized || stakeholder.companyNameOriginal || 'this stakeholder';
+    // Deliberately spells out that it cannot be undone from the UI. The server does
+    // keep an audit snapshot, but recovering from it is a manual database job, not
+    // something the operator can do here.
+    if (!window.confirm(
+      `Permanently delete "${name}"?\n\n` +
+      `District: ${stakeholder.district || '—'}\n\n` +
+      `This cannot be undone from the admin panel.`
+    )) return;
+    deleteMut.mutate();
+  };
+
   const categoryLabels: Record<string, string> = {
     BUILDING_FRONT: '🏢 Building Front', SIGNBOARD: '🪧 Signboard', INTERIOR: '🏠 Interior', STAKEHOLDER: '👤 Stakeholder', ADDITIONAL: '📸 Additional',
     DISPLAY_IMAGE: '🖼️ Display Image', HEADER_SLIDER: '🎠 Header Slider',
@@ -336,7 +380,18 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
               {stakeholder.district} • {stakeholder.pinCode} • <span className={`badge ${stakeholder.status === 'CLOSED' ? 'badge-active' : 'badge-pending'}`}>{(stakeholder.status || 'OPEN').replace('_', ' ')}</span>
             </p>
           </div>
-          <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <LoadingButton
+              variant="danger"
+              size="sm"
+              loading={deleteMut.isPending}
+              loadingText="Deleting…"
+              onClick={confirmDelete}
+            >
+              🗑 Delete
+            </LoadingButton>
+            <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
+          </div>
         </div>
 
         {isLoading ? (
@@ -668,6 +723,204 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
           <button className="lightbox-close" onClick={() => setLightbox(null)}>✕</button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Create a stakeholder by hand.
+ *
+ * Only the organization name is required; the server fills in primary_key_id and
+ * stamps dataSource='MANUAL' so these stay distinguishable from rows the MCA/Udyam
+ * import produced.
+ *
+ * Registry provenance fields (CIN, TIN, capital figures, dedup/lineage columns) are
+ * deliberately absent from this form. They are owned by the import pipeline, and a
+ * hand-typed value there would make a record look sourced from a government
+ * registry when it was not. The server's schema rejects them too.
+ */
+function AddStakeholderModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState({
+    companyNameStandardized: '',
+    district: '',
+    city: '',
+    taluka: '',
+    village: '',
+    state: 'Maharashtra',
+    pinCode: '',
+    addressLine1: '',
+    addressLine2: '',
+    category: '',
+    gstNumber: '',
+    nicCode: '',
+    latitude: '',
+    longitude: '',
+    digipin: '',
+  });
+
+  const set = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
+
+  // Mirrors the edit form: DIGIPIN is derived from the coordinates rather than
+  // typed, so it cannot disagree with them.
+  const setCoord = (key: 'latitude' | 'longitude', value: string) => {
+    setForm(prev => {
+      const next = { ...prev, [key]: value };
+      const lat = parseFloat(key === 'latitude' ? value : next.latitude);
+      const lon = parseFloat(key === 'longitude' ? value : next.longitude);
+      if (!isNaN(lat) && !isNaN(lon)) {
+        next.digipin = getDigiPin(lat, lon) || next.digipin;
+      }
+      return next;
+    });
+  };
+
+  const createMut = useMutation({
+    mutationFn: () => {
+      // The server schema is .strict(), so unknown keys are a 400. Blank text
+      // fields are accepted as '', but latitude/longitude are typed as numbers —
+      // sending '' for those fails validation, so they are omitted when empty
+      // rather than coerced to 0, which would place every such record off the
+      // coast of Africa.
+      const payload: any = {};
+      for (const [key, value] of Object.entries(form)) {
+        if (key === 'latitude' || key === 'longitude') continue;
+        if (value !== '') payload[key] = value;
+      }
+      const lat = parseFloat(form.latitude);
+      const lon = parseFloat(form.longitude);
+      if (!isNaN(lat)) payload.latitude = lat;
+      if (!isNaN(lon)) payload.longitude = lon;
+      return createStakeholder(payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stakeholders'] });
+      queryClient.invalidateQueries({ queryKey: ['analytics'] });
+      onClose();
+    },
+    onError: (err: any) => {
+      // Zod returns a field-level list; surface the first one rather than a generic
+      // failure, so the operator knows which input to fix.
+      const detail = err.response?.data?.error?.details?.[0];
+      const fieldMsg = detail ? `${detail.path?.join('.') || 'field'}: ${detail.message}` : null;
+      alert(fieldMsg || err.response?.data?.error?.message || 'Failed to create stakeholder');
+    },
+  });
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.companyNameStandardized.trim()) {
+      alert('Organization name is required.');
+      return;
+    }
+    createMut.mutate();
+  };
+
+  const field = (label: string, key: keyof typeof form, extra: any = {}) => (
+    <div className="form-group" style={{ flex: 1, marginBottom: 0, minWidth: '140px' }}>
+      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>{label}</label>
+      <input
+        className="form-input"
+        value={form[key]}
+        onChange={(e) => set(key, e.target.value)}
+        disabled={createMut.isPending}
+        {...extra}
+      />
+    </div>
+  );
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="gallery-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '760px' }}>
+        <div className="gallery-header">
+          <div>
+            <h3 style={{ margin: 0 }}>Add Stakeholder</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
+              Creates a record manually. It will be marked as source <code>MANUAL</code> and start with status OPEN.
+            </p>
+          </div>
+          <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
+        </div>
+
+        <div className="gallery-body">
+          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                Organization Name <span style={{ color: 'var(--danger, #e5484d)' }}>*</span>
+              </label>
+              <input
+                className="form-input"
+                value={form.companyNameStandardized}
+                onChange={(e) => set('companyNameStandardized', e.target.value)}
+                placeholder="e.g. Sai Angan Hotels Private Limited"
+                disabled={createMut.isPending}
+                autoFocus
+                required
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              {field('District', 'district', { placeholder: 'e.g. Pune' })}
+              {field('State', 'state')}
+              {field('PIN Code', 'pinCode', { inputMode: 'numeric', maxLength: 10 })}
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              {field('City', 'city')}
+              {field('Taluka', 'taluka')}
+              {field('Village', 'village')}
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              {field('Address Line 1', 'addressLine1')}
+              {field('Address Line 2', 'addressLine2')}
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              {field('Category', 'category', { placeholder: 'e.g. Hotels & Resorts' })}
+              {field('GST Number', 'gstNumber', { maxLength: 20 })}
+              {field('NIC Code', 'nicCode', { maxLength: 20 })}
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ flex: 1, marginBottom: 0, minWidth: '140px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Latitude</label>
+                <input
+                  type="number" step="any" className="form-input" value={form.latitude}
+                  onChange={(e) => setCoord('latitude', e.target.value)}
+                  disabled={createMut.isPending}
+                />
+              </div>
+              <div className="form-group" style={{ flex: 1, marginBottom: 0, minWidth: '140px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Longitude</label>
+                <input
+                  type="number" step="any" className="form-input" value={form.longitude}
+                  onChange={(e) => setCoord('longitude', e.target.value)}
+                  disabled={createMut.isPending}
+                />
+              </div>
+              <div className="form-group" style={{ flex: 1, marginBottom: 0, minWidth: '140px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>DIGIPIN (derived)</label>
+                <input className="form-input" value={form.digipin} readOnly style={{ backgroundColor: 'var(--bg-surface)' }} />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
+              <button type="button" className="btn btn-secondary" onClick={onClose} disabled={createMut.isPending}>
+                Cancel
+              </button>
+              <LoadingButton
+                type="submit"
+                variant="primary"
+                loading={createMut.isPending}
+                loadingText="Creating…"
+              >
+                Create Stakeholder
+              </LoadingButton>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }
