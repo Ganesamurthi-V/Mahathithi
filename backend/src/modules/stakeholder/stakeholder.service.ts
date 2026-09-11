@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
-import { NotFoundError, ForbiddenError, ConflictError } from '../../utils/errors';
+import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../../utils/errors';
 import { logger } from '../../utils/logger';
 import { districtScopeFilter } from '../../utils/district-scope';
 import { categoryFilter } from '../../utils/category-scope';
@@ -559,13 +559,9 @@ export class StakeholderService {
   ) {
     let district = data.district?.trim() || undefined;
 
-    if (!enumerator.isAdmin) {
-      if (!district) {
-        if (!enumerator.districts || enumerator.districts.length === 0) {
-          throw new ForbiddenError('No districts assigned. Contact your administrator.');
-        }
-        district = enumerator.districts[0];
-      } else {
+    if (district) {
+      // Non-admins may only create inside a district they are assigned to.
+      if (!enumerator.isAdmin) {
         const allowed = enumerator.districts.some(
           d => d.toUpperCase() === district!.toUpperCase()
         );
@@ -575,6 +571,31 @@ export class StakeholderService {
           );
         }
       }
+    } else {
+      // No district supplied — the mobile form does not collect one, since the
+      // server decides it. Fall back to the caller's first assigned district for
+      // EVERYONE, admins included.
+      //
+      // This used to fall back only for non-admins, which left an admin creating
+      // from the mobile app with district = NULL. A district-less stakeholder is
+      // excluded by every district-filtered query (search, the enumerator's own
+      // list, dashboard per-district counts) while still counting in totals — so it
+      // would exist, be unreachable, and quietly skew the numbers.
+      //
+      // If there is genuinely no district to fall back on, refuse rather than write
+      // the NULL. The admin panel's form has a District field for that case.
+      // Consistent with districtGuard, which already refuses an enumerator with no
+      // assigned districts on every :id route — such a user cannot open a
+      // stakeholder either, so this is not a new restriction. An admin hitting this
+      // should use the District field on the admin panel's form.
+      if (!enumerator.districts || enumerator.districts.length === 0) {
+        throw new ValidationError(
+          'No districts assigned, so the district for this stakeholder cannot be ' +
+          'determined. Enter a district explicitly, or ask an administrator to ' +
+          'assign you one.'
+        );
+      }
+      district = enumerator.districts[0];
     }
 
     const { district: _ignored, ...rest } = data;

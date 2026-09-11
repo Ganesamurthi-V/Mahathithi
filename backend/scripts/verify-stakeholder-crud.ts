@@ -247,7 +247,15 @@ async function main() {
     try {
       const blankRes = await axios.post(
         `${BASE}/api/stakeholders`,
-        { companyNameStandardized: 'ZZ blank numeric probe', authorizedCapital: '', priorityWeight: '' },
+        {
+          companyNameStandardized: 'ZZ blank numeric probe',
+          // district is explicit here because this probe is about numeric handling;
+          // the admin account has no assigned districts, so omitting it would fail
+          // on the district rule instead and test nothing about numbers.
+          district: 'Pune',
+          authorizedCapital: '',
+          priorityWeight: '',
+        },
         { headers }
       );
       check('blank numeric accepted as absent (untouched form input)',
@@ -259,6 +267,92 @@ async function main() {
       check('blank numeric accepted as absent (untouched form input)', false,
         `status ${e.response?.status}: ${msgOf(e)}`);
     }
+
+    // ---- the mobile payload -------------------------------------------
+    // Exactly what the mobile add form sends: the 9 fields the detail screen shows,
+    // and NO district. The server must fill district in, or the row would be
+    // excluded from every district-filtered query while still counting in totals.
+    console.log('\n=== mobile add form payload ===');
+
+    const MOBILE_PAYLOAD = {
+      companyNameStandardized: 'ZZ Mobile Flow Test',
+      companyNameOriginal: 'ZZ Mobile Flow Test',
+      category: 'Worker Hostels',
+      fullAddressRaw: 'S/o Gunaji Bagaytkar, Bomdojichiwadi, Vengurla',
+      city: 'Sindhudurg',
+      state: 'Maharashtra',
+      pinCode: '416517',
+      nicCode: '55902',
+      nicDescription: 'Transport, storage and Communications',
+    };
+
+    // With no district assigned and none supplied, the create must be refused
+    // rather than writing district = NULL. 5 of the 11 enumerators in this database
+    // have no assigned districts, and districtGuard already blocks them from every
+    // :id route, so refusing here is consistent rather than a new restriction.
+    const adminId = login.data.data.enumerator?.id ?? login.data.data.user?.id;
+    const priorAssignments = await prisma.enumeratorDistrict.findMany({
+      where: { enumeratorId: adminId },
+      select: { districtId: true },
+    });
+    check('test account has no districts, so the refusal path is reachable',
+      priorAssignments.length === 0, `${priorAssignments.length} assignment(s)`);
+
+    try {
+      await axios.post(`${BASE}/api/stakeholders`, MOBILE_PAYLOAD, { headers });
+      check('district-less create refused when none can be determined', false,
+        'request succeeded — a NULL-district row was created');
+    } catch (e: any) {
+      check('district-less create refused when none can be determined',
+        e.response?.status === 400, `status ${e.response?.status}`);
+      check('refusal explains how to resolve it',
+        /district/i.test(msgOf(e)) && /assign|enter/i.test(msgOf(e)),
+        JSON.stringify(msgOf(e)));
+    }
+
+    // Now give the caller a district and repeat, which is the real mobile case: a
+    // field enumerator does have one. Removed again immediately below.
+    const someDistrict = await prisma.district.findFirst({ select: { id: true, name: true } });
+    if (!someDistrict) throw new Error('no districts in the database to test with');
+    const tempAssignment = await prisma.enumeratorDistrict.create({
+      data: { enumeratorId: adminId, districtId: someDistrict.id },
+    });
+    console.log(`        (temporarily assigned "${someDistrict.name}" to the test account)`);
+
+    let mobileRow: any;
+    try {
+      // A fresh login: districts are resolved into the token/session at sign-in, so
+      // the existing token still reflects the old empty assignment.
+      const reLogin = await axios.post(`${BASE}/api/auth/login`, { loginId: USER, password: PASS });
+      const reHeaders = { Authorization: `Bearer ${reLogin.data.data.tokens.accessToken}` };
+
+      const mobileRes = await axios.post(`${BASE}/api/stakeholders`, MOBILE_PAYLOAD, { headers: reHeaders });
+      mobileRow = mobileRes.data?.data;
+      check('201 Created from the mobile field set', mobileRes.status === 201, `status ${mobileRes.status}`);
+      check('district filled in from the assignment despite not being sent',
+        mobileRow?.district === someDistrict.name,
+        `got ${JSON.stringify(mobileRow?.district)}, expected ${someDistrict.name}`);
+    } finally {
+      await prisma.enumeratorDistrict.delete({ where: { id: tempAssignment.id } });
+      const left = await prisma.enumeratorDistrict.count({ where: { enumeratorId: adminId } });
+      console.log(`        (assignment removed; ${left} remaining, was ${priorAssignments.length})`);
+    }
+    check('dataSource is MANUAL', mobileRow?.dataSource === 'MANUAL', mobileRow?.dataSource);
+    check('status is OPEN', mobileRow?.status === 'OPEN', mobileRow?.status);
+    // The detail screen's ADDRESS row reads fullAddressRaw, so a value written to
+    // addressLine1 instead would save but never display.
+    check('address stored in fullAddressRaw, the column the detail screen reads',
+      mobileRow?.fullAddressRaw === 'S/o Gunaji Bagaytkar, Bomdojichiwadi, Vengurla',
+      JSON.stringify(mobileRow?.fullAddressRaw));
+    check('every field the detail screen shows is populated',
+      !!mobileRow?.companyNameStandardized && !!mobileRow?.companyNameOriginal &&
+      !!mobileRow?.category && !!mobileRow?.fullAddressRaw && !!mobileRow?.city &&
+      !!mobileRow?.state && !!mobileRow?.pinCode && !!mobileRow?.nicCode &&
+      !!mobileRow?.nicDescription && !!mobileRow?.district && !!mobileRow?.dataSource);
+    // The survey form is opened with this id straight after, so it has to be real.
+    const mobileInDb = await prisma.stakeholder.findUnique({ where: { id: mobileRow.id } });
+    check('row exists so the survey form can be opened against it', mobileInDb !== null);
+    await prisma.stakeholder.deleteMany({ where: { id: mobileRow.id } });
 
     // ---- delete: refused when surveys exist -----------------------------
     console.log('\n=== delete refused when surveys attached ===');

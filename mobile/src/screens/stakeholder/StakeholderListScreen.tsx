@@ -197,11 +197,19 @@ export default function StakeholderListScreen({ navigation }: any) {
         <AddStakeholderModal
           visible={showAdd}
           onClose={() => setShowAdd(false)}
-          onCreated={() => {
+          onCreated={(created) => {
             setShowAdd(false);
-            // Reload from page 1 so the new record is visible immediately rather
-            // than only after the next full sync.
+            // Refresh page 1 so the row is present when the operator comes back
+            // from the survey, rather than only after the next full sync.
             loadStakeholders(1, true);
+            // The point of adding a stakeholder in the field is to survey it, so go
+            // straight there instead of making the operator find the row they just
+            // created and open it. Back from the survey lands on this list.
+            navigation.navigate('SurveyForm', {
+              stakeholderId: created.id,
+              stakeholder: created,
+              survey: null,
+            });
           }}
         />
 
@@ -267,106 +275,56 @@ const styles = StyleSheet.create({
   skeletonTextSmall: { width: '30%', height: 14, backgroundColor: colors.border, borderRadius: 4 },
 });
 
-// Every client-settable stakeholders column, in the order an operator reads a
-// record. `num` marks the double precision columns, which must be sent as JSON
-// numbers or the server's .strict() schema rejects them.
-//
-// On a phone 34 inputs cannot all be on screen, so only Identity and Address are
-// expanded by default — those are what a field enumerator actually fills in. The
-// registry and dedup groups are collapsed but present, so nothing is unreachable.
-type MobileField = {
+
+/**
+ * The fields a field enumerator fills in when adding a stakeholder.
+ *
+ * Deliberately only what StakeholderDetailScreen displays, so what is captured and
+ * what is shown afterwards match. The admin panel keeps the full 29-field form for
+ * back-office data entry; a phone does not need it.
+ *
+ * Two of the displayed values are NOT inputs:
+ *   District    assigned server-side from the enumerator's own assigned district,
+ *               which is the access-control boundary — the server rejects any other
+ *               value, so an editable field would imply a choice that does not exist.
+ *   Data Source forced to 'MANUAL', the marker separating hand-entered rows from
+ *               MCA/Udyam imports.
+ * Both are surfaced as read-only text below the inputs so the operator can see what
+ * the record will end up with.
+ *
+ * Address maps to fullAddressRaw, not addressLine1 — that is the column the detail
+ * screen's ADDRESS row reads, so writing addressLine1 here would save a value that
+ * never appears.
+ */
+type AddField = {
   key: string;
   label: string;
-  num?: boolean;
   placeholder?: string;
+  keyboardType?: 'default' | 'number-pad';
   maxLength?: number;
   multiline?: boolean;
 };
 
-const MOBILE_FIELD_GROUPS: { title: string; expanded: boolean; fields: MobileField[] }[] = [
-  {
-    title: 'Identity',
-    expanded: true,
-    fields: [
-      { key: 'companyNameOriginal', label: 'Original Name', maxLength: 500 },
-      { key: 'uin', label: 'UIN', maxLength: 100 },
-    ],
-  },
-  {
-    title: 'Address',
-    expanded: true,
-    fields: [
-      { key: 'addressLine1', label: 'Address Line 1', maxLength: 500 },
-      { key: 'addressLine2', label: 'Address Line 2', maxLength: 500 },
-      { key: 'fullAddressRaw', label: 'Full Address (raw)', maxLength: 1000, multiline: true },
-      { key: 'taluka', label: 'Taluka', maxLength: 200 },
-      { key: 'city', label: 'City', maxLength: 200 },
-      { key: 'village', label: 'Village', maxLength: 200 },
-      { key: 'pinCode', label: 'PIN Code', maxLength: 10 },
-    ],
-  },
-  {
-    title: 'Registration Numbers',
-    expanded: false,
-    fields: [
-      { key: 'cinNumber', label: 'CIN Number', maxLength: 50 },
-      { key: 'gstNumber', label: 'GST Number', maxLength: 20 },
-      { key: 'tinNumber', label: 'TIN Number', maxLength: 50 },
-    ],
-  },
-  {
-    title: 'Classification',
-    expanded: false,
-    fields: [
-      { key: 'category', label: 'Category', maxLength: 200, placeholder: 'e.g. Hotels & Resorts' },
-      { key: 'nicCode', label: 'NIC Code', maxLength: 20 },
-      { key: 'nicDescription', label: 'NIC Description', maxLength: 500, multiline: true },
-      { key: 'companyClass', label: 'Company Class', maxLength: 100 },
-      { key: 'companyStatus', label: 'Company Status', maxLength: 100 },
-      { key: 'companyCategory', label: 'Company Category', maxLength: 100 },
-      { key: 'listingStatus', label: 'Listing Status', maxLength: 100 },
-      { key: 'registrationDate', label: 'Registration Date', maxLength: 50 },
-      { key: 'authorizedCapital', label: 'Authorized Capital', num: true },
-      { key: 'paidupCapital', label: 'Paid-up Capital', num: true },
-      { key: 'priorityWeight', label: 'Priority Weight', num: true },
-    ],
-  },
-  // NOTE: a "Dedup & Lineage" group (fuzzySimilarityScore, crossSourceMatch,
-  // humanReviewRequired, dedupMatchStatus, sourceLineageNotes) was removed on
-  // request. Those are outputs of the import's record-matching pipeline rather
-  // than facts about a business, and the server no longer accepts them either.
-  {
-    title: 'Location',
-    expanded: false,
-    fields: [
-      { key: 'latitude', label: 'Latitude', num: true },
-      { key: 'longitude', label: 'Longitude', num: true },
-      { key: 'digipin', label: 'DIGIPIN', maxLength: 10 },
-    ],
-  },
+const ADD_FIELDS: AddField[] = [
+  { key: 'companyNameStandardized', label: 'Organization Name *', placeholder: 'e.g. Datt Niwara Hotel', maxLength: 500 },
+  { key: 'companyNameOriginal', label: 'Company Name', maxLength: 500 },
+  { key: 'category', label: 'Category', placeholder: 'e.g. Worker Hostels', maxLength: 200 },
+  { key: 'fullAddressRaw', label: 'Address', maxLength: 1000, multiline: true },
+  { key: 'city', label: 'City', maxLength: 200 },
+  { key: 'state', label: 'State', maxLength: 200 },
+  { key: 'pinCode', label: 'PIN Code', keyboardType: 'number-pad', maxLength: 10 },
+  { key: 'nicCode', label: 'NIC Code', maxLength: 20 },
+  { key: 'nicDescription', label: 'NIC Description', maxLength: 500, multiline: true },
 ];
 
-const MOBILE_NUMERIC_KEYS = new Set(
-  MOBILE_FIELD_GROUPS.flatMap(g => g.fields.filter(f => f.num).map(f => f.key))
-);
-
 /**
- * Add a stakeholder from the field.
- *
- * Covers all 34 client-settable stakeholders columns. The 8 omitted are
- * server-owned: id, primaryKeyId, createdAt, updatedAt, status, lockedById,
- * lockedAt and dataSource (forced to 'MANUAL' so hand-entered rows stay
- * distinguishable from MCA/Udyam imports).
- *
- * District is intentionally NOT an input. The server assigns the enumerator's own
- * assigned district and rejects any other, so a field device cannot create records
- * outside its area; an editable field would imply otherwise. Admins who need to
- * pick a district have the full form in the admin panel.
+ * Add a stakeholder from the field, then go straight to its survey form.
  *
  * ONLINE ONLY, and it says so rather than failing obscurely. The local sync_queue
  * can hold any entity type, but the server's /sync/upload only processes surveys
  * and media — a queued stakeholder create would never be sent, so offering this
- * offline would silently discard the operator's work.
+ * offline would silently discard the operator's work. Survey capture itself still
+ * works offline, including the survey this hands off to.
  */
 function AddStakeholderModal({
   visible,
@@ -375,24 +333,20 @@ function AddStakeholderModal({
 }: {
   visible: boolean;
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (created: any) => void;
 }) {
   const [saving, setSaving] = useState(false);
 
   const blankForm = useCallback(() => {
-    const initial: Record<string, string> = { companyNameStandardized: '' };
-    for (const g of MOBILE_FIELD_GROUPS) {
-      for (const f of g.fields) initial[f.key] = '';
-    }
+    const initial: Record<string, string> = {};
+    for (const f of ADD_FIELDS) initial[f.key] = '';
+    // Every record in this dataset is Maharashtra; prefilling saves a keystroke per
+    // entry and the field stays editable.
+    initial.state = 'Maharashtra';
     return initial;
   }, []);
 
   const [form, setForm] = useState<Record<string, string>>(blankForm);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
-    const state: Record<string, boolean> = {};
-    for (const g of MOBILE_FIELD_GROUPS) state[g.title] = g.expanded;
-    return state;
-  });
 
   const set = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
 
@@ -413,63 +367,42 @@ function AddStakeholderModal({
 
     setSaving(true);
     try {
-      // Drop blanks and parse the numeric columns. A blank numeric must be omitted,
-      // not sent as 0: 0 is a wrong value rather than an absent one, and for
-      // coordinates it would place the record off the coast of Africa.
-      const payload: Record<string, string | number> = {};
-      for (const [key, value] of Object.entries(form)) {
-        if (value.trim() === '') continue;
-        if (MOBILE_NUMERIC_KEYS.has(key)) {
-          const n = parseFloat(value);
-          if (!isNaN(n)) payload[key] = n;
-        } else {
-          payload[key] = value.trim();
-        }
+      // Only non-empty keys: the server schema is .strict(), and sending blanks
+      // would store '' where the detail screen expects a missing value (its rows
+      // are filtered on truthiness, so '' and absent render the same, but the
+      // export and search treat them differently).
+      const payload: Record<string, string> = {};
+      for (const f of ADD_FIELDS) {
+        const v = form[f.key]?.trim();
+        if (v) payload[f.key] = v;
       }
 
       const res = await stakeholderService.create(payload);
       const created = res.data?.data;
+      if (!created?.id) throw new Error('Server did not return the created stakeholder');
 
-      // Write straight into SQLite so the row appears without waiting for the next
-      // full sync, which on this dataset is a multi-page download.
-      if (created?.id) {
-        await stakeholderDao.upsertMany([created]);
-      }
+      // Persist locally before navigating. The survey form and its save path read
+      // the stakeholder from SQLite, so without this the survey could be written
+      // against a stakeholder the local database has never heard of.
+      await stakeholderDao.upsertMany([created]);
 
       setForm(blankForm());
-      Alert.alert('Added', `"${created?.companyNameStandardized || 'Stakeholder'}" was created.`);
-      onCreated();
+      // No success alert: the handoff to the survey form is the confirmation, and a
+      // dialog in between would just be one more tap before the real work.
+      onCreated(created);
     } catch (e: any) {
       const detail = e.response?.data?.error?.details?.[0];
       Alert.alert(
         'Could not add stakeholder',
         (detail ? `${detail.path?.join('.') || 'field'}: ${detail.message}` : null) ||
           e.response?.data?.error?.message ||
+          e.message ||
           'Please try again.'
       );
     } finally {
       setSaving(false);
     }
   };
-
-  const renderField = (f: MobileField) => (
-    <View key={f.key} style={addStyles.field}>
-      <Text style={addStyles.label}>{f.label}</Text>
-      <TextInput
-        style={[addStyles.input, f.multiline && addStyles.inputMultiline]}
-        value={form[f.key] ?? ''}
-        onChangeText={t => set(f.key, t)}
-        placeholder={f.placeholder}
-        placeholderTextColor={colors.textMuted}
-        editable={!saving}
-        // decimal-pad rather than number-pad: several of these are doubles
-        // (capital figures, similarity score, coordinates) and need a '.' key.
-        keyboardType={f.num ? 'decimal-pad' : 'default'}
-        maxLength={f.num ? undefined : f.maxLength}
-        multiline={f.multiline}
-      />
-    </View>
-  );
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
@@ -483,42 +416,37 @@ function AddStakeholderModal({
           </View>
 
           <Text style={addStyles.note}>
-            Created in your assigned district. Requires an internet connection.
+            Saved, then the survey form opens straight away. Requires an internet
+            connection.
           </Text>
 
           <ScrollView style={addStyles.body} keyboardShouldPersistTaps="handled">
-            <View style={addStyles.field}>
-              <Text style={addStyles.label}>Organization Name *</Text>
-              <TextInput
-                style={addStyles.input}
-                value={form.companyNameStandardized}
-                onChangeText={t => set('companyNameStandardized', t)}
-                placeholder="e.g. Sai Angan Hotels Pvt Ltd"
-                placeholderTextColor={colors.textMuted}
-                editable={!saving}
-                maxLength={500}
-              />
-            </View>
-
-            {MOBILE_FIELD_GROUPS.map(group => (
-              <View key={group.title} style={addStyles.group}>
-                <TouchableOpacity
-                  style={addStyles.groupHeader}
-                  onPress={() => setExpanded(prev => ({ ...prev, [group.title]: !prev[group.title] }))}
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded: expanded[group.title] }}
-                >
-                  <Icon
-                    name={expanded[group.title] ? 'chevron-down' : 'chevron-right'}
-                    size={20}
-                    color={colors.textPrimary}
-                  />
-                  <Text style={addStyles.groupTitle}>{group.title}</Text>
-                  <Text style={addStyles.groupCount}>({group.fields.length})</Text>
-                </TouchableOpacity>
-                {expanded[group.title] && <View>{group.fields.map(renderField)}</View>}
+            {ADD_FIELDS.map(f => (
+              <View key={f.key} style={addStyles.field}>
+                <Text style={addStyles.label}>{f.label}</Text>
+                <TextInput
+                  style={[addStyles.input, f.multiline && addStyles.inputMultiline]}
+                  value={form[f.key] ?? ''}
+                  onChangeText={t => set(f.key, t)}
+                  placeholder={f.placeholder}
+                  placeholderTextColor={colors.textMuted}
+                  editable={!saving}
+                  keyboardType={f.keyboardType ?? 'default'}
+                  maxLength={f.maxLength}
+                  multiline={f.multiline}
+                  autoFocus={f.key === 'companyNameStandardized'}
+                />
               </View>
             ))}
+
+            {/* Set by the server, shown so the operator is not surprised by what
+                appears on the detail screen afterwards. */}
+            <View style={addStyles.serverSet}>
+              <Text style={addStyles.serverSetTitle}>Set automatically</Text>
+              <Text style={addStyles.serverSetRow}>District — your assigned district</Text>
+              <Text style={addStyles.serverSetRow}>Data Source — MANUAL</Text>
+              <Text style={addStyles.serverSetRow}>Status — OPEN</Text>
+            </View>
           </ScrollView>
 
           <View style={addStyles.actions}>
@@ -536,7 +464,7 @@ function AddStakeholderModal({
             >
               {saving
                 ? <ActivityIndicator color="#fff" size="small" />
-                : <Text style={addStyles.btnPrimaryText}>Create</Text>}
+                : <Text style={addStyles.btnPrimaryText}>Save &amp; Start Survey</Text>}
             </TouchableOpacity>
           </View>
         </View>
@@ -560,19 +488,10 @@ const addStyles = StyleSheet.create({
   },
   sheetTitle: { ...typography.h3, color: colors.textPrimary },
   note: {
-    ...typography.caption, color: colors.textMuted,
+    ...typography.bodySmall, color: colors.textMuted,
     paddingHorizontal: spacing.xl, paddingTop: spacing.md,
   },
   body: { paddingHorizontal: spacing.xl, paddingTop: spacing.md },
-  group: { marginTop: spacing.md },
-  groupHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1, borderBottomColor: colors.border,
-    marginBottom: spacing.sm,
-  },
-  groupTitle: { ...typography.label, color: colors.textPrimary },
-  groupCount: { ...typography.caption, color: colors.textMuted },
   field: { marginBottom: spacing.md },
   label: { ...typography.caption, color: colors.textMuted, marginBottom: 4 },
   input: {
@@ -582,6 +501,15 @@ const addStyles = StyleSheet.create({
     color: colors.textPrimary,
   },
   inputMultiline: { minHeight: 72, textAlignVertical: 'top' },
+  serverSet: {
+    marginTop: spacing.sm, marginBottom: spacing.lg,
+    padding: spacing.md,
+    backgroundColor: colors.bgCard,
+    borderRadius: borderRadius.md,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  serverSetTitle: { ...typography.caption, color: colors.textMuted, marginBottom: 6 },
+  serverSetRow: { ...typography.bodySmall, color: colors.textPrimary, marginBottom: 2 },
   actions: { flexDirection: 'row', gap: spacing.md, paddingHorizontal: spacing.xl, paddingTop: spacing.md },
   btn: { flex: 1, paddingVertical: spacing.md, borderRadius: borderRadius.md, alignItems: 'center', justifyContent: 'center' },
   btnPrimary: { backgroundColor: colors.primary },
