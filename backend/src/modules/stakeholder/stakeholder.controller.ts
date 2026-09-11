@@ -59,7 +59,8 @@ export class StakeholderController {
       const stakeholders = await stakeholderService.getAssigned(
         req.enumerator!.id,
         req.enumerator!.districts,
-        since as string
+        since as string,
+        req.enumerator!.isAdmin
       );
 
       res.json({ success: true, data: { stakeholders, count: stakeholders.length } });
@@ -92,6 +93,7 @@ export class StakeholderController {
         isNaN(afterCursor) ? 0 : afterCursor,
         isNaN(pageSize) ? 2000 : pageSize,
         since as string,
+        req.enumerator!.isAdmin,
       );
 
       res.json({ success: true, data: result });
