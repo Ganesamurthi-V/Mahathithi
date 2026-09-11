@@ -141,12 +141,18 @@ export default function EnumeratorsPage() {
   // and turns Inactive.
   const deleteMut = useMutation({
     mutationFn: deleteEnumerator,
+    // Removes the row outright. This used to set isActive = false, which mirrored
+    // the old soft-delete endpoint — so a "deleted" enumerator stayed in the table
+    // as INACTIVE, indistinguishable from one that was merely deactivated, with no
+    // way to get rid of it. The endpoint deletes for real now, so the row goes.
     onMutate: (id: string) =>
-      beginOptimistic((list) =>
-        list.map((row) => (row.id === id ? { ...row, isActive: false } : row))
-      ),
-    onSuccess: () => showToast('success', 'Enumerator deleted successfully'),
+      beginOptimistic((list) => list.filter((row) => row.id !== id)),
+    onSuccess: () => showToast('success', 'Enumerator permanently deleted'),
     onError: (err: any, _id, ctx) => {
+      // Rollback restores the row, which matters more than before: the server
+      // refuses with 409 when the account has surveys or phone validations
+      // attached, and that message names them. Without the rollback the row would
+      // vanish from the table while still existing on the server.
       rollback(ctx);
       showToast('error', err.response?.data?.error?.message || 'Failed to delete enumerator');
     },
@@ -159,7 +165,16 @@ export default function EnumeratorsPage() {
 
   const handleToggleActive = (e: Enumerator) => toggleActiveMut.mutate(e);
   const handleDeleteEnumerator = (e: Enumerator) => {
-    if (window.confirm(`Are you sure you want to delete enumerator "${e.name}"?`)) {
+    // Spells out that this is permanent and points at Deactivate as the reversible
+    // option, because the two buttons sat next to each other doing the same thing
+    // until now and the distinction is new.
+    if (window.confirm(
+      `Permanently delete "${e.name}" (${e.loginId})?\n\n` +
+      `The account and its district assignments are removed for good. ` +
+      `If they have recorded any surveys the server will refuse — use Deactivate ` +
+      `instead, which blocks login without losing the record.\n\n` +
+      `This cannot be undone.`
+    )) {
       deleteMut.mutate(e.id);
     }
   };
@@ -318,9 +333,36 @@ export default function EnumeratorsPage() {
   );
 }
 
+/**
+ * The password policy, mirroring validatePassword() in backend admin.routes.ts.
+ *
+ * Duplicated deliberately: the server is the authority and still enforces every one
+ * of these, but it reports only the FIRST failure, one per round trip. Typing a
+ * password that misses three rules meant three submissions and three separate
+ * errors, with the rules never stated anywhere. Showing them live turns that into
+ * no round trips.
+ *
+ * If the server-side rules change, these must change with them — the mismatch would
+ * show up as a form that says the password is fine and then gets a 400.
+ */
+const PASSWORD_RULES: { label: string; test: (v: string) => boolean }[] = [
+  { label: 'At least 10 characters', test: v => v.length >= 10 },
+  { label: 'One uppercase letter (A-Z)', test: v => /[A-Z]/.test(v) },
+  { label: 'One lowercase letter (a-z)', test: v => /[a-z]/.test(v) },
+  { label: 'One number (0-9)', test: v => /[0-9]/.test(v) },
+  { label: 'One special character (!@#$…)', test: v => /[^A-Za-z0-9]/.test(v) },
+];
+
 function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClose, onSubmit }: any) {
   const [form, setForm] = useState({ loginId: '', password: '', name: '', phone: '', email: '', districtIds: [] as string[] });
-  
+  // Rules stay hidden until the field is touched, so an untouched form is not a
+  // wall of red crosses before the operator has typed anything.
+  const [passwordTouched, setPasswordTouched] = useState(false);
+
+  const ruleResults = PASSWORD_RULES.map(r => ({ ...r, ok: r.test(form.password) }));
+  const passwordValid = ruleResults.every(r => r.ok);
+  const showRules = passwordTouched || form.password.length > 0;
+
   const toggleDistrict = (id: string) => {
     setForm(prev => ({
       ...prev, districtIds: prev.districtIds.includes(id) ? prev.districtIds.filter(d => d !== id) : [...prev.districtIds, id]
@@ -333,14 +375,71 @@ function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClos
     <div className="modal-overlay" onClick={submitting ? undefined : onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <h3>Create New Enumerator</h3>
-        <form onSubmit={e => { e.preventDefault(); if (!submitting) onSubmit(form); }}>
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            // Guard as well as disabling the button: Enter in a text input submits
+            // the form directly and bypasses the button's disabled state.
+            if (submitting) return;
+            if (!passwordValid) {
+              setPasswordTouched(true);
+              return;
+            }
+            onSubmit(form);
+          }}
+        >
           <div className="form-group">
             <label>Login ID *</label>
             <input className="form-input" required value={form.loginId} onChange={e => setForm({ ...form, loginId: e.target.value })} />
           </div>
           <div className="form-group">
             <label>Password *</label>
-            <input type="password" className="form-input" required value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+            <input
+              type="password"
+              className="form-input"
+              required
+              value={form.password}
+              onChange={e => setForm({ ...form, password: e.target.value })}
+              onBlur={() => setPasswordTouched(true)}
+              // Stops the browser autofilling an admin's own saved credentials into
+              // a form that creates a different person's account.
+              autoComplete="new-password"
+              aria-describedby="password-rules"
+              aria-invalid={showRules && !passwordValid}
+            />
+            {showRules && (
+              <ul
+                id="password-rules"
+                // aria-live so a screen reader announces rules being satisfied as
+                // they are typed, rather than the list changing silently.
+                aria-live="polite"
+                style={{
+                  listStyle: 'none', margin: '8px 0 0', padding: 0,
+                  display: 'grid', gap: '4px',
+                }}
+              >
+                {ruleResults.map(r => (
+                  <li
+                    key={r.label}
+                    style={{
+                      fontSize: '12px',
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      color: r.ok ? 'var(--success, #30a46c)' : 'var(--text-muted)',
+                    }}
+                  >
+                    {/* aria-hidden on the glyph: the met/unmet state is carried by
+                        the text below, so a reader should not announce "check". */}
+                    <span aria-hidden="true" style={{ width: '12px', display: 'inline-block' }}>
+                      {r.ok ? '✓' : '○'}
+                    </span>
+                    <span>{r.label}</span>
+                    <span style={{ position: 'absolute', left: '-9999px' }}>
+                      {r.ok ? ' — met' : ' — not met'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <div className="form-group">
             <label>Full Name *</label>
@@ -379,7 +478,14 @@ function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClos
           </div>
           <div className="modal-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose} disabled={submitting}>Cancel</button>
-            <LoadingButton type="submit" variant="primary" loading={submitting} loadingText="Creating…">
+            <LoadingButton
+              type="submit"
+              variant="primary"
+              loading={submitting}
+              loadingText="Creating…"
+              disabled={!passwordValid}
+              title={passwordValid ? undefined : 'Password does not meet all requirements yet'}
+            >
               Create Enumerator
             </LoadingButton>
           </div>

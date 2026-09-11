@@ -5,7 +5,7 @@ import { config } from '../../config';
 import bcrypt from 'bcryptjs';
 import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
-import { AppError, ValidationError, NotFoundError } from '../../utils/errors';
+import { AppError, ValidationError, NotFoundError, ConflictError } from '../../utils/errors';
 import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { broadcastChange } from '../../realtime/events';
@@ -380,7 +380,37 @@ router.patch('/enumerators/:id', async (req: AuthenticatedRequest, res: Response
   }
 });
 
-// Delete enumerator (Soft Delete)
+/**
+ * Permanently delete an enumerator.
+ *
+ * THIS USED TO BE A SOFT DELETE, and that was the bug: it set isActive = false,
+ * which is exactly what the Deactivate button already does through
+ * PATCH /enumerators/:id. So the trash icon and Deactivate did the same thing, and
+ * a "deleted" account stayed in the list forever showing INACTIVE with no way to
+ * remove it. It now actually deletes; deactivation remains available separately.
+ *
+ * WHAT BLOCKS IT
+ * Survey.enumerator and PhoneValidation.enumerator are required relations with no
+ * onDelete, so Prisma defaults both to Restrict and the database would reject the
+ * delete with a raw foreign-key error. Rather than surface that — or cascade and
+ * destroy the field work — the delete is refused with a count of what is attached.
+ * Surveys are the whole point of the system, and a phone validation records that a
+ * specific person verified a specific number, which is evidence attached to a
+ * stakeholder that still exists.
+ *
+ * WHAT IT TAKES WITH IT
+ *   sessions              deleted, forcing logout on their device
+ *   district assignments  deleted, so they stop counting toward metrics — and
+ *                         toward the stakeholder download partition, which divides
+ *                         a district by its active enumerator count
+ *   locked stakeholders   unlocked first, so the work returns to the pool
+ *
+ * AUDIT TRAIL CAVEAT
+ * AuditLog.enumerator is an OPTIONAL relation, so Prisma's default is SetNull: the
+ * deleted account's past audit rows survive but lose their attribution. The
+ * deletion record below therefore snapshots loginId, name, phone and email, so who
+ * did what earlier can still be reconstructed by correlating on time.
+ */
 router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const enumeratorId = req.params.id as string;
@@ -390,10 +420,34 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
       throw new ValidationError('You cannot delete your own account');
     }
 
-    const enumerator = await prisma.enumerator.update({
+    const enumerator = await prisma.enumerator.findUnique({
       where: { id: enumeratorId },
-      data: { isActive: false },
     });
+
+    if (!enumerator) {
+      throw new NotFoundError('Enumerator');
+    }
+
+    // Refuse rather than destroy field work. Counted at request time so the answer
+    // is always current, and both counts are reported together so an admin does not
+    // clear one blocker only to hit the next.
+    const [surveyCount, phoneValidationCount] = await Promise.all([
+      prisma.survey.count({ where: { enumeratorId } }),
+      prisma.phoneValidation.count({ where: { enumeratorId } }),
+    ]);
+
+    if (surveyCount > 0 || phoneValidationCount > 0) {
+      const parts: string[] = [];
+      if (surveyCount > 0) parts.push(`${surveyCount} survey${surveyCount === 1 ? '' : 's'}`);
+      if (phoneValidationCount > 0) {
+        parts.push(`${phoneValidationCount} phone validation${phoneValidationCount === 1 ? '' : 's'}`);
+      }
+      throw new ConflictError(
+        `${enumerator.name} has ${parts.join(' and ')} recorded and cannot be deleted, ` +
+        `because that field work would be destroyed with the account. Deactivate them ` +
+        `instead — it blocks login and frees their locked stakeholders, and keeps the record.`
+      );
+    }
 
     // Delete all active sessions to force logout on their mobile app
     await prisma.session.deleteMany({ where: { enumeratorId } });
@@ -413,25 +467,51 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
     affectedDistricts.forEach((district) => {
       emitToDistrictAndAdmins(district, 'stakeholder:unlocked', {
         stakeholderIds: unlockedStakeholders.filter(s => s.district === district).map(s => s.id),
-        reason: 'enumerator_deactivated',
+        // The account is removed outright now, not just switched off. No client
+        // branches on this string — mobile's stakeholder:unlocked handler reads only
+        // stakeholderIds — so it is diagnostic, but it should still be accurate.
+        reason: 'enumerator_deleted',
         district,
       });
     });
 
-    // Remove their assigned districts so they don't show up in metrics
-    await prisma.enumeratorDistrict.deleteMany({
-      where: { enumeratorId }
-    });
-
+    // Written BEFORE the delete. Once the row is gone this is the only remaining
+    // record of who the account belonged to, and it is also what re-attaches
+    // identity to the audit rows that SetNull is about to anonymise.
     await prisma.auditLog.create({
       data: {
         action: 'enumerator_deleted',
         entityType: 'enumerator',
         entityId: enumeratorId,
         enumeratorId: req.enumerator!.id,
-        details: { loginId: enumerator.loginId, name: enumerator.name },
+        details: {
+          loginId: enumerator.loginId,
+          name: enumerator.name,
+          phone: enumerator.phone,
+          email: enumerator.email,
+          isAdmin: enumerator.isAdmin,
+          wasActive: enumerator.isActive,
+          unlockedStakeholders: unlockedStakeholders.length,
+        },
       },
     });
+
+    // One transaction so the account cannot survive with its assignments already
+    // stripped — that combination would leave it in the list looking intact while
+    // silently contributing nothing to any district.
+    //
+    // enumerator_districts and sessions both cascade on delete, but they are removed
+    // explicitly: the assignments must be gone before the download partition is
+    // recalculated, and relying on a schema-level action here would make that
+    // ordering invisible to anyone reading this.
+    await prisma.$transaction([
+      prisma.enumeratorDistrict.deleteMany({ where: { enumeratorId } }),
+      prisma.enumerator.delete({ where: { id: enumeratorId } }),
+    ]);
+
+    logger.info(
+      `Enumerator ${enumerator.loginId} (${enumerator.name}) permanently deleted by ${req.enumerator!.loginId}`
+    );
 
     // Deleting touches a lot: the enumerator list, the district assignment
     // counts, previously-locked stakeholders that are now free, and the counters.
@@ -442,7 +522,11 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
       entityId: enumeratorId,
     });
 
-    res.json({ success: true, message: 'Enumerator deleted (deactivated) successfully' });
+    res.json({
+      success: true,
+      message: `${enumerator.name} was permanently deleted`,
+      data: { id: enumeratorId, deleted: true },
+    });
   } catch (error) {
     next(error);
   }
