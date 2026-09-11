@@ -2,7 +2,14 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../../utils/errors';
 import { logger } from '../../utils/logger';
-import { districtScopeFilter, canonicalizeDistricts } from '../../utils/district-scope';
+import { districtScopeFilter } from '../../utils/district-scope';
+// Shared with the dashboard so both report the same slice. See the module header
+// for why the partition is modulo-based.
+import {
+  getDistrictPartitions,
+  isPartitioned,
+  selectPartitionedPrimaryKeys,
+} from '../../utils/stakeholder-partition';
 import { categoryFilter } from '../../utils/category-scope';
 import { broadcastChange } from '../../realtime/events';
 
@@ -308,10 +315,10 @@ export class StakeholderService {
     // Partitioned identically to getAssignedPage. If only the paged feed divided
     // the work, a device falling back to this legacy route would download the whole
     // district and the two endpoints would disagree about what belongs to whom.
-    const partitions = await this.getDistrictPartitions(enumeratorId, districts, isAdmin);
+    const partitions = await getDistrictPartitions(enumeratorId, districts, isAdmin);
     if (partitions.length === 0) return [];
 
-    const isSplit = partitions.some(p => p.total > 1);
+    const isSplit = isPartitioned(partitions);
 
     // Unsplit districts keep the original single-query path — no reason to pay for
     // a raw key lookup when the filter is expressible in Prisma.
@@ -321,7 +328,7 @@ export class StakeholderService {
     if (isSplit) {
       // No LIMIT here because this route is already unbounded; the partition only
       // narrows the result, so this cannot return more than before.
-      const pkIds = await this.selectPartitionedPrimaryKeys(
+      const pkIds = await selectPartitionedPrimaryKeys(
         partitions,
         0,
         since,
@@ -376,7 +383,7 @@ export class StakeholderService {
   ) {
     const clampedSize = Math.min(Math.max(pageSize, 1), 5000);
 
-    const partitions = await this.getDistrictPartitions(enumeratorId, districts, isAdmin);
+    const partitions = await getDistrictPartitions(enumeratorId, districts, isAdmin);
 
     if (partitions.length === 0) {
       return { stakeholders: [], nextCursor: null, pageSize: clampedSize, count: 0, partitions };
@@ -396,11 +403,11 @@ export class StakeholderService {
     // round trips for a filter Prisma can express perfectly well, and the extra key
     // query measured 4.6-5.6s on Thane during verification. Unshared districts now
     // keep the original single-query path exactly as it was.
-    const isSplit = partitions.some(p => p.total > 1);
+    const isSplit = isPartitioned(partitions);
     let pageKeys: number[] | null = null;
 
     if (isSplit) {
-      pageKeys = await this.selectPartitionedPrimaryKeys(partitions, after, since, clampedSize);
+      pageKeys = await selectPartitionedPrimaryKeys(partitions, after, since, clampedSize);
       if (pageKeys.length === 0) {
         return { stakeholders: [], nextCursor: null, pageSize: clampedSize, count: 0, partitions };
       }
@@ -452,139 +459,6 @@ export class StakeholderService {
       // answer visible in the response rather than needing server logs.
       partitions,
     };
-  }
-
-  /**
-   * Divide each district's stakeholders between the enumerators assigned to it.
-   *
-   * WHY
-   * Every enumerator in a district used to download that district in full, so with
-   * three enumerators the same records were pulled three times and all three saw
-   * the same work queue. This assigns each one a disjoint share.
-   *
-   * HOW — modulo on primaryKeyId
-   * For district D with n assigned enumerators, the enumerator at index k receives
-   * the rows where `primary_key_id % n = k`. Chosen over the alternatives because:
-   *
-   *   • It is a true partition: every row satisfies exactly one k, so there is no
-   *     duplication AND no gap. A range split (first third, second third...) needs
-   *     percentile boundaries that shift as rows are added, and any error there
-   *     silently orphans records.
-   *   • It is stateless and deterministic, so it holds across the paginated cursor
-   *     loop without the server remembering anything between requests.
-   *   • Shares come out even, because primaryKeyId is a dense counter from the
-   *     import rather than a sparse or clustered key.
-   *
-   * ORDERING
-   * k is the enumerator's position in the member list sorted by id. Sorting in code
-   * rather than relying on the database's row order matters: an unordered result
-   * could hand the same enumerator a different k on the next page and the download
-   * would then mix two slices — duplicating some rows and missing others.
-   *
-   * WHO COUNTS TOWARD n
-   *   • Inactive enumerators are excluded. A deactivated account holding a slice
-   *     means nobody downloads it, which is the gap this design exists to avoid.
-   *   • Admins are excluded. They bypass district scoping and receive everything
-   *     anyway, so counting them would reserve a share no device ever collects.
-   *
-   * A district with one enumerator gives n=1, k=0, and `% 1 = 0` matches every row
-   * — so single-enumerator districts behave exactly as before.
-   */
-  private async getDistrictPartitions(
-    enumeratorId: string,
-    districts: string[],
-    isAdmin: boolean,
-  ): Promise<{ district: string; total: number; index: number }[]> {
-    const canonical = await canonicalizeDistricts(districts);
-    if (canonical.length === 0) return [];
-
-    // Admins are not field devices; they get the whole of every district they ask
-    // for. total=1/index=0 is the identity partition.
-    if (isAdmin) {
-      return canonical.map(district => ({ district, total: 1, index: 0 }));
-    }
-
-    const assignments = await prisma.enumeratorDistrict.findMany({
-      where: {
-        district: { name: { in: canonical } },
-        enumerator: { isActive: true, isAdmin: false },
-      },
-      select: {
-        enumeratorId: true,
-        district: { select: { name: true } },
-      },
-    });
-
-    const membersByDistrict = new Map<string, string[]>();
-    for (const a of assignments) {
-      const name = a.district?.name;
-      if (!name) continue;
-      const list = membersByDistrict.get(name);
-      if (list) list.push(a.enumeratorId);
-      else membersByDistrict.set(name, [a.enumeratorId]);
-    }
-
-    return canonical.map(district => {
-      // Sort in code so k is stable regardless of how the rows came back.
-      const members = (membersByDistrict.get(district) ?? []).slice().sort();
-      const index = members.indexOf(enumeratorId);
-
-      if (members.length <= 1) return { district, total: 1, index: 0 };
-
-      if (index === -1) {
-        // The caller is scoped to this district but is not in its active
-        // non-admin membership — an inactive account, or an assignment removed
-        // mid-session. Serve the whole district rather than nothing: an empty work
-        // queue looks like data loss to the operator, whereas an extra copy of
-        // reference data is harmless. Logged because it means the assignment data
-        // and the caller's token disagree.
-        logger.warn(
-          `[partition] enumerator ${enumeratorId} is scoped to ${district} but not in its active membership (${members.length}); serving the full district`
-        );
-        return { district, total: 1, index: 0 };
-      }
-
-      return { district, total: members.length, index };
-    });
-  }
-
-  /**
-   * Fetch one page of primary keys matching the caller's slice of each district.
-   *
-   * Raw SQL because the modulo filter has no Prisma equivalent. Every value is
-   * bound as a parameter via Prisma.sql, so the district names and the n/k pair
-   * cannot be injected even though the OR-branches are assembled dynamically.
-   */
-  private async selectPartitionedPrimaryKeys(
-    partitions: { district: string; total: number; index: number }[],
-    after: number,
-    since: string | undefined,
-    limit: number,
-  ): Promise<number[]> {
-    const branches = partitions.map(p =>
-      p.total <= 1
-        // No modulo term at all when the district is not split, so Postgres can use
-        // the district index without a residual expression filter.
-        ? Prisma.sql`district = ${p.district}`
-        : Prisma.sql`(district = ${p.district} AND (primary_key_id % ${p.total}) = ${p.index})`
-    );
-
-    // status is a Postgres enum, so the literal needs an explicit cast — an
-    // untyped 'OPEN' string fails with "operator does not exist".
-    const rows = await prisma.$queryRaw<{ primary_key_id: number }[]>(Prisma.sql`
-      SELECT primary_key_id
-      FROM stakeholders
-      WHERE status = 'OPEN'::"StakeholderStatus"
-        AND primary_key_id > ${after}
-        ${since ? Prisma.sql`AND updated_at > ${new Date(since)}` : Prisma.empty}
-        AND (${Prisma.join(branches, ' OR ')})
-      ORDER BY primary_key_id ASC
-      LIMIT ${limit}
-    `);
-
-    // Number() guards against a driver handing back a string or BigInt for the
-    // integer column; the value is used as a cursor and compared numerically.
-    return rows.map(r => Number(r.primary_key_id));
   }
 
   /**

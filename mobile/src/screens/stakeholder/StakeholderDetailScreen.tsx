@@ -355,10 +355,11 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
             <Text style={styles.heroTitle} numberOfLines={2}>
               {s.companyNameStandardized || s.companyNameOriginal || 'Unknown Organization'}
             </Text>
-            <View style={styles.uinBadge}>
-              <Icon name="identifier" size={moderateScale(12)} color={colors.textMuted} style={{ marginRight: 2 }} />
-              <Text style={styles.uin}>{s.uin}</Text>
-            </View>
+            {/* The UIN badge (MAH-TOUR-nnnnnn) was removed on request. It is an
+                internal import identifier with no meaning to a field enumerator,
+                and it competed for space with the business name, which is what they
+                actually match against the signboard in front of them. The value is
+                still stored and still exported. */}
           </View>
         </View>
 
@@ -513,12 +514,6 @@ const styles = StyleSheet.create({
   heroTitleContainer: { marginTop: spacing.xs },
   heroTitle: { ...typography.h1, color: colors.textPrimary, marginBottom: spacing.md },
   
-  uinBadge: { 
-    alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center',
-    backgroundColor: colors.bgInput, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, 
-    borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.border
-  },
-  uin: { ...typography.bodySmall, color: colors.textSecondary, fontWeight: '700', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
   
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
   sectionHeaderLeft: { flexDirection: 'row', alignItems: 'center' },

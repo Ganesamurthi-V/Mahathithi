@@ -15,8 +15,20 @@
  */
 import { prisma } from '../src/config/database';
 import { StakeholderService } from '../src/modules/stakeholder/stakeholder.service';
+import { DashboardService } from '../src/modules/dashboard/dashboard.service';
+import {
+  getDistrictPartitions,
+  selectPartitionedPrimaryKeys,
+} from '../src/utils/stakeholder-partition';
 
 const svc = new StakeholderService() as any;
+const dashboard = new DashboardService();
+
+// The partition helpers moved out of StakeholderService into a shared util so the
+// dashboard could use the same logic. Bound here under the old names so the
+// existing assertions keep reading the way they did.
+svc.getDistrictPartitions = getDistrictPartitions;
+svc.selectPartitionedPrimaryKeys = selectPartitionedPrimaryKeys;
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -177,6 +189,68 @@ async function main() {
       check('the two downloads together cover the district',
         new Set([...paged, ...other.keys]).size === truth.length,
         `${new Set([...paged, ...other.keys]).size} vs ${truth.length}`);
+    }
+  }
+
+  // ---- the dashboard must report the slice, not the district ------------
+  // This is the number the mobile Overview card shows. Counting the whole district
+  // there means an operator works through every row they were given and is left
+  // with a figure that never reaches zero.
+  for (const [district, members] of shared) {
+    const ordered = members.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const truth = await allOpenKeys(district);
+    console.log(`\n=== dashboard stats for ${district} ===`);
+    console.log(`  district OPEN total: ${truth.length}`);
+
+    let sumOfOpen = 0;
+    for (const m of ordered) {
+      const stats = await dashboard.getStats(m.id, [district], false);
+      const open = stats.stakeholders.open;
+      sumOfOpen += open;
+
+      const parts = await svc.getDistrictPartitions(m.id, [district], false);
+      const p = parts.find((x: any) => x.district === district);
+      const sliceSize: number = (
+        await svc.selectPartitionedPrimaryKeys([p], 0, undefined, Number.MAX_SAFE_INTEGER)
+      ).length;
+
+      console.log(`    ${m.loginId.padEnd(16)} dashboard open=${open}  slice=${sliceSize}`);
+      check(`${m.loginId}: dashboard open equals their slice, not the district`,
+        open === sliceSize, `open=${open}, slice=${sliceSize}, district=${truth.length}`);
+      check(`${m.loginId}: dashboard open is below the district total`,
+        open < truth.length, `open=${open}, district=${truth.length}`);
+    }
+
+    // The shares must still add up, or the dashboard would be under-reporting work
+    // that nobody is being shown.
+    check('the enumerators\' dashboard counts sum to the district total',
+      sumOfOpen === truth.length, `sum=${sumOfOpen}, district=${truth.length}`);
+  }
+
+  // ---- admin dashboard is unchanged ------------------------------------
+  {
+    const adminRow = await prisma.enumerator.findFirst({ where: { isAdmin: true }, select: { id: true } });
+    const [district] = shared[0]!;
+    if (adminRow) {
+      const truth = await allOpenKeys(district);
+      const stats = await dashboard.getStats(adminRow.id, [district], true);
+      console.log(`\n=== admin dashboard on ${district} ===`);
+      console.log(`  admin open=${stats.stakeholders.open}, ${district} open=${truth.length}`);
+
+      // getStats sets districtFilter = {} for admins, so the districts argument is
+      // ignored and the figure is system-wide. That is pre-existing behaviour and
+      // not something the partition changed — the check here is only that an admin
+      // is NOT handed a slice, so the number must exceed a single district rather
+      // than match it. An earlier version of this assertion expected the district
+      // total and failed for that reason.
+      check('admin dashboard is not partitioned (still system-wide, not a slice)',
+        stats.stakeholders.open > truth.length,
+        `open=${stats.stakeholders.open}, single district=${truth.length}`);
+
+      const adminPartitions = await getDistrictPartitions(adminRow.id, [district], true);
+      check('admin partition is the identity (total=1, index=0)',
+        adminPartitions.every(p => p.total === 1 && p.index === 0),
+        JSON.stringify(adminPartitions));
     }
   }
 

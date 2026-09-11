@@ -133,7 +133,10 @@ export default function DashboardScreen({ navigation }: any) {
 
   const statCards = useMemo(() => [
     { label: 'Completed', value: stats.completed, color: colors.success, icon: 'check-circle-outline', bgColor: '#0F1E20' },
-    { label: 'Open Tasks', value: stats.open, color: colors.warning, icon: 'clipboard-list-outline', bgColor: '#1B1715' },
+    // "Assigned to Me" rather than "Open Tasks": the server now returns this
+    // enumerator's own share of a shared district instead of the district total, and
+    // the old label invited reading it as everything still open in the area.
+    { label: 'Assigned to Me', value: stats.open, color: colors.warning, icon: 'clipboard-list-outline', bgColor: '#1B1715' },
   ], [stats]);
 
   return (
