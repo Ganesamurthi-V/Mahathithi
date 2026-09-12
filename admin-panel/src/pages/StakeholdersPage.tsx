@@ -727,150 +727,78 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   );
 }
 
-// Every client-settable stakeholders column, grouped the way an operator reads a
-// record rather than the order the table happens to store them in. 34 fields is
-// too many for a flat list, so the two groups that are rarely touched
-// (Registration & Classification detail, Dedup & Lineage) start collapsed.
-//
-// `num: true` marks the double precision columns. Those must be sent as JSON
-// numbers, not strings, or the .strict() schema rejects them.
-type FieldSpec = {
+/**
+ * The fields captured when adding a stakeholder by hand.
+ *
+ * Deliberately the SAME nine as the mobile app's add form (see ADD_FIELDS in
+ * mobile StakeholderListScreen.tsx), so the two entry points collect the same
+ * shape and a record looks identical whichever client created it. Previously this
+ * form exposed all 34 columns; it was cut to match the field workflow on request.
+ *
+ * Three of the columns shown on the detail screen are NOT inputs here:
+ *   District    the server assigns the creator's own assigned district and rejects
+ *               any other, so it is not an editable choice
+ *   Data Source forced to 'MANUAL', the marker that separates hand-entered rows
+ *               from MCA/Udyam imports
+ *   Status      new records always start OPEN
+ * They are surfaced read-only below the inputs so the operator can see what the
+ * record will end up with.
+ *
+ * Address maps to fullAddressRaw, not addressLine1 — that is the column the detail
+ * views read for the ADDRESS row, so writing addressLine1 here would save a value
+ * that never displays.
+ */
+type AddField = {
   key: string;
   label: string;
-  num?: boolean;
   placeholder?: string;
   maxLength?: number;
-  wide?: boolean;
+  numeric?: boolean;
+  multiline?: boolean;
 };
 
-const STAKEHOLDER_FIELD_GROUPS: { title: string; collapsed?: boolean; fields: FieldSpec[] }[] = [
-  {
-    title: 'Identity',
-    fields: [
-      { key: 'companyNameOriginal', label: 'Original Name', maxLength: 500, wide: true },
-      { key: 'uin', label: 'UIN', maxLength: 100, placeholder: 'e.g. MAH-TOUR-000001' },
-    ],
-  },
-  {
-    title: 'Registration Numbers',
-    fields: [
-      { key: 'cinNumber', label: 'CIN Number', maxLength: 50, placeholder: 'e.g. U55101PN2014PTC151643' },
-      { key: 'gstNumber', label: 'GST Number', maxLength: 20 },
-      { key: 'tinNumber', label: 'TIN Number', maxLength: 50 },
-    ],
-  },
-  {
-    title: 'Address',
-    fields: [
-      { key: 'fullAddressRaw', label: 'Full Address (raw)', maxLength: 1000, wide: true },
-      { key: 'addressLine1', label: 'Address Line 1', maxLength: 500 },
-      { key: 'addressLine2', label: 'Address Line 2', maxLength: 500 },
-      { key: 'district', label: 'District', maxLength: 200, placeholder: 'e.g. Pune' },
-      { key: 'taluka', label: 'Taluka', maxLength: 200 },
-      { key: 'city', label: 'City', maxLength: 200 },
-      { key: 'village', label: 'Village', maxLength: 200 },
-      { key: 'state', label: 'State', maxLength: 200 },
-      { key: 'pinCode', label: 'PIN Code', maxLength: 10 },
-    ],
-  },
-  {
-    title: 'Classification',
-    collapsed: true,
-    fields: [
-      { key: 'category', label: 'Category', maxLength: 200, placeholder: 'e.g. Hotels & Resorts' },
-      { key: 'nicCode', label: 'NIC Code', maxLength: 20 },
-      { key: 'nicDescription', label: 'NIC Description', maxLength: 500, wide: true },
-      { key: 'companyClass', label: 'Company Class', maxLength: 100 },
-      { key: 'companyStatus', label: 'Company Status', maxLength: 100 },
-      { key: 'companyCategory', label: 'Company Category', maxLength: 100 },
-      { key: 'listingStatus', label: 'Listing Status', maxLength: 100 },
-      { key: 'registrationDate', label: 'Registration Date', maxLength: 50, placeholder: 'as written in the source' },
-      { key: 'authorizedCapital', label: 'Authorized Capital', num: true },
-      { key: 'paidupCapital', label: 'Paid-up Capital', num: true },
-      { key: 'priorityWeight', label: 'Priority Weight', num: true },
-    ],
-  },
-  // NOTE: a "Dedup & Lineage" group (fuzzySimilarityScore, crossSourceMatch,
-  // humanReviewRequired, dedupMatchStatus, sourceLineageNotes) was removed on
-  // request. Those are outputs of the import's record-matching pipeline rather
-  // than facts about a business, and the server no longer accepts them either.
+const ADD_FIELDS: AddField[] = [
+  { key: 'companyNameStandardized', label: 'Organization Name *', placeholder: 'e.g. Datt Niwara Hotel', maxLength: 500 },
+  { key: 'companyNameOriginal', label: 'Company Name', maxLength: 500 },
+  { key: 'category', label: 'Category', placeholder: 'e.g. Worker Hostels', maxLength: 200 },
+  { key: 'fullAddressRaw', label: 'Address', maxLength: 1000, multiline: true },
+  { key: 'city', label: 'City', maxLength: 200 },
+  { key: 'state', label: 'State', maxLength: 200 },
+  { key: 'pinCode', label: 'PIN Code', numeric: true, maxLength: 10 },
+  { key: 'nicCode', label: 'NIC Code', maxLength: 20 },
+  { key: 'nicDescription', label: 'NIC Description', maxLength: 500, multiline: true },
 ];
 
-const NUMERIC_FIELD_KEYS = new Set(
-  STAKEHOLDER_FIELD_GROUPS.flatMap(g => g.fields.filter(f => f.num).map(f => f.key))
-    .concat(['latitude', 'longitude'])
-);
-
 /**
- * Create a stakeholder by hand.
+ * Create a stakeholder by hand, matching the mobile add form.
  *
- * Covers all 34 client-settable columns of the stakeholders table. The 8 it omits
- * are server-owned and listed in createStakeholderSchema: id, primaryKeyId,
- * createdAt, updatedAt, status, lockedById, lockedAt and dataSource.
- *
- * dataSource is the one worth calling out — it is forced to 'MANUAL' server-side.
- * It is the provenance marker distinguishing hand-entered rows from MCA/Udyam
- * imports, so making it editable would let a manual record claim to be
- * registry-sourced with no way to tell the difference afterwards.
+ * The server assigns primaryKeyId and stamps dataSource='MANUAL', and confines a
+ * non-admin to their assigned districts. The 8 server-owned columns (id,
+ * primaryKeyId, createdAt, updatedAt, status, lockedById, lockedAt, dataSource)
+ * are never accepted from a client.
  */
 function AddStakeholderModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
 
   const [form, setForm] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {
-      companyNameStandardized: '',
-      latitude: '',
-      longitude: '',
-      digipin: '',
-      state: 'Maharashtra',
-    };
-    for (const group of STAKEHOLDER_FIELD_GROUPS) {
-      for (const f of group.fields) {
-        if (!(f.key in initial)) initial[f.key] = '';
-      }
-    }
+    const initial: Record<string, string> = {};
+    for (const f of ADD_FIELDS) initial[f.key] = '';
+    // Every record in this dataset is Maharashtra; prefilling saves a keystroke and
+    // the field stays editable.
+    initial.state = 'Maharashtra';
     return initial;
-  });
-
-  const [open, setOpen] = useState<Record<string, boolean>>(() => {
-    const state: Record<string, boolean> = {};
-    for (const g of STAKEHOLDER_FIELD_GROUPS) state[g.title] = !g.collapsed;
-    return state;
   });
 
   const set = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
 
-  // Mirrors the edit form: DIGIPIN is derived from the coordinates rather than
-  // typed, so it cannot disagree with them.
-  const setCoord = (key: 'latitude' | 'longitude', value: string) => {
-    setForm(prev => {
-      const next = { ...prev, [key]: value };
-      const lat = parseFloat(key === 'latitude' ? value : next.latitude);
-      const lon = parseFloat(key === 'longitude' ? value : next.longitude);
-      if (!isNaN(lat) && !isNaN(lon)) {
-        next.digipin = getDigiPin(lat, lon) || next.digipin;
-      }
-      return next;
-    });
-  };
-
   const createMut = useMutation({
     mutationFn: () => {
-      // The server schema is .strict(), so unknown keys are a 400. Empty text
-      // fields are dropped rather than sent as '' to keep the payload readable,
-      // and the numeric columns are parsed to real numbers — sending '' or a
-      // string for a double precision column fails validation, and coercing a
-      // blank to 0 would be a wrong value rather than an absent one (0 capital,
-      // or coordinates off the coast of Africa).
-      const payload: any = {};
-      for (const [key, value] of Object.entries(form)) {
-        if (value === '' || value.trim() === '') continue;
-        if (NUMERIC_FIELD_KEYS.has(key)) {
-          const n = parseFloat(value);
-          if (!isNaN(n)) payload[key] = n;
-        } else {
-          payload[key] = value.trim();
-        }
+      // The server schema is .strict(), so unknown keys are a 400. Only non-empty
+      // fields are sent, to keep the payload to what the operator actually entered.
+      const payload: Record<string, string> = {};
+      for (const f of ADD_FIELDS) {
+        const v = form[f.key]?.trim();
+        if (v) payload[f.key] = v;
       }
       return createStakeholder(payload);
     },
@@ -902,111 +830,71 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
     color: 'var(--text-muted)', marginBottom: '4px',
   };
 
-  const renderField = (f: FieldSpec) => (
-    <div
-      key={f.key}
-      className="form-group"
-      style={{ flex: f.wide ? '1 1 100%' : '1 1 200px', marginBottom: 0, minWidth: '180px' }}
-    >
-      <label style={labelStyle}>{f.label}</label>
-      <input
-        className="form-input"
-        // Numeric columns get a numeric keypad and reject stray text at the
-        // browser level; step="any" so decimals like a similarity score work.
-        type={f.num ? 'number' : 'text'}
-        step={f.num ? 'any' : undefined}
-        value={form[f.key] ?? ''}
-        onChange={(e) => set(f.key, e.target.value)}
-        placeholder={f.placeholder}
-        maxLength={f.num ? undefined : f.maxLength}
-        disabled={createMut.isPending}
-      />
-    </div>
-  );
-
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="gallery-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px' }}>
+      <div className="gallery-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
         <div className="gallery-header">
           <div>
             <h3 style={{ margin: 0 }}>Add Stakeholder</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
-              All stakeholder fields. Only the organization name is required — the
-              record is created with source <code>MANUAL</code> and status OPEN.
+              Only the organization name is required. The record is created with
+              source <code>MANUAL</code> and status OPEN.
             </p>
           </div>
           <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
         </div>
 
         <div className="gallery-body">
-          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label style={labelStyle}>
-                Organization Name <span style={{ color: '#e5484d' }}>*</span>
-              </label>
-              <input
-                className="form-input"
-                value={form.companyNameStandardized}
-                onChange={(e) => set('companyNameStandardized', e.target.value)}
-                placeholder="e.g. Sai Angan Hotels Private Limited"
-                disabled={createMut.isPending}
-                maxLength={500}
-                autoFocus
-                required
-              />
-            </div>
-
-            {STAKEHOLDER_FIELD_GROUPS.map(group => (
-              <div key={group.title}>
-                <button
-                  type="button"
-                  onClick={() => setOpen(prev => ({ ...prev, [group.title]: !prev[group.title] }))}
-                  style={{
-                    background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                    color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700,
-                    marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px',
-                  }}
-                  aria-expanded={open[group.title]}
-                >
-                  <span>{open[group.title] ? '▾' : '▸'}</span>
-                  {group.title}
-                  <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
-                    ({group.fields.length})
-                  </span>
-                </button>
-                {open[group.title] && (
-                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                    {group.fields.map(renderField)}
-                  </div>
+          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {ADD_FIELDS.map((f, i) => (
+              <div className="form-group" key={f.key} style={{ marginBottom: 0 }}>
+                <label style={labelStyle}>
+                  {f.label.endsWith(' *') ? (
+                    <>{f.label.slice(0, -2)} <span style={{ color: '#e5484d' }}>*</span></>
+                  ) : f.label}
+                </label>
+                {f.multiline ? (
+                  <textarea
+                    className="form-input"
+                    value={form[f.key] ?? ''}
+                    onChange={(e) => set(f.key, e.target.value)}
+                    placeholder={f.placeholder}
+                    maxLength={f.maxLength}
+                    disabled={createMut.isPending}
+                    rows={2}
+                    style={{ resize: 'vertical' }}
+                  />
+                ) : (
+                  <input
+                    className="form-input"
+                    // inputMode rather than type=number: PIN code is digits but not
+                    // a quantity, and type=number would allow 'e'/'-' and strip
+                    // leading zeros.
+                    inputMode={f.numeric ? 'numeric' : undefined}
+                    value={form[f.key] ?? ''}
+                    onChange={(e) => set(f.key, e.target.value)}
+                    placeholder={f.placeholder}
+                    maxLength={f.maxLength}
+                    disabled={createMut.isPending}
+                    autoFocus={i === 0}
+                  />
                 )}
               </div>
             ))}
 
-            <div>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px' }}>
-                Location
+            {/* Set by the server, shown so the operator is not surprised by what
+                appears on the detail screen afterwards. Mirrors the mobile note. */}
+            <div style={{
+              padding: '12px', backgroundColor: 'var(--bg-input)',
+              borderRadius: '8px', border: '1px solid var(--border)',
+            }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
+                Set automatically
               </div>
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <div className="form-group" style={{ flex: '1 1 200px', marginBottom: 0, minWidth: '180px' }}>
-                  <label style={labelStyle}>Latitude</label>
-                  <input
-                    type="number" step="any" className="form-input" value={form.latitude}
-                    onChange={(e) => setCoord('latitude', e.target.value)}
-                    disabled={createMut.isPending}
-                  />
-                </div>
-                <div className="form-group" style={{ flex: '1 1 200px', marginBottom: 0, minWidth: '180px' }}>
-                  <label style={labelStyle}>Longitude</label>
-                  <input
-                    type="number" step="any" className="form-input" value={form.longitude}
-                    onChange={(e) => setCoord('longitude', e.target.value)}
-                    disabled={createMut.isPending}
-                  />
-                </div>
-                <div className="form-group" style={{ flex: '1 1 200px', marginBottom: 0, minWidth: '180px' }}>
-                  <label style={labelStyle}>DIGIPIN (derived)</label>
-                  <input className="form-input" value={form.digipin} readOnly style={{ backgroundColor: 'var(--bg-surface)' }} />
-                </div>
+              <div style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.6 }}>
+                District — your assigned district<br />
+                Data Source — MANUAL<br />
+                Status — OPEN
               </div>
             </div>
 
