@@ -451,7 +451,21 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
 
     // Delete all active sessions to force logout on their mobile app
     await prisma.session.deleteMany({ where: { enumeratorId } });
-    
+
+    // Captured BEFORE the transaction below removes the assignments. These are the
+    // districts whose partition divisor is about to change — distinct from the
+    // districts where this account happened to hold locks, which is what
+    // affectedDistricts covers. Using the lock-derived list for the re-slice
+    // notification would miss every assigned district they had not locked anything
+    // in, leaving those devices on a stale share.
+    const assignedDistrictRows = await prisma.enumeratorDistrict.findMany({
+      where: { enumeratorId },
+      select: { district: { select: { name: true } } },
+    });
+    const assignedDistrictNames = [
+      ...new Set(assignedDistrictRows.map(r => r.district?.name).filter(Boolean) as string[]),
+    ];
+
     // Unlock any stakeholders they have locked so other enumerators can work on them
     const unlockedStakeholders = await prisma.stakeholder.findMany({
       where: { lockedById: enumeratorId },
@@ -520,7 +534,19 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
     broadcastChange(['enumerators', 'districts', 'stakeholders', 'analytics', 'auditLogs'], {
       action: 'delete',
       entityId: enumeratorId,
+      // entityType matters here: this fan-out names 'stakeholders' (their locks
+      // were released), and without it a device could read entityId as a
+      // stakeholder to delete when it is an enumerator id.
+      entityType: 'enumerators',
     });
+
+    // Removing an enumerator changes the divisor for every district they were
+    // ASSIGNED to, so the remaining enumerators' slices shift. Tell those
+    // districts' devices to re-pull, or they keep working a share that no longer
+    // matches what the server would now give them.
+    for (const district of assignedDistrictNames) {
+      broadcastChange(['stakeholders'], { action: 'update', district });
+    }
 
     res.json({
       success: true,
@@ -539,6 +565,18 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
       throw new ValidationError('districtIds array is required');
     }
 
+    // Capture the districts this touches BEFORE and AFTER, because reassignment
+    // changes the partition divisor on both sides: a district being left has one
+    // fewer enumerator sharing it, a district being joined has one more. Every
+    // enumerator in either set gets a different slice, so all of their devices
+    // need to re-pull. Missing the "before" set is the subtle half — those
+    // devices would keep a share that is now too small and never learn of the
+    // rows released to them.
+    const previousRows = await prisma.enumeratorDistrict.findMany({
+      where: { enumeratorId: (req.params.id as string) },
+      select: { district: { select: { name: true } } },
+    });
+
     // Remove existing assignments
     await prisma.enumeratorDistrict.deleteMany({
       where: { enumeratorId: (req.params.id as string) },
@@ -553,6 +591,20 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
         })),
       });
     }
+
+    const nextRows = districtIds.length > 0
+      ? await prisma.district.findMany({
+          where: { id: { in: districtIds } },
+          select: { name: true },
+        })
+      : [];
+
+    const resliceDistricts = [
+      ...new Set(
+        [...previousRows.map(r => r.district?.name), ...nextRows.map(r => r.name)]
+          .filter(Boolean) as string[]
+      ),
+    ];
 
     await prisma.auditLog.create({
       data: {
@@ -570,7 +622,17 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
     broadcastChange(['enumerators', 'districts', 'auditLogs'], {
       action: 'update',
       entityId: req.params.id as string,
+      entityType: 'enumerators',
     });
+
+    // The part that was missing entirely: this broadcast never reached field
+    // devices, so reassigning districts silently re-cut every slice while the
+    // phones carried on with the old one. Two enumerators could then hold
+    // overlapping stakeholders — the exact duplication the partition prevents —
+    // until someone happened to run a full sync.
+    for (const district of resliceDistricts) {
+      broadcastChange(['stakeholders', 'analytics'], { action: 'update', district });
+    }
 
     res.json({ success: true, message: 'Districts assigned successfully' });
   } catch (error) {

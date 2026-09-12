@@ -5,7 +5,11 @@ import Config from 'react-native-config';
 import { store } from '../store';
 import { stakeholderDao } from '../database';
 import { removeStakeholder } from '../store/slices/stakeholderSlice';
-import { refreshSyncCountsThunk } from '../store/slices/syncThunks';
+import {
+  refreshSyncCountsThunk,
+  pullServerChangesThunk,
+  applyRemoteStakeholderDeleteThunk,
+} from '../store/slices/syncThunks';
 
 // Reuse the exact same base resolution logic as services/api.ts
 const API_BASE = Config.API_BASE_URL || (__DEV__ ? 'https://mahathithi-production.up.railway.app/api' : '');
@@ -13,6 +17,27 @@ const API_BASE = Config.API_BASE_URL || (__DEV__ ? 'https://mahathithi-productio
 const SOCKET_BASE = API_BASE.replace(/\/api\/?$/, '');
 
 let socket: Socket | null = null;
+
+/**
+ * Coalesce bursts of change events into one delta pull.
+ *
+ * One enumerator finishing a survey emits several events in quick succession (the
+ * survey, then each media file), and every device in that district receives them
+ * all. Pulling per event would mean a round trip per file from every phone in the
+ * district. Collecting them and pulling once shortly after the burst settles
+ * reaches the same end state for a fraction of the traffic, which matters on a
+ * metered mobile connection.
+ */
+const PULL_DEBOUNCE_MS = 1200;
+let pullTimer: ReturnType<typeof setTimeout> | null = null;
+
+function schedulePull(): void {
+  if (pullTimer) clearTimeout(pullTimer);
+  pullTimer = setTimeout(() => {
+    pullTimer = null;
+    store.dispatch(pullServerChangesThunk() as any);
+  }, PULL_DEBOUNCE_MS);
+}
 
 /**
  * Local event name screens subscribe to for "server data moved".
@@ -111,15 +136,47 @@ export async function connectRealtime(): Promise<void> {
   // means a screen already on display never updated — an admin correcting a
   // stakeholder's address, or another enumerator closing one, was invisible until
   // the enumerator navigated away and came back.
-  socket.on('data:changed', (payload: { resources?: string[]; entityId?: string; action?: string }) => {
+  //
+  // But re-broadcasting alone was not enough, and this is the bug that made
+  // "realtime" only half work: mobile screens read from local SQLite, and nothing
+  // was updating SQLite from the server. The screen dutifully re-rendered the same
+  // stale row. So a stakeholder change now also pulls the delta into the mirror
+  // BEFORE the screens are told, and the pull itself announces again when it lands.
+  socket.on('data:changed', (payload: {
+    resources?: string[];
+    entityId?: string;
+    entityType?: string;
+    action?: string;
+  }) => {
     if (!payload?.resources?.length) return;
+
+    // Tell screens straight away so anything not backed by SQLite (counters read
+    // from the API) reacts without waiting for the pull.
     DeviceEventEmitter.emit(DATA_CHANGED_EVENT, payload);
+
+    if (!payload.resources.includes('stakeholders')) return;
+
+    // A hard delete leaves no row for the delta feed to report, so it has to be
+    // applied from the event. entityType is what makes this safe: deleting an
+    // ENUMERATOR also names 'stakeholders' in its fan-out, and acting on that
+    // entityId would try to delete a stakeholder using an enumerator's id.
+    if (payload.action === 'delete' && payload.entityType === 'stakeholders' && payload.entityId) {
+      store.dispatch(applyRemoteStakeholderDeleteThunk(payload.entityId) as any);
+      return;
+    }
+
+    schedulePull();
   });
 
   socket.on('connect', () => {
     // Anything that changed while this device was offline was missed. Treat a
     // (re)connect as "refresh everything you are showing".
     DeviceEventEmitter.emit(DATA_CHANGED_EVENT, { resources: ALL_RESOURCES, reason: 'reconnect' });
+
+    // And missed events cannot be replayed, so refreshing the screens is not
+    // enough — the mirror itself is behind. The cursor makes this cheap when
+    // nothing moved, and it is the only thing that closes the offline window.
+    schedulePull();
   });
 
   socket.on('disconnect', (reason) => {
@@ -128,6 +185,12 @@ export async function connectRealtime(): Promise<void> {
 }
 
 export function disconnectRealtime(): void {
+  // Cancel any pending pull, or a logout could be followed by a request carrying a
+  // token that has just been cleared.
+  if (pullTimer) {
+    clearTimeout(pullTimer);
+    pullTimer = null;
+  }
   socket?.disconnect();
   socket = null;
 }

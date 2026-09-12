@@ -31,7 +31,8 @@ export class SyncController {
       const changes = await syncService.getChanges(
         req.enumerator!.id,
         req.enumerator!.districts,
-        since as string
+        since as string,
+        req.enumerator!.isAdmin,
       );
 
       res.json({ success: true, data: changes });

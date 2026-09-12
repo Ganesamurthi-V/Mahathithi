@@ -802,6 +802,11 @@ export class StakeholderService {
     broadcastChange(['stakeholders', 'analytics', 'auditLogs'], {
       action: 'delete',
       entityId: stakeholderId,
+      // Tagged so a mobile device can drop this exact row. A hard delete leaves no
+      // row behind, so the delta feed cannot report it — the event is the only
+      // notice a device gets, and without entityType it could not tell whether the
+      // id was a stakeholder or something else in the fan-out list.
+      entityType: 'stakeholders',
       district: stakeholder.district,
     });
 

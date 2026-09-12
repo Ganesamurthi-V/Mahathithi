@@ -41,6 +41,16 @@ export interface DataChangedPayload {
   action?: 'create' | 'update' | 'delete';
   /** Primary key of the affected row, when it makes sense. */
   entityId?: string;
+  /**
+   * Which resource `entityId` belongs to.
+   *
+   * Needed because `resources` is a fan-out list, not a subject: deleting an
+   * enumerator names 'stakeholders' too (their locks were released), so a client
+   * seeing action='delete' + entityId could not tell whether the id was an
+   * enumerator or a stakeholder. Acting on the wrong one is what makes a mobile
+   * device delete a row it should have kept.
+   */
+  entityType?: DataResource;
   /** ISO timestamp, used by clients to discard out-of-order messages. */
   at: string;
 }
@@ -48,6 +58,7 @@ export interface DataChangedPayload {
 interface BroadcastOptions {
   action?: 'create' | 'update' | 'delete';
   entityId?: string;
+  entityType?: DataResource;
   /**
    * When set, field enumerators in this district also receive the event.
    * Omit for admin-only concerns (audit logs, exports, enumerator management) so
@@ -78,6 +89,7 @@ export function broadcastChange(
     resources,
     action: options.action,
     entityId: options.entityId,
+    entityType: options.entityType,
     at: new Date().toISOString(),
   };
 

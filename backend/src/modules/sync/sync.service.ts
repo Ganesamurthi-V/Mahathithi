@@ -1,9 +1,15 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { logger } from '../../utils/logger';
 import { ValidationError } from '../../utils/errors';
 import { getDigiPin } from '../../utils/digipin';
 import { districtScopeFilter } from '../../utils/district-scope';
 import { broadcastChange } from '../../realtime/events';
+import {
+  getDistrictPartitions,
+  isPartitioned,
+  selectPartitionedPrimaryKeysChangedSince,
+} from '../../utils/stakeholder-partition';
 
 const MAX_BATCH_ITEMS = 200;
 
@@ -239,29 +245,90 @@ export class SyncService {
   }
 
   /**
-   * Get changes since last sync for offline device update
+   * Changes since the device's last pull, for updating its offline mirror.
+   *
+   * TWO THINGS THIS USED TO GET WRONG
+   *
+   * 1. It returned only six columns (id, primaryKeyId, status, lockedById,
+   *    lockedAt, updatedAt). The mobile mirror persists ~37 scalar columns through
+   *    stakeholderDao.upsertMany, which is an INSERT OR REPLACE — so feeding it a
+   *    six-column row would have blanked the business name, address and everything
+   *    else. The client consequently ignored `updatedStakeholders` altogether and
+   *    used only `lockedStakeholderIds`, which is why an edit made in the admin
+   *    panel never reached a device: there was no path for it. Full rows are
+   *    returned now, and the client applies them.
+   *
+   * 2. It was scoped by district, not by the caller's partition. A shared district
+   *    is divided between its enumerators, so a district-wide delta would have
+   *    pushed another enumerator's rows onto this device — undoing the uniqueness
+   *    the partition exists to provide, through the back door.
+   *
+   * `limit` caps a single delta so a device returning after a long absence cannot
+   *  pull an unbounded payload; it re-pulls until it is caught up, and because the
+   *  keys are ordered by updated_at the cursor always advances.
    */
-  async getChanges(enumeratorId: string, districts: string[], since?: string) {
+  async getChanges(
+    enumeratorId: string,
+    districts: string[],
+    since?: string,
+    isAdmin: boolean = false,
+  ) {
     const sinceDate = since ? new Date(since) : new Date(0);
+    const LIMIT = 2000;
 
-    // Get stakeholders that were locked/updated since last sync
-    const updatedStakeholders = await prisma.stakeholder.findMany({
-      where: {
-        // PERF: exact match so the (district, updated_at) index path is usable.
-        ...(await districtScopeFilter(districts)),
-        updatedAt: { gt: sinceDate },
-      },
-      select: {
-        id: true,
-        primaryKeyId: true,
-        status: true,
-        lockedById: true,
-        lockedAt: true,
-        updatedAt: true,
-      },
+    const partitions = await getDistrictPartitions(enumeratorId, districts, isAdmin);
+    if (partitions.length === 0) {
+      return {
+        updatedStakeholders: [],
+        lockedStakeholderIds: [],
+        partitions,
+        hasMore: false,
+        syncTimestamp: new Date().toISOString(),
+      };
+    }
+
+    const split = isPartitioned(partitions);
+
+    // Unsplit districts keep the plain Prisma path — the modulo is only needed
+    // where a district is actually shared, and this query's plan is understood.
+    const where: Prisma.StakeholderWhereInput = { updatedAt: { gt: sinceDate } };
+    if (split) {
+      const keys = await selectPartitionedPrimaryKeysChangedSince(partitions, sinceDate, LIMIT);
+      if (keys.length === 0) {
+        return {
+          updatedStakeholders: [],
+          lockedStakeholderIds: [],
+          partitions,
+          hasMore: false,
+          syncTimestamp: new Date().toISOString(),
+        };
+      }
+      where.primaryKeyId = { in: keys };
+    } else {
+      // PERF: exact match so the (district, updated_at) index path is usable.
+      where.district = { in: partitions.map(p => p.district) };
+    }
+
+    // FULL rows on purpose — see note 1 above. Do NOT narrow this select.
+    const rows = await prisma.stakeholder.findMany({
+      where,
+      include: { _count: { select: { surveys: true } } },
+      orderBy: { updatedAt: 'asc' },
+      ...(split ? {} : { take: LIMIT }),
     });
 
-    // Separate into locked (by others) and completed
+    // Same status derivation the download feeds use. Without it the delta would
+    // hand back a plain 'OPEN' for a stakeholder that already has a survey against
+    // it, overwriting the local 'PARTIAL_COMPLETED' and making a part-finished
+    // record look untouched again.
+    const updatedStakeholders = rows.map(s => ({
+      ...s,
+      status: s.status === 'OPEN' && s._count?.surveys > 0 ? 'PARTIAL_COMPLETED' : s.status,
+    }));
+
+    // Rows this device must drop: taken by someone else, or finished. Sent
+    // separately because removing them locally is a different operation from
+    // upserting an edit, and the client protects unsynced work when it purges.
     const lockedByOthers = updatedStakeholders.filter(
       s => s.status === 'CLOSED' || (s.lockedById && s.lockedById !== enumeratorId)
     );
@@ -269,6 +336,11 @@ export class SyncService {
     return {
       updatedStakeholders,
       lockedStakeholderIds: lockedByOthers.map(s => s.id),
+      // Echoed so a device can see which slice it is being fed.
+      partitions,
+      // Tells the client to pull again immediately rather than waiting for the
+      // next trigger, so a long-absent device catches up in a few round trips.
+      hasMore: updatedStakeholders.length >= LIMIT,
       syncTimestamp: new Date().toISOString(),
     };
   }

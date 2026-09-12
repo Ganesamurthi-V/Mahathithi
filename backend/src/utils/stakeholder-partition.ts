@@ -160,6 +160,37 @@ export async function selectPartitionedPrimaryKeys(
 }
 
 /**
+ * Primary keys in the caller's slice that changed since a timestamp.
+ *
+ * Backs the delta feed the mobile app pulls when the server says something moved.
+ * Deliberately NOT filtered by status, unlike selectPartitionedPrimaryKeys: a
+ * device needs to hear about a stakeholder that just became CLOSED just as much as
+ * an OPEN one, otherwise it keeps offering work that is already done.
+ *
+ * Partitioned for the same reason the download is: without it a delta would hand a
+ * device rows belonging to another enumerator's share, quietly undoing the
+ * uniqueness the partition exists to guarantee.
+ */
+export async function selectPartitionedPrimaryKeysChangedSince(
+  partitions: DistrictPartition[],
+  since: Date,
+  limit: number,
+): Promise<number[]> {
+  if (partitions.length === 0) return [];
+
+  const rows = await prisma.$queryRaw<{ primary_key_id: number }[]>(Prisma.sql`
+    SELECT primary_key_id
+    FROM stakeholders
+    WHERE updated_at > ${since}
+      AND (${partitionSqlFilter(partitions)})
+    ORDER BY updated_at ASC
+    LIMIT ${limit}
+  `);
+
+  return rows.map(r => Number(r.primary_key_id));
+}
+
+/**
  * Per-status counts for the caller's slice.
  *
  * Exists so the dashboard can report the work an enumerator was actually given.

@@ -649,21 +649,12 @@ export const runAutoSync = createAsyncThunk(
       dispatch(updateSyncProgress(92));
 
       // ── Pull server-side changes and reconcile local cache ─────────────────
-      const lastSync = await appStateDao.get('last_sync_time');
-      try {
-        const changes = await syncService.getChanges(lastSync || undefined);
-        dispatch(updateSyncProgress(96));
-
-        // removeLockedStakeholders now refuses to delete any stakeholder that
-        // still holds unsynced survey or media rows, so this can no longer
-        // destroy pending field data.
-        const lockedIds = changes.data?.data?.lockedStakeholderIds || changes.data?.lockedStakeholderIds || [];
-        if (Array.isArray(lockedIds) && lockedIds.length > 0) {
-          await stakeholderDao.removeLockedStakeholders(lockedIds);
-        }
-      } catch (err: any) {
-        console.warn('[Sync] Failed to fetch server changes:', err.message);
-      }
+      // Delegated to pullServerChangesThunk so the upload pipeline and the socket
+      // trigger share one implementation and one cursor. This block used to read
+      // ONLY lockedStakeholderIds and discard updatedStakeholders, which is why an
+      // admin's edit never reached the device even during a full sync.
+      await dispatch(pullServerChangesThunk() as any);
+      dispatch(updateSyncProgress(96));
 
       dispatch(updateSyncProgress(100));
 
@@ -735,5 +726,118 @@ export const resetDeadLettersAndRetry = createAsyncThunk(
       await dispatch(runAutoSync());
     }
     return count;
+  }
+);
+
+/**
+ * app_state key holding the high-water mark for the server change feed.
+ *
+ * Deliberately separate from 'last_sync_time'. That key means "when did a full
+ * sync last finish" and drives the UI's Last Sync row; reusing it as the delta
+ * cursor would tangle two meanings, and a failed upload pass advancing it would
+ * silently skip server changes. This one advances ONLY when a pull actually
+ * succeeded, so a failure re-fetches the same window rather than losing it.
+ */
+const CHANGE_CURSOR_KEY = 'last_change_pull_time';
+
+/**
+ * Pull server-side stakeholder changes into local SQLite.
+ *
+ * THE GAP THIS FILLS
+ * The socket already told screens "something changed" and they dutifully
+ * re-rendered — from local SQLite, which nothing had updated. So an edit, a
+ * create, or a district reassignment made in the admin panel was invisible on a
+ * device until someone ran a full sync. The server even returned the rows in
+ * /sync/changes; no client had ever applied them.
+ *
+ * Two properties this relies on, both fixed server-side alongside this:
+ *   - the feed returns FULL rows. upsertMany is an INSERT OR REPLACE, so a partial
+ *     row would blank the business name and address rather than update them.
+ *   - the feed is partitioned. A district-wide delta would push another
+ *     enumerator's stakeholders onto this device, undoing the uniqueness the
+ *     partition provides.
+ *
+ * Safe to call often: it is a no-op when nothing changed, and idempotent when it
+ * does — the cursor makes repeats cheap rather than wrong.
+ */
+export const pullServerChangesThunk = createAsyncThunk(
+  'sync/pullServerChanges',
+  async (_, { dispatch }) => {
+    const net = await NetInfo.fetch();
+    if (!net.isConnected) return { applied: 0, removed: 0 };
+
+    let applied = 0;
+    let removed = 0;
+
+    try {
+      // Loop because the server caps a single delta, so a device returning after a
+      // long absence needs several passes. Bounded so a server that always reports
+      // hasMore cannot spin here forever.
+      for (let pass = 0; pass < 10; pass++) {
+        const cursor = await appStateDao.get(CHANGE_CURSOR_KEY);
+        const res = await syncService.getChanges(cursor || undefined);
+        const data = res.data?.data ?? res.data ?? {};
+
+        const updated: any[] = Array.isArray(data.updatedStakeholders) ? data.updatedStakeholders : [];
+        const lockedIds: string[] = Array.isArray(data.lockedStakeholderIds) ? data.lockedStakeholderIds : [];
+
+        if (updated.length > 0) {
+          await stakeholderDao.upsertMany(updated);
+          applied += updated.length;
+        }
+
+        // Purged AFTER the upsert, not before: a row can appear in both lists (an
+        // edit that also closed it), and removeLockedStakeholders protects any
+        // stakeholder still holding unsynced survey or media rows, so field work
+        // cannot be destroyed here.
+        if (lockedIds.length > 0) {
+          await stakeholderDao.removeLockedStakeholders(lockedIds);
+          removed += lockedIds.length;
+        }
+
+        // Advance only on success, and only to the server's own timestamp — using
+        // the device clock would drift and could skip rows.
+        if (data.syncTimestamp) {
+          await appStateDao.set(CHANGE_CURSOR_KEY, data.syncTimestamp);
+        }
+
+        if (!data.hasMore) break;
+      }
+
+      if (applied > 0 || removed > 0) {
+        console.log(`[Changes] applied ${applied} upsert(s), purged ${removed} row(s)`);
+        // Screens read SQLite, so they need telling that SQLite moved. Nothing
+        // arrives over the socket for a change this device made to its own mirror.
+        announceLocalDataChange(['stakeholders', 'analytics']);
+        dispatch(refreshSyncCountsThunk() as any);
+      }
+    } catch (err: any) {
+      // Never rethrow: this runs off a socket event, so a failure has no user
+      // action to attach to. The cursor is untouched, so the next trigger retries
+      // the same window.
+      console.warn('[Changes] pull failed:', err?.message);
+    }
+
+    return { applied, removed };
+  }
+);
+
+/**
+ * Drop a single stakeholder that the server has hard-deleted.
+ *
+ * A hard delete leaves no row behind, so the delta feed cannot report it — the
+ * socket event is the only notice a device ever gets. Without this the record
+ * would sit in the local mirror indefinitely and an enumerator could open a survey
+ * against a stakeholder that no longer exists.
+ */
+export const applyRemoteStakeholderDeleteThunk = createAsyncThunk(
+  'sync/applyRemoteStakeholderDelete',
+  async (stakeholderId: string) => {
+    try {
+      await stakeholderDao.deleteById(stakeholderId);
+      announceLocalDataChange(['stakeholders', 'analytics']);
+    } catch (err: any) {
+      console.warn('[Changes] failed to apply remote delete:', err?.message);
+    }
   }
 );
