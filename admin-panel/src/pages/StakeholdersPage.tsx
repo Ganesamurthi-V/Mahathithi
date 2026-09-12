@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey } from '../api';
+import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts } from '../api';
+import type { District } from '../types';
 import { getDigiPin } from '../utils/digipin';
 import {
   LoadingButton,
@@ -735,9 +736,16 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
  * shape and a record looks identical whichever client created it. Previously this
  * form exposed all 34 columns; it was cut to match the field workflow on request.
  *
- * Three of the columns shown on the detail screen are NOT inputs here:
- *   District    the server assigns the creator's own assigned district and rejects
- *               any other, so it is not an editable choice
+ * DISTRICT
+ * Unlike the mobile form, the admin picks the district explicitly from a
+ * searchable dropdown of the real districts. The admin account has no assigned
+ * district to fall back on — the mobile auto-assignment would leave the row with a
+ * NULL district, which every district-filtered query excludes — so on this form it
+ * is a required choice. The backend already takes an explicit district for an
+ * admin as-is (it only falls back when none is sent), so no server change is
+ * needed.
+ *
+ * Two columns shown on the detail screen are still NOT inputs here:
  *   Data Source forced to 'MANUAL', the marker that separates hand-entered rows
  *               from MCA/Udyam imports
  *   Status      new records always start OPEN
@@ -789,13 +797,31 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
     return initial;
   });
 
+  const [district, setDistrict] = useState('');
+
+  // The same district list the Enumerators page uses, cached for 10m under the
+  // shared 'districts' key so opening this modal is instant after the first load.
+  const { data: districtsRes, isLoading: districtsLoading } = useQuery({
+    queryKey: ['districts'],
+    queryFn: getDistricts,
+    staleTime: 10 * 60 * 1000,
+  });
+  // The dropdown is keyed on the district NAME, not id: the stakeholders table
+  // stores the name string, the createStakeholder endpoint expects a name, and the
+  // partition/scope logic matches on it. Sending an id would store a UUID no query
+  // would ever match.
+  const districtNames: string[] = ((districtsRes?.data?.data as District[]) || [])
+    .map(d => d.name)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
   const set = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
 
   const createMut = useMutation({
     mutationFn: () => {
       // The server schema is .strict(), so unknown keys are a 400. Only non-empty
       // fields are sent, to keep the payload to what the operator actually entered.
-      const payload: Record<string, string> = {};
+      const payload: Record<string, string> = { district };
       for (const f of ADD_FIELDS) {
         const v = form[f.key]?.trim();
         if (v) payload[f.key] = v;
@@ -822,6 +848,10 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
       alert('Organization name is required.');
       return;
     }
+    if (!district) {
+      alert('Select a district.');
+      return;
+    }
     createMut.mutate();
   };
 
@@ -837,8 +867,8 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
           <div>
             <h3 style={{ margin: 0 }}>Add Stakeholder</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
-              Only the organization name is required. The record is created with
-              source <code>MANUAL</code> and status OPEN.
+              Organization name and district are required. The record is created
+              with source <code>MANUAL</code> and status OPEN.
             </p>
           </div>
           <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
@@ -882,8 +912,40 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
               </div>
             ))}
 
+            {/* District — an explicit, searchable choice on the admin form.
+                A text input backed by a <datalist> gives type-to-filter over the
+                real districts with no extra dependency, while still accepting only
+                a value from the list (enforced on submit below). */}
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label style={labelStyle}>
+                District <span style={{ color: '#e5484d' }}>*</span>
+              </label>
+              <input
+                className="form-input"
+                list="add-stakeholder-districts"
+                value={district}
+                onChange={(e) => setDistrict(e.target.value)}
+                placeholder={districtsLoading ? 'Loading districts…' : 'Type to search…'}
+                disabled={createMut.isPending || districtsLoading}
+                autoComplete="off"
+              />
+              <datalist id="add-stakeholder-districts">
+                {districtNames.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+              {/* Only flag a mismatch once something has been typed, so the field
+                  is not red before the operator has touched it. */}
+              {district.trim() !== '' && !districtNames.includes(district) && (
+                <div style={{ fontSize: '12px', color: '#e5484d', marginTop: '4px' }}>
+                  Choose a district from the list.
+                </div>
+              )}
+            </div>
+
             {/* Set by the server, shown so the operator is not surprised by what
-                appears on the detail screen afterwards. Mirrors the mobile note. */}
+                appears on the detail screen afterwards. District is no longer here:
+                the admin picks it above. */}
             <div style={{
               padding: '12px', backgroundColor: 'var(--bg-input)',
               borderRadius: '8px', border: '1px solid var(--border)',
@@ -892,7 +954,6 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
                 Set automatically
               </div>
               <div style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.6 }}>
-                District — your assigned district<br />
                 Data Source — MANUAL<br />
                 Status — OPEN
               </div>
@@ -907,6 +968,11 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
                 variant="primary"
                 loading={createMut.isPending}
                 loadingText="Creating…"
+                // Only a district that exists in the list may be submitted, so a
+                // typo cannot create a stakeholder in a district that does not
+                // exist (which would then be invisible to every district filter).
+                disabled={!districtNames.includes(district)}
+                title={districtNames.includes(district) ? undefined : 'Select a district from the list first'}
               >
                 Create Stakeholder
               </LoadingButton>
