@@ -54,6 +54,29 @@ export const runInitialSync = createAsyncThunk(
       // each page contributes half the remaining gap between current and 55 %.
       // This keeps the bar moving continuously without ever hitting 55 % before
       // we're actually done downloading.
+      // ── Step 0: Claim a work queue ────────────────────────────────────────
+      // Nothing is downloadable until this device owns some records. The server
+      // hands out up to WORK_QUOTA (5000) unassigned stakeholders from this
+      // enumerator's districts and marks them as theirs, which is what stops two
+      // enumerators receiving the same ones.
+      //
+      // Done before the download rather than after, because the download feed
+      // returns "everything assigned to me" — without a claim it would return an
+      // empty list and the device would look broken.
+      dispatch(updateInitialSyncProgress({ progress: 5, message: 'Reserving your work queue...' }));
+      try {
+        const claimRes = await stakeholderService.claimWork();
+        const c = claimRes.data?.data ?? {};
+        console.log(
+          `✅ [Initial Sync] Claimed ${c.claimed ?? 0}; holding ${c.held ?? 0}/${c.quota ?? '?'}, ` +
+          `${c.poolRemaining ?? '?'} left unassigned in district`
+        );
+      } catch (err: any) {
+        // Not fatal on its own: a device that already holds a queue (a reinstall,
+        // say) can still download it. Failing here would block that recovery.
+        console.warn('[Initial Sync] Claim failed, continuing with any existing queue:', err?.message);
+      }
+
       console.log('🔄 [Initial Sync] Fetching stakeholders from backend (paginated)...');
       dispatch(updateInitialSyncProgress({ progress: 10, message: 'Downloading Stakeholders...' }));
 
@@ -654,6 +677,11 @@ export const runAutoSync = createAsyncThunk(
       // ONLY lockedStakeholderIds and discard updatedStakeholders, which is why an
       // admin's edit never reached the device even during a full sync.
       await dispatch(pullServerChangesThunk() as any);
+      dispatch(updateSyncProgress(94));
+
+      // Completed surveys have now been uploaded, so the server can see the room
+      // they freed under the quota. Refill it, and pull whatever was claimed.
+      await dispatch(topUpWorkQueueThunk() as any);
       dispatch(updateSyncProgress(96));
 
       dispatch(updateSyncProgress(100));
@@ -819,6 +847,55 @@ export const pullServerChangesThunk = createAsyncThunk(
     }
 
     return { applied, removed };
+  }
+);
+
+/**
+ * Refill the work queue once completed surveys have made room under the quota.
+ *
+ * WHY THIS RUNS AFTER A SYNC
+ * Completing a survey closes its stakeholder, which drops the count this device
+ * holds below the 5000 quota. That room only becomes visible to the server once the
+ * surveys have actually been uploaded — so the moment right after a sync is exactly
+ * when a top-up can succeed, and before it there is nothing to claim.
+ *
+ * The claim itself does not return the rows. It stamps them with a fresh updated_at,
+ * so the ordinary delta feed picks them up; that keeps one download path instead of
+ * a second one that could disagree with it. Hence the pull immediately after.
+ *
+ * Cheap when there is nothing to do: the server answers `claimed: 0` for a full
+ * queue or an empty pool, and no pull follows.
+ */
+export const topUpWorkQueueThunk = createAsyncThunk(
+  'sync/topUpWorkQueue',
+  async (_, { dispatch }) => {
+    const net = await NetInfo.fetch();
+    if (!net.isConnected) return { claimed: 0 };
+
+    try {
+      const res = await stakeholderService.claimWork();
+      const result = res.data?.data ?? {};
+      const claimed: number = result.claimed ?? 0;
+
+      if (claimed > 0) {
+        console.log(
+          `[TopUp] claimed ${claimed} more; holding ${result.held}/${result.quota}, ` +
+          `${result.poolRemaining} still unassigned`
+        );
+        // Pull them into SQLite. Without this the device owns rows it has never
+        // seen, and the operator's list would not grow until the next sync.
+        await dispatch(pullServerChangesThunk() as any);
+      } else if (result.poolRemaining === 0) {
+        console.log('[TopUp] nothing left unassigned in this district.');
+      }
+
+      return { claimed };
+    } catch (err: any) {
+      // Never rethrow: this is an opportunistic refill hanging off the end of a
+      // sync, and failing it must not fail the sync that already succeeded.
+      console.warn('[TopUp] failed:', err?.message);
+      return { claimed: 0 };
+    }
   }
 );
 

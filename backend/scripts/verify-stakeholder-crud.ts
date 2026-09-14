@@ -126,6 +126,10 @@ async function main() {
     const SERVER_OWNED = [
       'id', 'primaryKeyId', 'createdAt', 'updatedAt',
       'status', 'lockedById', 'lockedAt', 'dataSource',
+      // Work assignment. Set only by the claim mechanism, which hands unassigned
+      // records to one enumerator at a time; a client-settable value here would let
+      // a device assign work to itself or to someone else and break exclusivity.
+      'assignedToId', 'assignedAt',
     ];
     // Removed from both forms and from createStakeholderSchema on request. Listed
     // explicitly rather than just omitted, so this stays a deliberate exclusion
@@ -198,6 +202,26 @@ async function main() {
       check('client-supplied primaryKeyId rejected', false, 'request succeeded');
     } catch (e: any) {
       check('client-supplied primaryKeyId rejected',
+        e.response?.status === 400, `status ${e.response?.status}`);
+    }
+
+    // Work assignment cannot be self-granted: a device that could set assignedToId
+    // could take records already claimed by another enumerator.
+    try {
+      await axios.post(
+        `${BASE}/api/stakeholders`,
+        // Any value does: .strict() rejects the KEY, so this must not depend on a
+        // real enumerator id (and adminId is not in scope until further down).
+        {
+          companyNameStandardized: 'ZZ assignment probe',
+          district: 'Pune',
+          assignedToId: '00000000-0000-0000-0000-000000000000',
+        },
+        { headers }
+      );
+      check('assignedToId cannot be set by a client', false, 'request succeeded');
+    } catch (e: any) {
+      check('assignedToId cannot be set by a client',
         e.response?.status === 400, `status ${e.response?.status}`);
     }
 

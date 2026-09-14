@@ -1,10 +1,6 @@
 import { prisma } from '../../config/database';
 import { districtScopeFilter } from '../../utils/district-scope';
-import {
-  getDistrictPartitions,
-  isPartitioned,
-  countPartitionedByStatus,
-} from '../../utils/stakeholder-partition';
+import { WORK_QUOTA, countPool } from '../../utils/stakeholder-assignment';
 
 export class DashboardService {
   async getStats(enumeratorId: string, districts: string[], isAdmin: boolean) {
@@ -15,16 +11,6 @@ export class DashboardService {
       ? {}
       : await districtScopeFilter(districts);
 
-    // The stakeholder download divides a shared district between its enumerators,
-    // so "open" has to mean the caller's own share. It counted the whole district
-    // before, which with three enumerators showed a task list three times larger
-    // than the rows the device had actually downloaded — the operator would work
-    // through their list and be left with a number that never reached zero.
-    //
-    // Admins get the identity partition (total=1, index=0), so their figures are
-    // unchanged and still cover everything.
-    const partitions = await getDistrictPartitions(enumeratorId, districts, isAdmin);
-
     // M4 FIX: scope sync counts to the calling enumerator for non-admins.
     // Previously every enumerator's dashboard showed the system-wide backlog
     // count — an information leak inconsistent with the district-scoping applied
@@ -33,60 +19,62 @@ export class DashboardService {
       ? {}
       : { enumeratorId }; // scope to this enumerator's own queue items
 
-    // PERF: one groupBy replaces the separate OPEN + total stakeholder counts
-    // (open = the OPEN bucket, total = sum of all buckets), and every remaining
-    // count runs in a single Promise.all — the trailing `mySurveys` count used to
-    // run sequentially after the others. `completed` keeps its own count because
-    // it carries the extra lockedById filter that the status groupBy can't express.
-    // Only reach for the raw partitioned count when a district is genuinely shared.
-    // Prisma cannot express the modulo, but an unshared district does not need it —
-    // and the Prisma groupBy is the version whose plan is already understood.
-    const split = isPartitioned(partitions);
+    // An enumerator's figures describe the work CLAIMED BY THEM, not the district.
+    // Counting the district showed a task list several times larger than the rows
+    // the device had actually downloaded, so the operator worked through everything
+    // they were given and was left with a number that never reached zero.
+    //
+    // This used to be a raw-SQL count over a modulo slice. A stored claim is an
+    // indexed column (assigned_to_id), so it is a plain Prisma count now — the
+    // whole partitioned-count path and its hand-written SQL are gone.
+    //
+    // Admins hold no claims, so they keep the district-scoped view; scoping an
+    // admin by assignment would report zero.
+    const assignedFilter = isAdmin
+      ? districtFilter
+      : { assignedToId: enumeratorId };
 
-    const [statusCounts, completed, pendingSync, failedSync, mySurveys] = await Promise.all([
-      split
-        ? countPartitionedByStatus(partitions)
-        : prisma.stakeholder
-            .groupBy({
-              by: ['status'],
-              where: districtFilter,
-              _count: { _all: true },
-            })
-            .then(groups =>
-              // Normalised to the same shape countPartitionedByStatus returns, so
-              // the two branches are interchangeable below.
-              Object.fromEntries(groups.map(g => [String(g.status), g._count._all])),
-            ),
-      // Deliberately NOT partitioned. This is work the caller finished — they hold
-      // the lock on it — and it stays theirs even if the slice boundaries move
-      // afterwards because an enumerator was added to or removed from the district.
+    const [open, completed, pendingSync, failedSync, mySurveys, poolRemaining] = await Promise.all([
+      prisma.stakeholder.count({
+        where: { ...assignedFilter, status: 'OPEN' as any },
+      }),
+      // Deliberately keyed on lockedById, not the assignment. This is work the
+      // caller finished — they hold the completion lock — and it stays theirs even
+      // if the claim is later released back to the pool.
       prisma.stakeholder.count({
         where: { ...districtFilter, status: 'CLOSED' as any, lockedById: enumeratorId },
       }),
       prisma.syncQueue.count({ where: { ...syncFilter, status: 'PENDING' } }),
       prisma.syncQueue.count({ where: { ...syncFilter, status: 'FAILED' } }),
       prisma.survey.count({ where: { enumeratorId } }),
+      // How much unclaimed work is left in their districts. Surfaced so a device can
+      // tell "you are done" apart from "you have finished your current batch and
+      // more is waiting", which look identical from an empty local list.
+      isAdmin ? Promise.resolve(0) : countPool(districts),
     ]);
-
-    const open = statusCounts['OPEN'] ?? 0;
-    const total = Object.values(statusCounts).reduce((sum, n) => sum + n, 0);
 
     return {
       stakeholders: {
         completed,
         open,
-        total,
+        // `total` used to be the district-wide row count. For an enumerator it now
+        // means everything they hold, finished or not, which is the number that
+        // matches what is on their device.
+        total: open + completed,
       },
       sync: {
         pendingUploads: pendingSync,
         failedUploads: failedSync,
       },
       mySurveys,
-      // Echoed so a device can tell whether it is seeing a share or a whole
-      // district, and so "why is my open count lower than my colleague's" has an
-      // answer in the response rather than only in server logs.
-      partitions,
+      // Lets the mobile app decide whether to top up, and show "N more available"
+      // rather than an unexplained empty list.
+      assignment: {
+        held: open,
+        quota: WORK_QUOTA,
+        poolRemaining,
+        canClaimMore: !isAdmin && open < WORK_QUOTA && poolRemaining > 0,
+      },
     };
   }
 }
-

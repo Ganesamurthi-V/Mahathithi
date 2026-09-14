@@ -19,6 +19,10 @@ router.get('/assigned', controller.getAssigned);            // legacy — kept f
 // :id, and there is no id yet.
 router.post('/', controller.create);
 
+// Top up this enumerator's work queue from the unassigned pool in their districts.
+// Declared before '/:id' so 'claim' is not swallowed as an id parameter.
+router.post('/claim', controller.claim);
+
 router.get('/:id', districtGuard, controller.getById);
 router.patch('/:id/lock', districtGuard, controller.lock);
 // N3 FIX: status changes (OPEN/CLOSED) lock or reopen a record and bypass every

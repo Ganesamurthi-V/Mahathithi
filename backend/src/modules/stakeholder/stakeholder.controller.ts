@@ -3,6 +3,8 @@ import { StakeholderService } from './stakeholder.service';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { ValidationError } from '../../utils/errors';
 import { updateStakeholderSchema, createStakeholderSchema } from '../../schemas/request-schemas';
+import { claimStakeholders } from '../../utils/stakeholder-assignment';
+import { broadcastChange } from '../../realtime/events';
 
 const stakeholderService = new StakeholderService();
 
@@ -177,6 +179,42 @@ export class StakeholderController {
         (req.params.id as string),
         req.enumerator!.id
       );
+
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Top up the caller's work queue from the unassigned pool in their districts.
+   *
+   * Called by the mobile app before the initial download and again after a sync,
+   * once completed surveys have freed room under the quota. Idempotent: with a full
+   * queue or an empty pool it claims nothing and says so, so the client can call it
+   * freely rather than having to track when it is due.
+   */
+  async claim(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      // An admin has no work queue of their own — they see whole districts — so
+      // letting them claim would take records away from the field for no reason.
+      if (req.enumerator!.isAdmin) {
+        throw new ValidationError(
+          'Admins are not assigned survey work, so there is nothing to claim.'
+        );
+      }
+
+      const result = await claimStakeholders(
+        req.enumerator!.id,
+        req.enumerator!.districts,
+      );
+
+      // Only announce when something actually moved. The pool shrinking changes the
+      // district counts other clients display, and the claimed rows now carry a new
+      // updated_at so the caller's own delta feed will deliver them.
+      if (result.claimed > 0) {
+        broadcastChange(['stakeholders', 'analytics'], { action: 'update' });
+      }
 
       res.json({ success: true, data: result });
     } catch (error) {

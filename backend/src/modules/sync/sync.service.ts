@@ -5,11 +5,6 @@ import { ValidationError } from '../../utils/errors';
 import { getDigiPin } from '../../utils/digipin';
 import { districtScopeFilter } from '../../utils/district-scope';
 import { broadcastChange } from '../../realtime/events';
-import {
-  getDistrictPartitions,
-  isPartitioned,
-  selectPartitionedPrimaryKeysChangedSince,
-} from '../../utils/stakeholder-partition';
 
 const MAX_BATCH_ITEMS = 200;
 
@@ -276,37 +271,19 @@ export class SyncService {
     const sinceDate = since ? new Date(since) : new Date(0);
     const LIMIT = 2000;
 
-    const partitions = await getDistrictPartitions(enumeratorId, districts, isAdmin);
-    if (partitions.length === 0) {
-      return {
-        updatedStakeholders: [],
-        lockedStakeholderIds: [],
-        partitions,
-        hasMore: false,
-        syncTimestamp: new Date().toISOString(),
-      };
-    }
-
-    const split = isPartitioned(partitions);
-
-    // Unsplit districts keep the plain Prisma path — the modulo is only needed
-    // where a district is actually shared, and this query's plan is understood.
+    // Scoped to this enumerator's claimed work. Was a modulo slice of the district,
+    // which needed raw SQL; a stored claim is an indexed column.
+    //
+    // Note this deliberately does NOT filter on status: a device needs to hear that
+    // one of its stakeholders became CLOSED just as much as an edit, otherwise it
+    // keeps offering work that is already done.
     const where: Prisma.StakeholderWhereInput = { updatedAt: { gt: sinceDate } };
-    if (split) {
-      const keys = await selectPartitionedPrimaryKeysChangedSince(partitions, sinceDate, LIMIT);
-      if (keys.length === 0) {
-        return {
-          updatedStakeholders: [],
-          lockedStakeholderIds: [],
-          partitions,
-          hasMore: false,
-          syncTimestamp: new Date().toISOString(),
-        };
-      }
-      where.primaryKeyId = { in: keys };
+
+    if (isAdmin) {
+      // An admin holds no claims, so scoping by assignment would return nothing.
+      Object.assign(where, await districtScopeFilter(districts));
     } else {
-      // PERF: exact match so the (district, updated_at) index path is usable.
-      where.district = { in: partitions.map(p => p.district) };
+      where.assignedToId = enumeratorId;
     }
 
     // FULL rows on purpose — see note 1 above. Do NOT narrow this select.
@@ -314,7 +291,7 @@ export class SyncService {
       where,
       include: { _count: { select: { surveys: true } } },
       orderBy: { updatedAt: 'asc' },
-      ...(split ? {} : { take: LIMIT }),
+      take: LIMIT,
     });
 
     // Same status derivation the download feeds use. Without it the delta would
@@ -336,8 +313,6 @@ export class SyncService {
     return {
       updatedStakeholders,
       lockedStakeholderIds: lockedByOthers.map(s => s.id),
-      // Echoed so a device can see which slice it is being fed.
-      partitions,
       // Tells the client to pull again immediately rather than waiting for the
       // next trigger, so a long-absent device catches up in a few round trips.
       hasMore: updatedStakeholders.length >= LIMIT,

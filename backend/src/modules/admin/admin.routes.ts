@@ -7,6 +7,7 @@ import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { AppError, ValidationError, NotFoundError, ConflictError } from '../../utils/errors';
 import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
+import { releaseClaimsOutsideDistricts } from '../../utils/stakeholder-assignment';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { broadcastChange } from '../../realtime/events';
 import { logger } from '../../utils/logger';
@@ -599,6 +600,15 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
         })
       : [];
 
+    // Hand back any claimed-but-unfinished records in districts this enumerator no
+    // longer covers. Without this they stay assigned to someone who cannot reach
+    // them and nobody else can claim them — invisible, unsurveyable, and still
+    // counted in the district total. Completed work keeps its assignment.
+    const released = await releaseClaimsOutsideDistricts(
+      req.params.id as string,
+      nextRows.map(r => r.name),
+    );
+
     const resliceDistricts = [
       ...new Set(
         [...previousRows.map(r => r.district?.name), ...nextRows.map(r => r.name)]
@@ -612,7 +622,7 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
         entityType: 'enumerator',
         entityId: (req.params.id as string),
         enumeratorId: req.enumerator!.id,
-        details: { districtIds },
+        details: { districtIds, releasedClaims: released },
       },
     });
 

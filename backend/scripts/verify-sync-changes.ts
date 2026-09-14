@@ -20,12 +20,22 @@
  */
 import { prisma } from '../src/config/database';
 import { SyncService } from '../src/modules/sync/sync.service';
-import {
-  getDistrictPartitions,
-  selectPartitionedPrimaryKeys,
-} from '../src/utils/stakeholder-partition';
+import { claimStakeholders, releaseClaims } from '../src/utils/stakeholder-assignment';
 
 const sync = new SyncService();
+
+/** Ids this run claimed, so cleanup releases only what it created. */
+const claimedHere = new Set<string>();
+
+async function claimFor(enumeratorId: string, district: string, n: number): Promise<number[]> {
+  await claimStakeholders(enumeratorId, [district], n);
+  const rows = await prisma.stakeholder.findMany({
+    where: { assignedToId: enumeratorId },
+    select: { id: true, primaryKeyId: true },
+  });
+  rows.forEach(r => claimedHere.add(r.id));
+  return rows.map(r => r.primaryKeyId);
+}
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -77,14 +87,16 @@ async function main() {
   const [first, second] = ordered as [{ id: string; loginId: string }, { id: string; loginId: string }];
   console.log(`shared district: ${district} (${ordered.map(m => m.loginId).join(', ')})\n`);
 
-  // ---- pick a stakeholder from FIRST's slice ---------------------------
-  const firstParts = await getDistrictPartitions(first.id, [district], false);
-  const firstKeys = await selectPartitionedPrimaryKeys(firstParts, 0, undefined, Number.MAX_SAFE_INTEGER);
-  const secondParts = await getDistrictPartitions(second.id, [district], false);
-  const secondKeys = new Set(
-    await selectPartitionedPrimaryKeys(secondParts, 0, undefined, Number.MAX_SAFE_INTEGER)
-  );
-  check('the two slices are disjoint to begin with',
+  // ---- give each enumerator a small, exclusive queue -------------------
+  // Was a derived modulo slice; work is now claimed, so the queues are set up
+  // explicitly. Small on purpose — this suite is about the delta feed, not the cap.
+  await releaseClaims(first.id);
+  await releaseClaims(second.id);
+  const firstKeys = await claimFor(first.id, district, 30);
+  const secondKeys = new Set(await claimFor(second.id, district, 30));
+  check('each enumerator holds a queue', firstKeys.length > 0 && secondKeys.size > 0,
+    `first=${firstKeys.length} second=${secondKeys.size}`);
+  check('the two queues are disjoint to begin with',
     !firstKeys.some(k => secondKeys.has(k)));
 
   const target = await prisma.stakeholder.findFirst({
@@ -133,11 +145,11 @@ async function main() {
       !secondIds.includes(target.id),
       `other enumerator got ${secondIds.length} row(s) including it`);
 
-    // Nothing in either delta may fall outside that enumerator's own slice.
+    // Nothing in either delta may fall outside that enumerator's own queue.
     const firstKeySet = new Set(firstKeys);
     const strayFirst = forFirst.updatedStakeholders
       .filter((s: any) => !firstKeySet.has(s.primaryKeyId));
-    check('every row in the delta belongs to the caller\'s slice',
+    check('every row in the delta is claimed by the caller',
       strayFirst.length === 0, `${strayFirst.length} stray row(s)`);
 
     const straySecond = forSecond.updatedStakeholders
@@ -176,6 +188,17 @@ async function main() {
     const ok = back?.city === originalCity;
     console.log(`  city restored to ${JSON.stringify(originalCity)}: ${ok ? 'YES' : 'NO'}`);
     if (!ok) failures++;
+
+    // Release only the claims this run made, tracked as they were created.
+    const released = await prisma.stakeholder.updateMany({
+      where: { id: { in: [...claimedHere] } },
+      data: { assignedToId: null, assignedAt: null },
+    });
+    console.log(`  released ${released.count} claim(s) this test made`);
+
+    const leftover = await prisma.stakeholder.count({ where: { assignedToId: { not: null } } });
+    console.log(`  assigned rows left in the table: ${leftover}`);
+
     await prisma.$disconnect();
   }
 

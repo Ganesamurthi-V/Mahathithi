@@ -375,6 +375,18 @@ export const stakeholderService = {
   updateStakeholder: (id: string, data: any) =>
     api.patch(`/stakeholders/${id}`, data),
   /**
+   * Top up this device's work queue from the unassigned pool in its districts.
+   *
+   * Returns { claimed, held, quota, poolRemaining, full }. Idempotent — with a full
+   * queue or an empty pool it claims nothing, so it is safe to call on every sync
+   * rather than tracking when a top-up is due.
+   *
+   * Claimed rows get a fresh updated_at, so the normal delta feed delivers them;
+   * there is no separate download path for newly claimed work.
+   */
+  claimWork: () =>
+    api.post('/stakeholders/claim'),
+  /**
    * Create a stakeholder by hand.
    *
    * ONLINE ONLY. The sync queue can hold arbitrary entity types locally, but the

@@ -3,13 +3,6 @@ import { prisma } from '../../config/database';
 import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../../utils/errors';
 import { logger } from '../../utils/logger';
 import { districtScopeFilter } from '../../utils/district-scope';
-// Shared with the dashboard so both report the same slice. See the module header
-// for why the partition is modulo-based.
-import {
-  getDistrictPartitions,
-  isPartitioned,
-  selectPartitionedPrimaryKeys,
-} from '../../utils/stakeholder-partition';
 import { categoryFilter } from '../../utils/category-scope';
 import { broadcastChange } from '../../realtime/events';
 
@@ -312,32 +305,16 @@ export class StakeholderService {
     since?: string,
     isAdmin: boolean = false,
   ) {
-    // Partitioned identically to getAssignedPage. If only the paged feed divided
-    // the work, a device falling back to this legacy route would download the whole
-    // district and the two endpoints would disagree about what belongs to whom.
-    const partitions = await getDistrictPartitions(enumeratorId, districts, isAdmin);
-    if (partitions.length === 0) return [];
-
-    const isSplit = isPartitioned(partitions);
-
-    // Unsplit districts keep the original single-query path — no reason to pay for
-    // a raw key lookup when the filter is expressible in Prisma.
+    // Scoped identically to getAssignedPage. If only the paged feed filtered by
+    // assignment, a device falling back to this legacy route would download the
+    // whole district and the two endpoints would disagree about what belongs to whom.
     const where: Prisma.StakeholderWhereInput = { status: 'OPEN' };
     if (since) where.updatedAt = { gt: new Date(since) };
 
-    if (isSplit) {
-      // No LIMIT here because this route is already unbounded; the partition only
-      // narrows the result, so this cannot return more than before.
-      const pkIds = await selectPartitionedPrimaryKeys(
-        partitions,
-        0,
-        since,
-        Number.MAX_SAFE_INTEGER,
-      );
-      if (pkIds.length === 0) return [];
-      where.primaryKeyId = { in: pkIds };
+    if (isAdmin) {
+      Object.assign(where, await districtScopeFilter(districts));
     } else {
-      where.district = { in: partitions.map(p => p.district) };
+      where.assignedToId = enumeratorId;
     }
 
     // NOTE: this is the offline-sync mirror feed — the mobile SQLite store
@@ -383,41 +360,25 @@ export class StakeholderService {
   ) {
     const clampedSize = Math.min(Math.max(pageSize, 1), 5000);
 
-    const partitions = await getDistrictPartitions(enumeratorId, districts, isAdmin);
+    // Assigned work only. This used to compute a modulo slice of the district and
+    // needed raw SQL to express it; a stored claim is an indexed column, so the
+    // whole two-query dance and its 4.6-5.6s key lookup are gone.
+    //
+    // An admin is not a field device and holds no claims, so they still see their
+    // district scope — otherwise the endpoint would return nothing for them.
+    const where: Prisma.StakeholderWhereInput = { status: 'OPEN' };
 
-    if (partitions.length === 0) {
-      return { stakeholders: [], nextCursor: null, pageSize: clampedSize, count: 0, partitions };
+    if (isAdmin) {
+      const scope = await districtScopeFilter(districts);
+      Object.assign(where, scope);
+    } else {
+      where.assignedToId = enumeratorId;
     }
 
-    const where: Prisma.StakeholderWhereInput = { status: 'OPEN' };
     if (since) where.updatedAt = { gt: new Date(since) };
     // Cursor: only rows whose PK is strictly greater than the last seen cursor.
     // For the first page `after` is 0, which is always less than any real PK.
     where.primaryKeyId = { gt: after };
-
-    // Only reach for raw SQL when a district is genuinely shared.
-    //
-    // Prisma's `where` cannot express a modulo, so a split district needs raw SQL
-    // for its key list, then a second query to load the rows. Running that
-    // unconditionally made the common case worse: an unshared district paid two
-    // round trips for a filter Prisma can express perfectly well, and the extra key
-    // query measured 4.6-5.6s on Thane during verification. Unshared districts now
-    // keep the original single-query path exactly as it was.
-    const isSplit = isPartitioned(partitions);
-    let pageKeys: number[] | null = null;
-
-    if (isSplit) {
-      pageKeys = await selectPartitionedPrimaryKeys(partitions, after, since, clampedSize);
-      if (pageKeys.length === 0) {
-        return { stakeholders: [], nextCursor: null, pageSize: clampedSize, count: 0, partitions };
-      }
-      // Narrowing to explicit keys already encodes the cursor and the limit, so the
-      // pk/limit conditions are dropped to avoid restating them.
-      delete where.primaryKeyId;
-      where.primaryKeyId = { in: pageKeys };
-    } else {
-      where.district = { in: partitions.map(p => p.district) };
-    }
 
     // NOTE: full rows on purpose — the mobile mirror (stakeholderDao.upsertMany)
     // persists ~37 of these scalar columns. Do NOT narrow this select; a dropped
@@ -428,7 +389,7 @@ export class StakeholderService {
         _count: { select: { surveys: true } },
       },
       orderBy: { primaryKeyId: 'asc' },
-      ...(isSplit ? {} : { take: clampedSize }),
+      take: clampedSize,
     });
 
     const rows = stakeholders.map(s => ({
@@ -436,17 +397,9 @@ export class StakeholderService {
       status: s.status === 'OPEN' && s._count?.surveys > 0 ? 'PARTIAL_COMPLETED' : s.status,
     }));
 
-    // "A full page means keep going" is the contract the mobile loop relies on, and
-    // it holds for both paths. On the split path the count comes from the raw key
-    // list, which is the authoritative ordered page — a partitioned page is a sparse
-    // slice of the id range, so an off-by-one here would skip or repeat rows.
-    const pageCount = isSplit ? pageKeys!.length : rows.length;
-    const lastKey = isSplit
-      ? pageKeys![pageKeys!.length - 1]
-      : rows.length > 0 ? rows[rows.length - 1]!.primaryKeyId : undefined;
-
-    const nextCursor = pageCount === clampedSize && lastKey !== undefined
-      ? lastKey
+    // "A full page means keep going" is the contract the mobile loop relies on.
+    const nextCursor = rows.length === clampedSize
+      ? rows[rows.length - 1]!.primaryKeyId
       : null; // null signals "no more pages"
 
     return {
@@ -454,10 +407,6 @@ export class StakeholderService {
       nextCursor,
       pageSize: clampedSize,
       count: rows.length,
-      // Echoed so a device (and the verification script) can see which slice it was
-      // served, and so an operator reporting "I only got a third of them" has an
-      // answer visible in the response rather than needing server logs.
-      partitions,
     };
   }
 
