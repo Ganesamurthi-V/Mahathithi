@@ -67,10 +67,18 @@ export const runInitialSync = createAsyncThunk(
       try {
         const claimRes = await stakeholderService.claimWork();
         const c = claimRes.data?.data ?? {};
+        // Logs `target`, not `quota`: the batch is a per-district fair share, so in
+        // a shared district a full queue is well under the 5000 ceiling and
+        // reporting against the ceiling would look like a truncated download.
         console.log(
-          `✅ [Initial Sync] Claimed ${c.claimed ?? 0}; holding ${c.held ?? 0}/${c.quota ?? '?'}, ` +
-          `${c.poolRemaining ?? '?'} left unassigned in district`
+          `✅ [Initial Sync] Claimed ${c.claimed ?? 0}; holding ${c.held ?? 0}/${c.target ?? '?'} ` +
+          `(ceiling ${c.quota ?? '?'}), ${c.poolRemaining ?? '?'} left unassigned`
         );
+        for (const s of c.shares ?? []) {
+          console.log(
+            `   ${s.district}: share ${s.share} = min(${c.quota}, ceil(${s.openTotal} open / ${s.enumerators} enum)), holding ${s.held}`
+          );
+        }
       } catch (err: any) {
         // Not fatal on its own: a device that already holds a queue (a reinstall,
         // say) can still download it. Failing here would block that recovery.
@@ -879,8 +887,8 @@ export const topUpWorkQueueThunk = createAsyncThunk(
 
       if (claimed > 0) {
         console.log(
-          `[TopUp] claimed ${claimed} more; holding ${result.held}/${result.quota}, ` +
-          `${result.poolRemaining} still unassigned`
+          `[TopUp] claimed ${claimed} more; holding ${result.held}/${result.target} ` +
+          `(ceiling ${result.quota}), ${result.poolRemaining} still unassigned`
         );
         // Pull them into SQLite. Without this the device owns rows it has never
         // seen, and the operator's list would not grow until the next sync.

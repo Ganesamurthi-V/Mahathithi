@@ -4,11 +4,33 @@ import { canonicalizeDistricts } from './district-scope';
 import { logger } from './logger';
 
 /**
- * Work assignment: each enumerator holds a bounded, exclusive set of stakeholders.
+ * Work assignment: each enumerator holds a bounded, exclusive, FAIR share.
  *
- * An enumerator may hold at most WORK_QUOTA OPEN stakeholders at a time. They are
- * claimed from the unassigned pool in the enumerator's own districts, and as
- * surveys are completed the held count falls and the next top-up refills it.
+ * Two things have to be true at once, and a single flat cap cannot give both:
+ *
+ *   1. A batch must be small enough to carry offline and actually finish.
+ *      WORK_QUOTA (5000) is the ceiling for that.
+ *   2. Where several enumerators share a district, none may hoard it. A flat cap
+ *      failed here: with 1980 open records and two enumerators, the first to sync
+ *      claimed all 1980 — under the 5000 ceiling, so nothing stopped it — and the
+ *      second was left with an empty queue.
+ *
+ * So the batch is a per-district FAIR SHARE:
+ *
+ *      share(d) = min(WORK_QUOTA, ceil(openTotal(d) / enumeratorsIn(d)))
+ *
+ *   30 000 open, 1 enumerator   -> min(5000, 30000)  = 5000   (5000 now, more later)
+ *   30 000 open, 3 enumerators  -> min(5000, 10000)  = 5000   each
+ *    1 980 open, 2 enumerators  -> min(5000,   990)  =  990   each
+ *      100 open, 5 enumerators  -> min(5000,    20)  =   20   each
+ *
+ * The divisor is the district's TOTAL open count, not the unassigned remainder.
+ * Using the remainder would shrink the share as colleagues claimed, so whoever
+ * synced first would still end up with more — the same unfairness by a slower route.
+ *
+ * A share is a batch, not a lifetime allocation. Completing surveys closes those
+ * records, they stop counting against the share, and the next top-up refills it —
+ * which is how one enumerator works through a 30 000-record district 5000 at a time.
  *
  * This replaced a derived modulo partition. See the migration
  * 20260911_stakeholder_work_assignment for why: the modulo could not express a cap,
@@ -16,23 +38,49 @@ import { logger } from './logger';
  */
 
 /**
- * How many OPEN stakeholders one enumerator may hold.
+ * Hard ceiling on OPEN stakeholders one enumerator may hold at a time.
  *
- * A cap rather than "the whole district" because a device has to hold these
- * offline, and because a work queue nobody can finish is not a work queue.
+ * A ceiling rather than "the whole district" because a device has to hold these
+ * offline, and a work queue nobody can finish is not a work queue.
  */
 export const WORK_QUOTA = 5000;
+
+/** The fair share for one district, and the inputs it was derived from. */
+export interface DistrictShare {
+  district: string;
+  /** OPEN records in the district, assigned or not. */
+  openTotal: number;
+  /** Active, non-admin enumerators assigned to it. */
+  enumerators: number;
+  /** min(WORK_QUOTA, ceil(openTotal / enumerators)) — the batch size. */
+  share: number;
+  /** OPEN records this enumerator already holds here. */
+  held: number;
+  /** Unassigned OPEN records left in the district. */
+  pool: number;
+}
 
 export interface ClaimResult {
   /** Rows newly claimed by this call. */
   claimed: number;
-  /** OPEN stakeholders this enumerator holds after claiming. */
+  /** OPEN stakeholders this enumerator holds after claiming, across all districts. */
   held: number;
+  /** The hard ceiling (WORK_QUOTA). */
   quota: number;
+  /**
+   * What this enumerator should hold once fully topped up: the sum of their
+   * per-district shares, itself capped at WORK_QUOTA.
+   *
+   * Reported separately from `quota` so a client can say "990 of 990" rather than
+   * "990 of 5000", which reads as an unfinished download.
+   */
+  target: number;
   /** Unassigned OPEN rows still available across their districts. */
   poolRemaining: number;
-  /** True when the quota is full, so the client need not ask again yet. */
+  /** True when nothing more can be claimed right now. */
   full: boolean;
+  /** Per-district breakdown, so a thin queue has a visible explanation. */
+  shares: DistrictShare[];
 }
 
 /** OPEN stakeholders currently claimed by this enumerator. */
@@ -49,6 +97,52 @@ export async function countPool(districts: string[]): Promise<number> {
   return prisma.stakeholder.count({
     where: { district: { in: canonical }, assignedToId: null, status: 'OPEN' },
   });
+}
+
+/**
+ * Work out the fair share for each of an enumerator's districts.
+ *
+ * WHO COUNTS AS A SHARER
+ * Only active, non-admin enumerators assigned to the district. Counting an
+ * inactive account would reserve a share nobody collects, shrinking everyone
+ * else's for no reason; counting an admin would do the same, since they see whole
+ * districts and hold no queue.
+ *
+ * The caller is always included, so the divisor is never zero for a district they
+ * are assigned to — but it is floored at 1 anyway, because a divisor of zero here
+ * would produce an infinite share and hand out the entire district.
+ */
+export async function getDistrictShares(
+  enumeratorId: string,
+  districts: string[],
+): Promise<DistrictShare[]> {
+  const canonical = await canonicalizeDistricts(districts);
+  if (canonical.length === 0) return [];
+
+  return Promise.all(
+    canonical.map(async (district) => {
+      const [openTotal, enumerators, held, pool] = await Promise.all([
+        prisma.stakeholder.count({ where: { district, status: 'OPEN' } }),
+        prisma.enumeratorDistrict.count({
+          where: {
+            district: { name: district },
+            enumerator: { isActive: true, isAdmin: false },
+          },
+        }),
+        prisma.stakeholder.count({
+          where: { district, assignedToId: enumeratorId, status: 'OPEN' },
+        }),
+        prisma.stakeholder.count({
+          where: { district, assignedToId: null, status: 'OPEN' },
+        }),
+      ]);
+
+      const divisor = Math.max(1, enumerators);
+      const share = Math.min(WORK_QUOTA, Math.ceil(openTotal / divisor));
+
+      return { district, openTotal, enumerators: divisor, share, held, pool };
+    })
+  );
 }
 
 /**
@@ -83,57 +177,84 @@ export async function claimStakeholders(
   const canonical = await canonicalizeDistricts(districts);
 
   if (canonical.length === 0) {
-    return { claimed: 0, held: 0, quota, poolRemaining: 0, full: false };
+    return { claimed: 0, held: 0, quota, target: 0, poolRemaining: 0, full: false, shares: [] };
   }
 
-  const held = await countHeld(enumeratorId);
-  const want = quota - held;
+  const shares = await getDistrictShares(enumeratorId, canonical);
+  const heldBefore = shares.reduce((n, s) => n + s.held, 0);
 
-  if (want <= 0) {
-    return {
-      claimed: 0,
-      held,
-      quota,
-      poolRemaining: await countPool(canonical),
-      full: true,
-    };
+  // The per-district shares are the fair allocation; WORK_QUOTA is still a hard
+  // ceiling on top, so an enumerator covering several districts cannot end up
+  // holding 3 x 5000 records on one phone.
+  const target = Math.min(quota, shares.reduce((n, s) => n + s.share, 0));
+  let globalRoom = quota - heldBefore;
+
+  let claimed = 0;
+
+  if (globalRoom > 0) {
+    // Smallest share first. If the global ceiling runs out partway, the districts
+    // that lose out are the big ones, which still have plenty left to claim next
+    // time — whereas skipping a small district could leave it with no coverage at all.
+    const ordered = [...shares].sort((a, b) => a.share - b.share);
+
+    for (const s of ordered) {
+      if (globalRoom <= 0) break;
+
+      const districtRoom = s.share - s.held;
+      const want = Math.min(districtRoom, globalRoom);
+      if (want <= 0) continue;
+
+      // One statement per district, because the LIMIT is per-district: a single
+      // query across all of them could satisfy the whole amount from one district
+      // and starve the others.
+      const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+        WITH picked AS (
+          SELECT id
+          FROM stakeholders
+          WHERE assigned_to_id IS NULL
+            AND status = 'OPEN'::"StakeholderStatus"
+            AND district = ${s.district}
+          ORDER BY priority_weight DESC NULLS LAST, primary_key_id ASC
+          LIMIT ${want}
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE stakeholders st
+        SET assigned_to_id = ${enumeratorId},
+            assigned_at = NOW(),
+            updated_at = NOW()
+        FROM picked
+        WHERE st.id = picked.id
+        RETURNING st.id
+      `);
+
+      claimed += rows.length;
+      globalRoom -= rows.length;
+
+      if (rows.length > 0) {
+        logger.info(
+          `[assignment] ${enumeratorId} claimed ${rows.length} in ${s.district} ` +
+          `(share ${s.share} of ${s.openTotal} open / ${s.enumerators} enumerator(s), held ${s.held} -> ${s.held + rows.length})`
+        );
+      }
+    }
   }
 
-  const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
-    WITH picked AS (
-      SELECT id
-      FROM stakeholders
-      WHERE assigned_to_id IS NULL
-        AND status = 'OPEN'::"StakeholderStatus"
-        AND district IN (${Prisma.join(canonical)})
-      ORDER BY priority_weight DESC NULLS LAST, primary_key_id ASC
-      LIMIT ${want}
-      FOR UPDATE SKIP LOCKED
-    )
-    UPDATE stakeholders s
-    SET assigned_to_id = ${enumeratorId},
-        assigned_at = NOW(),
-        updated_at = NOW()
-    FROM picked
-    WHERE s.id = picked.id
-    RETURNING s.id
-  `);
-
-  const claimed = rows.length;
-  const nowHeld = held + claimed;
-
-  if (claimed > 0) {
-    logger.info(
-      `[assignment] enumerator ${enumeratorId} claimed ${claimed} stakeholder(s); holding ${nowHeld}/${quota}`
-    );
-  }
+  // Re-read rather than adding up: a concurrent claimer may have taken rows this
+  // call was aiming for, and SKIP LOCKED means that is expected rather than an error.
+  const after = await getDistrictShares(enumeratorId, canonical);
+  const held = after.reduce((n, s) => n + s.held, 0);
+  const poolRemaining = after.reduce((n, s) => n + s.pool, 0);
 
   return {
     claimed,
-    held: nowHeld,
+    held,
     quota,
-    poolRemaining: await countPool(canonical),
-    full: nowHeld >= quota,
+    target,
+    poolRemaining,
+    // Full when the fair share is met or the ceiling is reached — not merely when
+    // the pool is empty, since more work appears as colleagues finish theirs.
+    full: held >= target || held >= quota,
+    shares: after,
   };
 }
 

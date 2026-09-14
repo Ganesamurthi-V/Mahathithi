@@ -1,6 +1,6 @@
 import { prisma } from '../../config/database';
 import { districtScopeFilter } from '../../utils/district-scope';
-import { WORK_QUOTA, countPool } from '../../utils/stakeholder-assignment';
+import { WORK_QUOTA, getDistrictShares } from '../../utils/stakeholder-assignment';
 
 export class DashboardService {
   async getStats(enumeratorId: string, districts: string[], isAdmin: boolean) {
@@ -34,7 +34,7 @@ export class DashboardService {
       ? districtFilter
       : { assignedToId: enumeratorId };
 
-    const [open, completed, pendingSync, failedSync, mySurveys, poolRemaining] = await Promise.all([
+    const [open, completed, pendingSync, failedSync, mySurveys, shares] = await Promise.all([
       prisma.stakeholder.count({
         where: { ...assignedFilter, status: 'OPEN' as any },
       }),
@@ -47,10 +47,10 @@ export class DashboardService {
       prisma.syncQueue.count({ where: { ...syncFilter, status: 'PENDING' } }),
       prisma.syncQueue.count({ where: { ...syncFilter, status: 'FAILED' } }),
       prisma.survey.count({ where: { enumeratorId } }),
-      // How much unclaimed work is left in their districts. Surfaced so a device can
-      // tell "you are done" apart from "you have finished your current batch and
-      // more is waiting", which look identical from an empty local list.
-      isAdmin ? Promise.resolve(0) : countPool(districts),
+      // Per-district fair shares. Carries the unclaimed pool too, so a device can
+      // tell "you are done" apart from "you finished this batch and more is
+      // waiting" — identical from an empty local list otherwise.
+      isAdmin ? Promise.resolve([]) : getDistrictShares(enumeratorId, districts),
     ]);
 
     return {
@@ -71,9 +71,19 @@ export class DashboardService {
       // rather than an unexplained empty list.
       assignment: {
         held: open,
+        // The hard ceiling, and the fair-share target under it. Both are reported
+        // because they answer different questions: `quota` is the most this device
+        // will ever hold, `target` is what a full queue looks like right now. In a
+        // shared district target is well below quota, and showing only quota would
+        // make a correctly-filled queue read as a half-finished download.
         quota: WORK_QUOTA,
-        poolRemaining,
-        canClaimMore: !isAdmin && open < WORK_QUOTA && poolRemaining > 0,
+        target: Math.min(WORK_QUOTA, shares.reduce((n, s) => n + s.share, 0)),
+        poolRemaining: shares.reduce((n, s) => n + s.pool, 0),
+        canClaimMore:
+          !isAdmin &&
+          shares.some(s => s.held < s.share && s.pool > 0) &&
+          open < WORK_QUOTA,
+        shares,
       },
     };
   }
