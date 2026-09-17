@@ -6,6 +6,12 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Android 13+ (SDK 33) replaced READ_EXTERNAL_STORAGE with a per-type
+         permission. Without this, launchImageLibrary on a modern phone opens a
+         picker that returns nothing, with no error — the "upload from gallery"
+         path would silently do nothing. READ_EXTERNAL_STORAGE above still covers
+         SDK <= 32. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
     <application
       android:name=".MainApplication"

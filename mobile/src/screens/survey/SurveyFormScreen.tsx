@@ -14,7 +14,7 @@ import { announceLocalDataChange } from '../../services/realtime';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
-import { launchCamera } from 'react-native-image-picker';
+import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import DocumentPicker from 'react-native-document-picker';
 import Video from 'react-native-video';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -643,6 +643,23 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     });
   };
 
+  /**
+   * Attach a photo to a slot, from the camera or the device gallery.
+   *
+   * GEOTAGGING — the reason these two sources are NOT interchangeable
+   * A photo taken here and now is geotagged with the device's CURRENT GPS fix,
+   * which is the point of the survey: it proves the enumerator was at the business.
+   * A picture chosen from the gallery was taken at some other time and place, so
+   * stamping it with the current fix would be a lie — it would claim a location the
+   * photo has no connection to.
+   *
+   * So the two paths tag differently, on purpose:
+   *   camera  -> the live fix (required; capture is blocked until GPS locks)
+   *   library -> the photo's OWN EXIF coordinates if present, else null. Never the
+   *              live fix.
+   * The `source` is recorded on the media so the admin panel can show which photos
+   * were taken on-site versus uploaded from storage.
+   */
   const capturePhoto = async (category: string) => {
     const hasCameraPermission = await requestCameraPermission();
     if (!hasCameraPermission) {
@@ -684,6 +701,58 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           longitude: location.longitude,
           gpsAccuracy: location.accuracy,
           capturedAt: new Date().toISOString(),
+          source: 'camera',
+        },
+      }));
+    }
+  };
+
+  /**
+   * Pick an existing photo from the device's gallery for a slot.
+   *
+   * No live-GPS requirement, and no live-GPS tagging — see the note on
+   * capturePhoto for why. `includeExtra` asks the picker for the asset's EXIF, so
+   * an image that carries its own coordinates keeps them; one that does not is
+   * stored with null coordinates rather than a borrowed fix. capturedAt uses the
+   * asset's own timestamp when the picker provides it, falling back to now only so
+   * the field is never empty.
+   */
+  const pickPhotoFromLibrary = async (category: string) => {
+    const result = await launchImageLibrary({
+      mediaType: 'photo',
+      quality: 0.8,
+      includeExtra: true,
+    });
+
+    if (result.didCancel) return;
+    if (result.errorCode) {
+      Alert.alert('Could not open gallery', result.errorMessage || 'Please try again.');
+      return;
+    }
+
+    if (result.assets && result.assets[0]) {
+      const asset = result.assets[0];
+      const exif = (asset as any).exif ?? {};
+      // react-native-image-picker surfaces EXIF GPS under a few possible keys
+      // depending on platform/version; accept whichever is present. Cast because
+      // the Asset type does not declare these optional geotag fields.
+      const exifLat = exif.GPSLatitude ?? exif.latitude ?? null;
+      const exifLon = exif.GPSLongitude ?? exif.longitude ?? null;
+      const timestamp = (asset as any).timestamp;
+
+      setPhotos(prev => ({
+        ...prev,
+        [category]: {
+          uri: asset.uri,
+          fileName: asset.fileName,
+          fileSize: asset.fileSize,
+          type: asset.type,
+          latitude: typeof exifLat === 'number' ? exifLat : null,
+          longitude: typeof exifLon === 'number' ? exifLon : null,
+          // No accuracy figure for an imported photo — it is not a live fix.
+          gpsAccuracy: null,
+          capturedAt: timestamp ? new Date(timestamp).toISOString() : new Date().toISOString(),
+          source: 'library',
         },
       }));
     }
@@ -1166,10 +1235,21 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                     {photo ? (
                       <View>
                         <Image source={{ uri: photo.uri }} style={styles.photoPreview} />
+                        {/* Marks where this image came from, since a gallery upload
+                            is not a live on-site capture and carries no live fix. */}
+                        {photo.source === 'library' && (
+                          <Text style={styles.photoSourceTag}>Uploaded from gallery</Text>
+                        )}
                         <View style={styles.photoActions}>
                           <TouchableOpacity style={[styles.retakeBtn, !gps && styles.captureBtnDisabled]} onPress={() => capturePhoto(cat.key)} disabled={!gps}>
                             <Icon name="camera-retake" size={16} color={colors.textSecondary} />
                             <Text style={styles.retakeBtnText}>Retake</Text>
+                          </TouchableOpacity>
+                          {/* Gallery re-pick has no GPS gate — it does not use the
+                              live fix, so a lock is not required. */}
+                          <TouchableOpacity style={styles.retakeBtn} onPress={() => pickPhotoFromLibrary(cat.key)}>
+                            <Icon name="image-multiple" size={16} color={colors.textSecondary} />
+                            <Text style={styles.retakeBtnText}>Gallery</Text>
                           </TouchableOpacity>
                           <TouchableOpacity style={styles.removeBtn} onPress={() => { setPhotos(p => { const np = {...p}; delete np[cat.key]; return np; }); }}>
                             <Icon name="delete" size={16} color={colors.error} />
@@ -1178,10 +1258,18 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                         </View>
                       </View>
                     ) : (
-                      <TouchableOpacity style={[styles.captureBtn, !gps && styles.captureBtnDisabled]} onPress={() => capturePhoto(cat.key)} disabled={!gps}>
-                        <Icon name={gps ? 'camera' : 'crosshairs-gps'} size={24} color={colors.textSecondary} />
-                        <Text style={styles.captureBtnText}>{gps ? `Capture ${cat.label}` : 'Waiting for GPS lock...'}</Text>
-                      </TouchableOpacity>
+                      <View style={styles.captureRow}>
+                        <TouchableOpacity style={[styles.captureBtn, styles.captureBtnHalf, !gps && styles.captureBtnDisabled]} onPress={() => capturePhoto(cat.key)} disabled={!gps}>
+                          <Icon name={gps ? 'camera' : 'crosshairs-gps'} size={24} color={colors.textSecondary} />
+                          <Text style={styles.captureBtnText}>{gps ? 'Camera' : 'Waiting for GPS...'}</Text>
+                        </TouchableOpacity>
+                        {/* Enabled even without a GPS lock: an uploaded photo is not
+                            geotagged with the live fix, so it does not need one. */}
+                        <TouchableOpacity style={[styles.captureBtn, styles.captureBtnHalf]} onPress={() => pickPhotoFromLibrary(cat.key)}>
+                          <Icon name="image-multiple" size={24} color={colors.textSecondary} />
+                          <Text style={styles.captureBtnText}>Gallery</Text>
+                        </TouchableOpacity>
+                      </View>
                     )}
                   </View>
                 );
@@ -1422,6 +1510,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'center', gap: spacing.sm
   },
   captureBtnText: { ...typography.button, color: colors.textSecondary },
+  // Camera and Gallery sit side by side on an empty slot.
+  captureRow: { flexDirection: 'row', gap: spacing.md },
+  captureBtnHalf: { flex: 1, paddingHorizontal: spacing.sm },
+  // Small caption under a gallery-sourced preview so it is distinguishable from an
+  // on-site capture at a glance.
+  photoSourceTag: {
+    ...typography.caption, color: colors.textMuted,
+    marginBottom: spacing.sm, textAlign: 'center',
+  },
   // GPS FIX: visual state for capture buttons while no GPS fix exists yet.
   // Prevents the "Enable GPS to capture photos" dead-end by making the wait
   // visible (dimmed + relabeled) instead of letting the user tap through to
