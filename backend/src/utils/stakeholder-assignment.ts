@@ -143,33 +143,35 @@ export async function getDistrictShares(
   const canonical = await canonicalizeDistricts(districts);
   if (canonical.length === 0) return [];
 
-  // Sequential, not Promise.all, when running inside a transaction: a Prisma
-  // interactive transaction is one connection, so parallel queries on it merely
-  // queue anyway, and fanning out per district multiplied that queue by four.
-  const out: DistrictShare[] = [];
-  for (const district of canonical) {
-      const [openTotal, enumerators, held, pool] = [
-        await db.stakeholder.count({ where: { district, status: 'OPEN' } }),
-        await db.enumeratorDistrict.count({
+  // Parallel on purpose. These are four counts per district over a 295K-row table,
+  // and the dashboard calls this on every load, outside any transaction — running
+  // them in series made that 12 sequential round trips for a three-district
+  // enumerator. Inside a transaction Prisma queues them on the single connection
+  // anyway, so this is never worse there and materially better everywhere else.
+  return Promise.all(
+    canonical.map(async (district) => {
+      const [openTotal, enumerators, held, pool] = await Promise.all([
+        db.stakeholder.count({ where: { district, status: 'OPEN' } }),
+        db.enumeratorDistrict.count({
           where: {
             district: { name: district },
             enumerator: { isActive: true, isAdmin: false },
           },
         }),
-        await db.stakeholder.count({
+        db.stakeholder.count({
           where: { district, assignedToId: enumeratorId, status: 'OPEN' },
         }),
-        await db.stakeholder.count({
+        db.stakeholder.count({
           where: { district, assignedToId: null, status: 'OPEN' },
         }),
-      ];
+      ]);
 
       const divisor = Math.max(1, enumerators);
       const share = Math.min(WORK_QUOTA, Math.ceil(openTotal / divisor));
 
-      out.push({ district, openTotal, enumerators: divisor, share, held, pool });
-  }
-  return out;
+      return { district, openTotal, enumerators: divisor, share, held, pool };
+    })
+  );
 }
 
 /**
@@ -599,20 +601,31 @@ export async function releaseClaims(
     where.district = { in: canonical };
   }
 
-  // Read the ids before clearing them: once assigned_to_id is NULL there is no way
-  // left to work out whose claim it was, and the device holding it still has to be
-  // told to drop the row.
-  const releasing = await prisma.stakeholder.findMany({ where, select: { id: true } });
-  if (releasing.length === 0) return 0;
+  // One transaction over all three steps. Read, release, then record — and if the
+  // record does not land, the release must not either: the device would be holding
+  // rows the server has taken away with nothing left to tell it so, and only a
+  // reinstall would clear them.
+  const result = await prisma.$transaction(
+    async (tx) => {
+      // Read the ids before clearing them: once assigned_to_id is NULL there is no
+      // way left to work out whose claim it was.
+      const releasing = await tx.stakeholder.findMany({ where, select: { id: true } });
+      if (releasing.length === 0) return { count: 0 };
 
-  const result = await prisma.stakeholder.updateMany({
-    where,
-    data: { assignedToId: null, assignedAt: null },
-  });
+      const updated = await tx.stakeholder.updateMany({
+        where,
+        data: { assignedToId: null, assignedAt: null },
+      });
 
-  await recordRevocations(
-    releasing.map(s => ({ stakeholderId: s.id, enumeratorId })),
-    districts ? `claims released in ${districts.join(', ')}` : 'claims released',
+      await recordRevocations(
+        releasing.map(s => ({ stakeholderId: s.id, enumeratorId })),
+        districts ? `claims released in ${districts.join(', ')}` : 'claims released',
+        tx,
+      );
+
+      return updated;
+    },
+    { timeout: 120_000, maxWait: 30_000 },
   );
 
   if (result.count > 0) {
@@ -643,19 +656,29 @@ export async function releaseClaimsOutsideDistricts(
     ...(canonical.length > 0 ? { district: { notIn: canonical } } : {}),
   };
 
-  // Captured before the update, for the same reason as in releaseClaims: the
-  // ownership this revocation refers to is about to be erased.
-  const releasing = await prisma.stakeholder.findMany({ where, select: { id: true } });
-  if (releasing.length === 0) return 0;
+  // Atomic for the same reason as releaseClaims: a release without its revocation
+  // strands the rows on the device that held them.
+  const result = await prisma.$transaction(
+    async (tx) => {
+      // Captured before the update — the ownership this revocation refers to is
+      // about to be erased.
+      const releasing = await tx.stakeholder.findMany({ where, select: { id: true } });
+      if (releasing.length === 0) return { count: 0 };
 
-  const result = await prisma.stakeholder.updateMany({
-    where,
-    data: { assignedToId: null, assignedAt: null },
-  });
+      const updated = await tx.stakeholder.updateMany({
+        where,
+        data: { assignedToId: null, assignedAt: null },
+      });
 
-  await recordRevocations(
-    releasing.map(s => ({ stakeholderId: s.id, enumeratorId })),
-    'district no longer assigned',
+      await recordRevocations(
+        releasing.map(s => ({ stakeholderId: s.id, enumeratorId })),
+        'district no longer assigned',
+        tx,
+      );
+
+      return updated;
+    },
+    { timeout: 120_000, maxWait: 30_000 },
   );
 
   if (result.count > 0) {

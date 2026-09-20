@@ -44,9 +44,35 @@ async function cleanupSessions(): Promise<void> {
   logger.info(`[cleanup] Session cleanup complete. Total removed: ${total}`);
 }
 
+/**
+ * Prune the revocation log.
+ *
+ * A revocation exists only to tell one device to forget one stakeholder. Once that
+ * device has pulled a delta past the row's `revoked_at`, it has served its purpose
+ * and nothing reads it again — but nothing deleted it either, and a single rebalance
+ * can write tens of thousands of rows (the first repair wrote ~24 000).
+ *
+ * The retention window is generous on purpose: a device that has been off for
+ * longer than this has other problems, and the delta feed ignores a revocation for
+ * a stakeholder the enumerator currently holds, so a pruned-too-early revocation
+ * degrades to a stale local row rather than to deleted work.
+ */
+async function cleanupRevocations(): Promise<void> {
+  const RETENTION_DAYS = 60;
+  const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+  const result = await prisma.stakeholderRevocation.deleteMany({
+    where: { revokedAt: { lt: cutoff } },
+  });
+  logger.info(
+    `[cleanup] Deleted ${result.count} stakeholder revocation(s) older than ${RETENTION_DAYS} days`
+  );
+}
+
 cleanupSessions()
+  .then(cleanupRevocations)
   .catch((err) => {
-    logger.error('[cleanup] Session cleanup failed:', err);
+    logger.error('[cleanup] Cleanup failed:', err);
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());

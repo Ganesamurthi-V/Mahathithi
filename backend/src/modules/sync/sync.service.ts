@@ -259,8 +259,29 @@ export class SyncService {
    *    the partition exists to provide, through the back door.
    *
    * `limit` caps a single delta so a device returning after a long absence cannot
-   *  pull an unbounded payload; it re-pulls until it is caught up, and because the
-   *  keys are ordered by updated_at the cursor always advances.
+   *  pull an unbounded payload; it re-pulls until it is caught up.
+   *
+   * 3. THE CURSOR COULD SKIP A TRUNCATED PAGE ENTIRELY. `syncTimestamp` was the
+   *    server's `now()`, and the client stores that as its next `since`. But rows
+   *    are ordered by updated_at and capped at LIMIT, so once a page was truncated
+   *    everything beyond it had an updated_at EARLIER than the `now()` the client
+   *    was about to filter on — and `updated_at > cursor` could never match it
+   *    again. The rows were silently lost, not delayed.
+   *
+   *    It is not a rare edge case: NOW() in Postgres is the transaction timestamp,
+   *    so one claim or one rebalance stamps its whole batch — up to WORK_QUOTA
+   *    rows — with a single identical updated_at. A 5000-row claim delivered 2000
+   *    and stranded 3000. The device then held work it could not see.
+   *
+   *    So the cursor is now a keyset: `<iso>|<id>`, and a truncated page resumes at
+   *    the exact row it stopped on. That also makes the identical-timestamp case
+   *    work, which a timestamp-only cursor fundamentally cannot — with 5000 rows
+   *    sharing one value there is no timestamp that both excludes what was sent and
+   *    includes what was not.
+   *
+   *    The cursor stays an opaque string to the client: it only ever stores
+   *    `syncTimestamp` and echoes it back as `since`, so a plain ISO string from an
+   *    older build is still accepted.
    */
   async getChanges(
     enumeratorId: string,
@@ -268,8 +289,27 @@ export class SyncService {
     since?: string,
     isAdmin: boolean = false,
   ) {
-    const sinceDate = since ? new Date(since) : new Date(0);
+    // Taken BEFORE the reads. Handing back `now()` from after them would skip
+    // anything written while they ran.
+    const queryStart = new Date();
+
+    // `<iso>|<id>` from this endpoint, or a bare ISO string from an older client.
+    const sepIndex = since ? since.indexOf('|') : -1;
+    const sinceRaw = sepIndex >= 0 ? since!.slice(0, sepIndex) : since;
+    const sinceId = sepIndex >= 0 ? since!.slice(sepIndex + 1) : null;
+
+    const parsed = sinceRaw ? new Date(sinceRaw) : null;
+    // A malformed cursor must not become `Invalid Date` and match nothing, which
+    // would freeze the device's mirror permanently with no error anywhere.
+    const sinceDate = parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date(0);
+
     const LIMIT = 2000;
+
+    // Revocations are a list of bare ids, not full rows, so a far larger page costs
+    // little. It is deliberately above WORK_QUOTA: a single release stamps its whole
+    // batch with one revoked_at, and a page that split such a batch would hit the
+    // same unsplittable-timestamp problem described above.
+    const REVOCATION_LIMIT = 20_000;
 
     // Scoped to this enumerator's claimed work. Was a modulo slice of the district,
     // which needed raw SQL; a stored claim is an indexed column.
@@ -277,7 +317,19 @@ export class SyncService {
     // Note this deliberately does NOT filter on status: a device needs to hear that
     // one of its stakeholders became CLOSED just as much as an edit, otherwise it
     // keeps offering work that is already done.
-    const where: Prisma.StakeholderWhereInput = { updatedAt: { gt: sinceDate } };
+    // Keyset predicate: strictly later, OR the same instant but a later id. The
+    // second half is what lets a page split a block of rows that all share one
+    // updated_at and still resume correctly.
+    const cursorFilter: Prisma.StakeholderWhereInput = sinceId
+      ? {
+          OR: [
+            { updatedAt: { gt: sinceDate } },
+            { updatedAt: sinceDate, id: { gt: sinceId } },
+          ],
+        }
+      : { updatedAt: { gt: sinceDate } };
+
+    const where: Prisma.StakeholderWhereInput = { ...cursorFilter };
 
     if (isAdmin) {
       // An admin holds no claims, so scoping by assignment would return nothing.
@@ -287,10 +339,14 @@ export class SyncService {
     }
 
     // FULL rows on purpose — see note 1 above. Do NOT narrow this select.
+    //
+    // Ordered by (updated_at, id) to match the keyset above. Ordering by updated_at
+    // alone leaves rows sharing a timestamp in an arbitrary order, so a truncated
+    // page could cut the block at a different point each time and skip rows.
     const rows = await prisma.stakeholder.findMany({
       where,
       include: { _count: { select: { surveys: true } } },
-      orderBy: { updatedAt: 'asc' },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
       take: LIMIT,
     });
 
@@ -321,30 +377,75 @@ export class SyncService {
       ? []
       : await prisma.stakeholderRevocation.findMany({
           where: { enumeratorId, revokedAt: { gt: sinceDate } },
-          select: { stakeholderId: true },
-          take: LIMIT,
+          select: { stakeholderId: true, revokedAt: true },
+          orderBy: { revokedAt: 'asc' },
+          take: REVOCATION_LIMIT,
         });
+
+    // A revocation says "you no longer hold this". It does NOT say "delete this",
+    // and the difference matters because a released row is very often claimed again
+    // later — `releaseOverShare` runs on a routine top-up, and a rebalance hands the
+    // freed rows straight back out, sometimes to the same enumerator.
+    //
+    // Without this check the feed would order a device to destroy work it currently
+    // owns. A device with no cursor (fresh install, reinstall, or re-login after the
+    // logout wipe) reads `since` as the epoch and therefore receives EVERY
+    // revocation ever recorded against it — including ones for rows it has since
+    // re-claimed. Those rows arrive in `updatedStakeholders` too, and the client
+    // upserts before it purges, so the row would be written and then deleted. The
+    // stakeholder stays assigned server-side while vanishing from the device, and
+    // the delta only reports `updated_at > cursor`, so nothing brings it back.
+    //
+    // Checking current ownership instead of trying to keep the revocation log
+    // perfectly pruned means a stale or replayed revocation is simply inert.
+    const revokedIds = revoked.map(r => r.stakeholderId);
+    let stillHeld = new Set<string>();
+    if (revokedIds.length > 0) {
+      const held = await prisma.stakeholder.findMany({
+        where: { id: { in: revokedIds }, assignedToId: enumeratorId },
+        select: { id: true },
+      });
+      stillHeld = new Set(held.map(h => h.id));
+    }
 
     // One list, because the client applies the same safe purge to all of it:
     // anything still holding unsynced survey or media rows is skipped and retried
     // after those uploads land.
     const dropIds = Array.from(new Set([
       ...lockedByOthers.map(s => s.id),
-      ...revoked.map(r => r.stakeholderId),
+      ...revokedIds.filter(id => !stillHeld.has(id)),
     ]));
+
+    const truncated = rows.length >= LIMIT;
+    const lastRow = rows[rows.length - 1];
+    const revocationsTruncated = revoked.length >= REVOCATION_LIMIT;
+    const lastRevocation = revoked[revoked.length - 1];
+
+    // The cursor has to be the EARLIEST point either list still needs, because one
+    // value drives both. Advancing to satisfy the stakeholder page while the
+    // revocation page was cut short would step over revocations that were never
+    // delivered; re-sending a few stakeholder rows is free by comparison, since the
+    // client's upsert is idempotent.
+    let nextCursor: string;
+    if (revocationsTruncated && lastRevocation) {
+      nextCursor = lastRevocation.revokedAt.toISOString();
+    } else if (truncated && lastRow) {
+      // Resume at the exact row this page stopped on, so nothing between it and
+      // `now` is skipped.
+      nextCursor = `${lastRow.updatedAt.toISOString()}|${lastRow.id}`;
+    } else {
+      // Both lists complete. `queryStart` is from BEFORE the reads, so anything
+      // written while they ran is picked up next time rather than missed.
+      nextCursor = queryStart.toISOString();
+    }
 
     return {
       updatedStakeholders,
       lockedStakeholderIds: dropIds,
       // Tells the client to pull again immediately rather than waiting for the
       // next trigger, so a long-absent device catches up in a few round trips.
-      //
-      // Revocations count towards this too. A rebalance can take back thousands of
-      // rows at once, and the client advances its cursor to syncTimestamp on every
-      // pull — so a truncated revocation list that did not ask for another round
-      // trip would leave the remainder stranded on the device permanently.
-      hasMore: updatedStakeholders.length >= LIMIT || revoked.length >= LIMIT,
-      syncTimestamp: new Date().toISOString(),
+      hasMore: truncated || revocationsTruncated,
+      syncTimestamp: nextCursor,
     };
   }
 }
