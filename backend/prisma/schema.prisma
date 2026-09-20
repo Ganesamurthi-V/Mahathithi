@@ -36,8 +36,47 @@ model Enumerator {
   // Stakeholders claimed by this enumerator to survey. Distinct from
   // lockedStakeholders, which is the completion lock taken once a survey is done.
   assignedStakeholders Stakeholder[] @relation("AssignedTo")
+  revocations   StakeholderRevocation[]
 
   @@map("enumerators")
+}
+
+/**
+ * A claim that was taken back from an enumerator, kept only long enough for their
+ * device to hear about it.
+ *
+ * WHY THIS EXISTS
+ * Releasing a claim is a silent event from the device's point of view. The delta
+ * feed finds a device's work with `assigned_to_id = me`, so the moment a row is
+ * released it stops matching and the feed can never mention it again. The device
+ * keeps the local copy forever and goes on offering it as work — and once another
+ * enumerator claims it, two people survey the same business. That is precisely the
+ * exclusivity the assignment exists to guarantee.
+ *
+ * So a release writes a row here, and the delta feed reads it back as a removal
+ * instruction. The client already has a safe path for that list: it purges only
+ * stakeholders with nothing left to upload and retries the rest on a later sync, so
+ * unsynced field work is never destroyed by a revocation.
+ *
+ * Rows are consumed by cursor, not by acknowledgement, which is why `revokedAt` is
+ * indexed alongside the enumerator: the feed asks for `revoked_at > since`, exactly
+ * as it does for stakeholder edits.
+ */
+model StakeholderRevocation {
+  id            String   @id @default(uuid())
+  stakeholderId String   @map("stakeholder_id")
+  enumeratorId  String   @map("enumerator_id")
+  /** Why the claim was taken back — for support, not for logic. */
+  reason        String?  @map("reason")
+  revokedAt     DateTime @default(now()) @map("revoked_at")
+
+  enumerator    Enumerator @relation(fields: [enumeratorId], references: [id], onDelete: Cascade)
+
+  // The feed's access path: one enumerator's revocations after a cursor.
+  @@index([enumeratorId, revokedAt])
+  // Lets the sweeper drop rows every device has long since seen.
+  @@index([revokedAt])
+  @@map("stakeholder_revocations")
 }
 
 model District {

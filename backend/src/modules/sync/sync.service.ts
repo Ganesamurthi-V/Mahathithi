@@ -310,12 +310,40 @@ export class SyncService {
       s => s.status === 'CLOSED' || (s.lockedById && s.lockedById !== enumeratorId)
     );
 
+    // Claims taken back from this device — a colleague's share was rebalanced, or a
+    // district was reassigned. These CANNOT be found in the query above: it locates
+    // work by `assigned_to_id = me`, and a released row no longer matches, so it
+    // drops out of the feed the instant it is released and would otherwise stay on
+    // the device forever, offered as work someone else now owns.
+    //
+    // Admins hold no claims, so they have no revocations to receive.
+    const revoked = isAdmin
+      ? []
+      : await prisma.stakeholderRevocation.findMany({
+          where: { enumeratorId, revokedAt: { gt: sinceDate } },
+          select: { stakeholderId: true },
+          take: LIMIT,
+        });
+
+    // One list, because the client applies the same safe purge to all of it:
+    // anything still holding unsynced survey or media rows is skipped and retried
+    // after those uploads land.
+    const dropIds = Array.from(new Set([
+      ...lockedByOthers.map(s => s.id),
+      ...revoked.map(r => r.stakeholderId),
+    ]));
+
     return {
       updatedStakeholders,
-      lockedStakeholderIds: lockedByOthers.map(s => s.id),
+      lockedStakeholderIds: dropIds,
       // Tells the client to pull again immediately rather than waiting for the
       // next trigger, so a long-absent device catches up in a few round trips.
-      hasMore: updatedStakeholders.length >= LIMIT,
+      //
+      // Revocations count towards this too. A rebalance can take back thousands of
+      // rows at once, and the client advances its cursor to syncTimestamp on every
+      // pull — so a truncated revocation list that did not ask for another round
+      // trip would leave the remainder stranded on the device permanently.
+      hasMore: updatedStakeholders.length >= LIMIT || revoked.length >= LIMIT,
       syncTimestamp: new Date().toISOString(),
     };
   }

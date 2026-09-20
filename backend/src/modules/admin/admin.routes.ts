@@ -7,7 +7,7 @@ import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { AppError, ValidationError, NotFoundError, ConflictError } from '../../utils/errors';
 import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
-import { releaseClaimsOutsideDistricts } from '../../utils/stakeholder-assignment';
+import { releaseClaimsOutsideDistricts, rebalanceDistricts } from '../../utils/stakeholder-assignment';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { broadcastChange } from '../../realtime/events';
 import { logger } from '../../utils/logger';
@@ -616,13 +616,27 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
       ),
     ];
 
+    // Re-level the affected districts, because the fair share is openTotal divided
+    // by the number of enumerators in the district — so this very edit just changed
+    // everyone's share.
+    //
+    // Adding an enumerator is the case that used to break. Shares were only ever
+    // computed at claim time and never revisited, so whoever claimed while the
+    // district was thinly staffed kept their oversized batch, the pool stayed empty,
+    // and the enumerator just added got nothing back from a sync however many times
+    // they tried. Sindhudurg sat like that: all 1980 open records held by the first
+    // claimer, the second enumerator permanently idle.
+    //
+    // Only untouched rows move, so nobody loses work they have already started.
+    const rebalanced = await rebalanceDistricts(resliceDistricts);
+
     await prisma.auditLog.create({
       data: {
         action: 'districts_assigned',
         entityType: 'enumerator',
         entityId: (req.params.id as string),
         enumeratorId: req.enumerator!.id,
-        details: { districtIds, releasedClaims: released },
+        details: { districtIds, releasedClaims: released, rebalancedClaims: rebalanced },
       },
     });
 
@@ -645,6 +659,75 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
     }
 
     res.json({ success: true, message: 'Districts assigned successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Re-level work across districts: take back everything held above the current fair
+ * share and return it to the pool.
+ *
+ * This runs automatically when districts are reassigned, and on a claim that finds
+ * an empty pool. It is exposed on its own because neither trigger covers a district
+ * that is merely lopsided: if the pool still has rows, a claim will not trigger a
+ * claw-back, so one enumerator can sit on a batch far above the ceiling while
+ * nobody is technically starved. Mumbai Suburban was in that state with a single
+ * enumerator holding 10 000 records against a 5000 ceiling.
+ *
+ * Body: { districts?: string[] } — omit to sweep every district that has work.
+ *
+ * Safe to re-run. It only ever releases the overage, only from untouched rows, and
+ * returns a no-op once every holder is at or below their share.
+ */
+router.post('/stakeholders/rebalance', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const requested: unknown = req.body?.districts;
+
+    let districts: string[];
+    if (Array.isArray(requested) && requested.length > 0) {
+      districts = requested.filter((d): d is string => typeof d === 'string' && d.trim().length > 0);
+      if (districts.length === 0) {
+        throw new ValidationError('`districts` must be a non-empty array of district names.');
+      }
+    } else {
+      // Every district that currently has a claim against it — the only ones a
+      // rebalance can change.
+      const rows = await prisma.stakeholder.findMany({
+        where: { status: 'OPEN', assignedToId: { not: null }, district: { not: null } },
+        select: { district: true },
+        distinct: ['district'],
+      });
+      districts = rows.map(r => r.district as string);
+    }
+
+    const released = await rebalanceDistricts(districts);
+
+    await prisma.auditLog.create({
+      data: {
+        action: 'stakeholders_rebalanced',
+        entityType: 'stakeholder',
+        entityId: 'bulk',
+        enumeratorId: req.enumerator!.id,
+        details: { districts, releasedClaims: released },
+      },
+    });
+
+    if (released > 0) {
+      // Devices learn which specific rows they lost through the revocation list on
+      // their next delta; this just tells the open dashboards their counts moved.
+      for (const district of districts) {
+        broadcastChange(['stakeholders', 'analytics'], { action: 'update', district });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: { districts, released },
+      message: released > 0
+        ? `Returned ${released} over-share record(s) to the pool.`
+        : 'Nothing to rebalance — every enumerator is at or below their fair share.',
+    });
   } catch (error) {
     next(error);
   }

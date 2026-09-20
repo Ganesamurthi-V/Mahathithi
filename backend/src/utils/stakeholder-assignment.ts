@@ -60,9 +60,32 @@ export interface DistrictShare {
   pool: number;
 }
 
+/**
+ * Any Prisma handle — the global client, or a transaction client.
+ *
+ * Every read that a claim decision rests on must be able to run INSIDE the
+ * claiming transaction. Run against the global client instead and it sees a
+ * different snapshot from the UPDATE that follows, which is the whole reason the
+ * quota was being handed out twice.
+ */
+type Db = Prisma.TransactionClient;
+
+/**
+ * Advisory lock namespaces. Two-argument `pg_advisory_xact_lock(ns, key)` keeps
+ * an enumerator id that happens to hash to the same int as a district name from
+ * being treated as the same lock.
+ */
+const LOCK_NS_ENUMERATOR = 1;
+const LOCK_NS_DISTRICT = 2;
+
 export interface ClaimResult {
   /** Rows newly claimed by this call. */
   claimed: number;
+  /**
+   * Rows taken back from over-share holders during this call so the caller had
+   * something to claim. Usually 0.
+   */
+  reclaimed: number;
   /** OPEN stakeholders this enumerator holds after claiming, across all districts. */
   held: number;
   /** The hard ceiling (WORK_QUOTA). */
@@ -115,34 +138,169 @@ export async function countPool(districts: string[]): Promise<number> {
 export async function getDistrictShares(
   enumeratorId: string,
   districts: string[],
+  db: Db = prisma,
 ): Promise<DistrictShare[]> {
   const canonical = await canonicalizeDistricts(districts);
   if (canonical.length === 0) return [];
 
-  return Promise.all(
-    canonical.map(async (district) => {
-      const [openTotal, enumerators, held, pool] = await Promise.all([
-        prisma.stakeholder.count({ where: { district, status: 'OPEN' } }),
-        prisma.enumeratorDistrict.count({
+  // Sequential, not Promise.all, when running inside a transaction: a Prisma
+  // interactive transaction is one connection, so parallel queries on it merely
+  // queue anyway, and fanning out per district multiplied that queue by four.
+  const out: DistrictShare[] = [];
+  for (const district of canonical) {
+      const [openTotal, enumerators, held, pool] = [
+        await db.stakeholder.count({ where: { district, status: 'OPEN' } }),
+        await db.enumeratorDistrict.count({
           where: {
             district: { name: district },
             enumerator: { isActive: true, isAdmin: false },
           },
         }),
-        prisma.stakeholder.count({
+        await db.stakeholder.count({
           where: { district, assignedToId: enumeratorId, status: 'OPEN' },
         }),
-        prisma.stakeholder.count({
+        await db.stakeholder.count({
           where: { district, assignedToId: null, status: 'OPEN' },
         }),
-      ]);
+      ];
 
       const divisor = Math.max(1, enumerators);
       const share = Math.min(WORK_QUOTA, Math.ceil(openTotal / divisor));
 
-      return { district, openTotal, enumerators: divisor, share, held, pool };
-    })
+      out.push({ district, openTotal, enumerators: divisor, share, held, pool });
+  }
+  return out;
+}
+
+/**
+ * Take back everything held ABOVE the current fair share in one district.
+ *
+ * WHY A CLAW-BACK IS NEEDED AT ALL
+ * A share is computed when it is claimed, and the divisor is the number of
+ * enumerators in the district — so every share already handed out shrinks the
+ * moment another enumerator joins. Nothing used to act on that. The first claimer
+ * kept the oversized batch they were legitimately given, the pool stayed empty, and
+ * the new colleague's queue came back empty no matter how often they synced.
+ * Sindhudurg showed it exactly: one enumerator held all 1980 open records, claimed
+ * when they were the only one there, and the second enumerator could never get a
+ * single row.
+ *
+ * WHAT IS SAFE TO TAKE BACK
+ * Only OPEN rows with no survey attached. A stakeholder someone has already started
+ * surveying stays with them regardless of share — moving it would strand
+ * half-finished work and risk a second enumerator repeating the visit. CLOSED rows
+ * are excluded by the same test and keep their assignment as provenance.
+ *
+ * WHICH ROWS GO FIRST
+ * Lowest priority_weight first — the mirror image of how they were handed out
+ * (priority DESC). An enumerator therefore loses the tail of their batch, the part
+ * they would have reached last, and keeps their highest-value work.
+ *
+ * Every release records a revocation row, because releasing a claim is otherwise
+ * invisible to the device holding it: the delta feed finds work by
+ * `assigned_to_id = me`, so a released row silently drops out of the feed forever
+ * and the device goes on offering it. See StakeholderRevocation.
+ */
+export async function releaseOverShare(
+  district: string,
+  db: Db = prisma,
+  quota: number = WORK_QUOTA,
+): Promise<number> {
+  const rows = await db.$queryRaw<{ id: string; assigned_to_id: string }[]>(Prisma.sql`
+    WITH sharers AS (
+      SELECT GREATEST(1, COUNT(*))::int AS n
+      FROM enumerator_districts ed
+      JOIN districts d ON d.id = ed.district_id
+      JOIN enumerators e ON e.id = ed.enumerator_id
+      WHERE d.name = ${district}
+        AND e.is_active = true
+        AND e.is_admin = false
+    ),
+    totals AS (
+      SELECT COUNT(*)::int AS open_total
+      FROM stakeholders
+      WHERE district = ${district}
+        AND status = 'OPEN'::"StakeholderStatus"
+    ),
+    share AS (
+      SELECT LEAST(${quota}::int, CEIL(t.open_total::numeric / s.n)::int) AS share
+      FROM totals t CROSS JOIN sharers s
+    ),
+    -- Counts EVERY open row a holder has, including ones pinned by a survey, so
+    -- the overage is measured against what they really hold.
+    held_counts AS (
+      SELECT assigned_to_id, COUNT(*)::int AS held
+      FROM stakeholders
+      WHERE district = ${district}
+        AND status = 'OPEN'::"StakeholderStatus"
+        AND assigned_to_id IS NOT NULL
+      GROUP BY assigned_to_id
+    ),
+    -- ...but only untouched rows may actually be moved.
+    releasable AS (
+      SELECT st.id,
+             st.assigned_to_id,
+             ROW_NUMBER() OVER (
+               PARTITION BY st.assigned_to_id
+               ORDER BY st.priority_weight ASC NULLS FIRST, st.primary_key_id DESC
+             ) AS rn
+      FROM stakeholders st
+      WHERE st.district = ${district}
+        AND st.status = 'OPEN'::"StakeholderStatus"
+        AND st.assigned_to_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM surveys sv WHERE sv.stakeholder_id = st.id)
+    ),
+    excess AS (
+      SELECT r.id, r.assigned_to_id
+      FROM releasable r
+      JOIN held_counts h ON h.assigned_to_id = r.assigned_to_id
+      CROSS JOIN share s
+      WHERE h.held > s.share
+        AND r.rn <= h.held - s.share
+    )
+    UPDATE stakeholders st
+    SET assigned_to_id = NULL,
+        assigned_at = NULL,
+        updated_at = NOW()
+    FROM excess
+    WHERE st.id = excess.id
+    RETURNING st.id, excess.assigned_to_id
+  `);
+
+  if (rows.length === 0) return 0;
+
+  await recordRevocations(
+    rows.map(r => ({ stakeholderId: r.id, enumeratorId: r.assigned_to_id })),
+    `over fair share in ${district}`,
+    db,
   );
+
+  const perHolder = new Map<string, number>();
+  for (const r of rows) perHolder.set(r.assigned_to_id, (perHolder.get(r.assigned_to_id) ?? 0) + 1);
+  for (const [holder, n] of perHolder) {
+    logger.info(`[assignment] reclaimed ${n} over-share row(s) in ${district} from ${holder}`);
+  }
+
+  return rows.length;
+}
+
+/**
+ * Log claims taken away, so the delta feed can tell the device to drop them.
+ *
+ * Chunked because a release can span thousands of rows and a single INSERT with
+ * that many parameter tuples exceeds what the driver will bind.
+ */
+async function recordRevocations(
+  entries: Array<{ stakeholderId: string; enumeratorId: string }>,
+  reason: string,
+  db: Db = prisma,
+): Promise<void> {
+  const CHUNK = 1000;
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    await db.stakeholderRevocation.createMany({
+      data: entries.slice(i, i + CHUNK).map(e => ({ ...e, reason })),
+    });
+  }
 }
 
 /**
@@ -168,6 +326,29 @@ export async function getDistrictShares(
  * Ordering by priority_weight then primary_key_id means the highest-value records
  * are handed out first and ties break deterministically, so two enumerators
  * claiming from the same district get adjacent, non-overlapping blocks.
+ *
+ * SKIP LOCKED IS NOT ENOUGH ON ITS OWN
+ * It guarantees two claims never grab the same ROW. It says nothing about how many
+ * rows each is allowed, and the quota check used to sit outside any transaction:
+ * read held, decide room, then UPDATE. Two overlapping calls both read held = 0,
+ * both concluded they had the full quota free, and each took a different full batch
+ * — no row taken twice, every ceiling doubled.
+ *
+ * It happened constantly, because the claim endpoint is called both before the
+ * initial download and again after each sync and is documented as safe to call
+ * freely. Every enumerator in the district ended up holding exactly 10 000 rows,
+ * twice the 5000 ceiling: Sanjana took 5000 at 05:47:51 and another 5000 at
+ * 05:47:52; Sindhudurg's sole claimer took 990 twice and swallowed the district,
+ * leaving the second enumerator there permanently empty.
+ *
+ * So the check and the claim now share one transaction, and the transaction opens
+ * by taking advisory locks: the enumerator (a second claim for the same person
+ * waits, then re-reads `held` and correctly finds no room) and each district it
+ * touches. District locks also make the claw-back safe, since that writes rows
+ * belonging to other enumerators.
+ *
+ * Lock order is fixed — enumerator first, then districts sorted by name — so two
+ * claims can never hold the locks the other needs and deadlock.
  */
 export async function claimStakeholders(
   enumeratorId: string,
@@ -177,10 +358,49 @@ export async function claimStakeholders(
   const canonical = await canonicalizeDistricts(districts);
 
   if (canonical.length === 0) {
-    return { claimed: 0, held: 0, quota, target: 0, poolRemaining: 0, full: false, shares: [] };
+    return { claimed: 0, reclaimed: 0, held: 0, quota, target: 0, poolRemaining: 0, full: false, shares: [] };
   }
 
-  const shares = await getDistrictShares(enumeratorId, canonical);
+  return prisma.$transaction(
+    async (tx) => claimWithin(tx, enumeratorId, canonical, quota),
+    {
+      // A batch can be 5000 rows across three districts; the default 5s ceiling
+      // would abort mid-claim and roll the whole thing back.
+      timeout: 120_000,
+      maxWait: 30_000,
+    },
+  );
+}
+
+async function claimWithin(
+  tx: Db,
+  enumeratorId: string,
+  canonical: string[],
+  quota: number,
+): Promise<ClaimResult> {
+  await tx.$queryRaw(
+    Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_ENUMERATOR}::int, hashtext(${enumeratorId}))`
+  );
+  for (const district of [...canonical].sort()) {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_DISTRICT}::int, hashtext(${district}))`
+    );
+  }
+
+  // Claw back other people's overage only where the caller actually comes up short.
+  // Running it unconditionally would churn assignments across the district on every
+  // routine top-up for no gain.
+  let reclaimed = 0;
+  const before = await getDistrictShares(enumeratorId, canonical, tx);
+  for (const s of before) {
+    if (s.pool < s.share - s.held) {
+      reclaimed += await releaseOverShare(s.district, tx, quota);
+    }
+  }
+
+  const shares = reclaimed > 0
+    ? await getDistrictShares(enumeratorId, canonical, tx)
+    : before;
   const heldBefore = shares.reduce((n, s) => n + s.held, 0);
 
   // The per-district shares are the fair allocation; WORK_QUOTA is still a hard
@@ -207,7 +427,7 @@ export async function claimStakeholders(
       // One statement per district, because the LIMIT is per-district: a single
       // query across all of them could satisfy the whole amount from one district
       // and starve the others.
-      const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+      const rows = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
         WITH picked AS (
           SELECT id
           FROM stakeholders
@@ -241,12 +461,13 @@ export async function claimStakeholders(
 
   // Re-read rather than adding up: a concurrent claimer may have taken rows this
   // call was aiming for, and SKIP LOCKED means that is expected rather than an error.
-  const after = await getDistrictShares(enumeratorId, canonical);
+  const after = await getDistrictShares(enumeratorId, canonical, tx);
   const held = after.reduce((n, s) => n + s.held, 0);
   const poolRemaining = after.reduce((n, s) => n + s.pool, 0);
 
   return {
     claimed,
+    reclaimed,
     held,
     quota,
     target,
@@ -285,10 +506,21 @@ export async function releaseClaims(
     where.district = { in: canonical };
   }
 
+  // Read the ids before clearing them: once assigned_to_id is NULL there is no way
+  // left to work out whose claim it was, and the device holding it still has to be
+  // told to drop the row.
+  const releasing = await prisma.stakeholder.findMany({ where, select: { id: true } });
+  if (releasing.length === 0) return 0;
+
   const result = await prisma.stakeholder.updateMany({
     where,
     data: { assignedToId: null, assignedAt: null },
   });
+
+  await recordRevocations(
+    releasing.map(s => ({ stakeholderId: s.id, enumeratorId })),
+    districts ? `claims released in ${districts.join(', ')}` : 'claims released',
+  );
 
   if (result.count > 0) {
     logger.info(
@@ -312,14 +544,26 @@ export async function releaseClaimsOutsideDistricts(
 ): Promise<number> {
   const canonical = await canonicalizeDistricts(keepDistricts);
 
+  const where: Prisma.StakeholderWhereInput = {
+    assignedToId: enumeratorId,
+    status: 'OPEN',
+    ...(canonical.length > 0 ? { district: { notIn: canonical } } : {}),
+  };
+
+  // Captured before the update, for the same reason as in releaseClaims: the
+  // ownership this revocation refers to is about to be erased.
+  const releasing = await prisma.stakeholder.findMany({ where, select: { id: true } });
+  if (releasing.length === 0) return 0;
+
   const result = await prisma.stakeholder.updateMany({
-    where: {
-      assignedToId: enumeratorId,
-      status: 'OPEN',
-      ...(canonical.length > 0 ? { district: { notIn: canonical } } : {}),
-    },
+    where,
     data: { assignedToId: null, assignedAt: null },
   });
+
+  await recordRevocations(
+    releasing.map(s => ({ stakeholderId: s.id, enumeratorId })),
+    'district no longer assigned',
+  );
 
   if (result.count > 0) {
     logger.info(
@@ -327,4 +571,34 @@ export async function releaseClaimsOutsideDistricts(
     );
   }
   return result.count;
+}
+
+/**
+ * Re-level a set of districts after their sharer count changes.
+ *
+ * Called when an enumerator is added to, or removed from, a district. Adding one
+ * shrinks everyone's share immediately, and without this the existing holders would
+ * keep their now-oversized batches until each happened to trigger a claw-back on a
+ * top-up — which for the newcomer means an empty queue in the meantime.
+ *
+ * Takes the same district advisory lock the claim path uses, so a rebalance and a
+ * concurrent claim cannot interleave and both act on stale counts.
+ */
+export async function rebalanceDistricts(districts: string[]): Promise<number> {
+  const canonical = await canonicalizeDistricts(districts);
+  if (canonical.length === 0) return 0;
+
+  let released = 0;
+  for (const district of [...canonical].sort()) {
+    released += await prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_DISTRICT}::int, hashtext(${district}))`
+        );
+        return releaseOverShare(district, tx);
+      },
+      { timeout: 120_000, maxWait: 30_000 },
+    );
+  }
+  return released;
 }
