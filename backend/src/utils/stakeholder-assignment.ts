@@ -285,6 +285,69 @@ export async function releaseOverShare(
 }
 
 /**
+ * Bring one enumerator's TOTAL holding back under the global ceiling.
+ *
+ * The per-district claw-back cannot do this. It trims each district to that
+ * district's share and knows nothing about the others, so somebody covering three
+ * districts can sit at three times a share and still look correct everywhere it
+ * checks. Hema_S was the live example: 2250 in Mumbai City plus 5000 in Mumbai
+ * Suburban is at the share in both and 7250 in total, against a 5000 ceiling that
+ * exists because one phone has to carry the batch offline.
+ *
+ * Releases lowest priority_weight first, across every district at once, so what goes
+ * back is the work they would have reached last wherever it happens to sit. Rows
+ * with a survey attached are never touched.
+ */
+export async function trimToGlobalQuota(
+  enumeratorId: string,
+  db: Db = prisma,
+  quota: number = WORK_QUOTA,
+): Promise<number> {
+  const rows = await db.$queryRaw<{ id: string }[]>(Prisma.sql`
+    WITH held AS (
+      SELECT COUNT(*)::int AS n
+      FROM stakeholders
+      WHERE assigned_to_id = ${enumeratorId}
+        AND status = 'OPEN'::"StakeholderStatus"
+    ),
+    over AS (
+      SELECT GREATEST(0, n - ${quota}::int) AS over FROM held
+    ),
+    releasable AS (
+      SELECT st.id,
+             ROW_NUMBER() OVER (
+               ORDER BY st.priority_weight ASC NULLS FIRST, st.primary_key_id DESC
+             ) AS rn
+      FROM stakeholders st
+      WHERE st.assigned_to_id = ${enumeratorId}
+        AND st.status = 'OPEN'::"StakeholderStatus"
+        AND NOT EXISTS (SELECT 1 FROM surveys sv WHERE sv.stakeholder_id = st.id)
+    ),
+    excess AS (
+      SELECT r.id FROM releasable r CROSS JOIN over o WHERE r.rn <= o.over
+    )
+    UPDATE stakeholders st
+    SET assigned_to_id = NULL,
+        assigned_at = NULL,
+        updated_at = NOW()
+    FROM excess
+    WHERE st.id = excess.id
+    RETURNING st.id
+  `);
+
+  if (rows.length === 0) return 0;
+
+  await recordRevocations(
+    rows.map(r => ({ stakeholderId: r.id, enumeratorId })),
+    'over global work quota',
+    db,
+  );
+
+  logger.info(`[assignment] trimmed ${rows.length} row(s) from ${enumeratorId} to fit the ${quota} ceiling`);
+  return rows.length;
+}
+
+/**
  * Log claims taken away, so the delta feed can tell the device to drop them.
  *
  * Chunked because a release can span thousands of rows and a single INSERT with
@@ -427,33 +490,15 @@ async function claimWithin(
       // One statement per district, because the LIMIT is per-district: a single
       // query across all of them could satisfy the whole amount from one district
       // and starve the others.
-      const rows = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
-        WITH picked AS (
-          SELECT id
-          FROM stakeholders
-          WHERE assigned_to_id IS NULL
-            AND status = 'OPEN'::"StakeholderStatus"
-            AND district = ${s.district}
-          ORDER BY priority_weight DESC NULLS LAST, primary_key_id ASC
-          LIMIT ${want}
-          FOR UPDATE SKIP LOCKED
-        )
-        UPDATE stakeholders st
-        SET assigned_to_id = ${enumeratorId},
-            assigned_at = NOW(),
-            updated_at = NOW()
-        FROM picked
-        WHERE st.id = picked.id
-        RETURNING st.id
-      `);
+      const got = await claimFromPool(tx, enumeratorId, s.district, want);
 
-      claimed += rows.length;
-      globalRoom -= rows.length;
+      claimed += got;
+      globalRoom -= got;
 
-      if (rows.length > 0) {
+      if (got > 0) {
         logger.info(
-          `[assignment] ${enumeratorId} claimed ${rows.length} in ${s.district} ` +
-          `(share ${s.share} of ${s.openTotal} open / ${s.enumerators} enumerator(s), held ${s.held} -> ${s.held + rows.length})`
+          `[assignment] ${enumeratorId} claimed ${got} in ${s.district} ` +
+          `(share ${s.share} of ${s.openTotal} open / ${s.enumerators} enumerator(s), held ${s.held} -> ${s.held + got})`
         );
       }
     }
@@ -477,6 +522,54 @@ async function claimWithin(
     full: held >= target || held >= quota,
     shares: after,
   };
+}
+
+/**
+ * Hand `want` unassigned OPEN rows in one district to one enumerator.
+ *
+ * Highest priority_weight first, ties broken by primary_key_id, so the most
+ * valuable records go out first and two enumerators drawing from the same district
+ * receive adjacent, non-overlapping blocks.
+ *
+ * FOR UPDATE SKIP LOCKED makes a concurrent draw step over rows this one has
+ * locked rather than block on them or overwrite the claim. Note what it does NOT
+ * do: it places no limit on how much each caller takes, which is why the quota
+ * decision has to sit inside the same transaction as this call.
+ *
+ * updated_at is bumped by hand because Prisma's `@updatedAt` only fires for writes
+ * made through Prisma, and the mobile delta feed finds new work by
+ * `updated_at > cursor` — without it the freshly claimed rows would be invisible to
+ * the very mechanism meant to deliver them.
+ */
+async function claimFromPool(
+  tx: Db,
+  enumeratorId: string,
+  district: string,
+  want: number,
+): Promise<number> {
+  if (want <= 0) return 0;
+
+  const rows = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+    WITH picked AS (
+      SELECT id
+      FROM stakeholders
+      WHERE assigned_to_id IS NULL
+        AND status = 'OPEN'::"StakeholderStatus"
+        AND district = ${district}
+      ORDER BY priority_weight DESC NULLS LAST, primary_key_id ASC
+      LIMIT ${want}
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE stakeholders st
+    SET assigned_to_id = ${enumeratorId},
+        assigned_at = NOW(),
+        updated_at = NOW()
+    FROM picked
+    WHERE st.id = picked.id
+    RETURNING st.id
+  `);
+
+  return rows.length;
 }
 
 /**
@@ -573,32 +666,181 @@ export async function releaseClaimsOutsideDistricts(
   return result.count;
 }
 
-/**
- * Re-level a set of districts after their sharer count changes.
- *
- * Called when an enumerator is added to, or removed from, a district. Adding one
- * shrinks everyone's share immediately, and without this the existing holders would
- * keep their now-oversized batches until each happened to trigger a claw-back on a
- * top-up — which for the newcomer means an empty queue in the meantime.
- *
- * Takes the same district advisory lock the claim path uses, so a rebalance and a
- * concurrent claim cannot interleave and both act on stale counts.
- */
-export async function rebalanceDistricts(districts: string[]): Promise<number> {
-  const canonical = await canonicalizeDistricts(districts);
-  if (canonical.length === 0) return 0;
+export interface RebalanceResult {
+  /** Rows taken back from enumerators holding above the new fair share. */
+  released: number;
+  /** Rows handed straight out to enumerators holding below it. */
+  redistributed: number;
+  /** Per-enumerator outcome, for the audit log and the admin response. */
+  assignments: Array<{ district: string; enumeratorId: string; share: number; before: number; after: number }>;
+}
 
-  let released = 0;
-  for (const district of [...canonical].sort()) {
-    released += await prisma.$transaction(
+/**
+ * Re-level a set of districts so every enumerator in them holds an equal share.
+ *
+ * WHEN THIS RUNS
+ * Whenever a district's roster changes — an enumerator created with districts,
+ * districts reassigned, an account deleted or deactivated — and on demand from the
+ * admin endpoint. The roster is the divisor in the share calculation, so any change
+ * to it silently invalidates every share already handed out.
+ *
+ * WHY IT BOTH TAKES AND GIVES
+ * Releasing the overage alone is not enough. It only refills the pool, and a row in
+ * the pool belongs to nobody until some device happens to call the claim endpoint.
+ * A newly added enumerator would show an empty queue until their own phone next
+ * synced — and if the admin added them precisely because the district needed
+ * coverage, that is the moment the work should already be waiting. So this hands the
+ * freed rows straight out, and the split is equal the instant the roster changes.
+ *
+ * ORDER OF OPERATIONS MATTERS
+ * Take back first, then give out. Reversed, the emptiest enumerator would try to
+ * claim from a pool that is still empty because the overage has not been returned to
+ * it yet, and come away with nothing.
+ *
+ * FILL ORDER
+ * Emptiest first. If the pool cannot satisfy everybody — a district whose rows are
+ * mostly pinned by surveys in progress — the shortfall lands on whoever already has
+ * the most to be getting on with.
+ *
+ * The district advisory lock is the same one the claim path takes, in the same
+ * order, so a rebalance and a device syncing cannot interleave and act on stale
+ * counts, and neither can deadlock against the other.
+ */
+export async function rebalanceDistricts(districts: string[]): Promise<RebalanceResult> {
+  const canonical = await canonicalizeDistricts(districts);
+  const result: RebalanceResult = { released: 0, redistributed: 0, assignments: [] };
+  if (canonical.length === 0) return result;
+
+  // PASS 1 — global ceiling, BEFORE the per-district work.
+  //
+  // Order is deliberate. The per-district pass tops people up to `share` but stops
+  // at `WORK_QUOTA - heldTotal`, so if anyone is already over the ceiling that room
+  // reads as zero or negative and they are skipped — leaving them over the ceiling
+  // and the pool short of the rows they should have handed back. Trimming first
+  // returns those rows to the pool in time for the same call to redistribute them.
+  const roster = await prisma.enumeratorDistrict.findMany({
+    where: {
+      district: { name: { in: canonical } },
+      enumerator: { isActive: true, isAdmin: false },
+    },
+    select: { enumeratorId: true, enumerator: { select: { districts: { select: { district: { select: { name: true } } } } } } },
+  });
+
+  for (const member of [...new Set(roster.map(r => r.enumeratorId))].sort()) {
+    const memberDistricts = [
+      ...new Set(
+        roster
+          .filter(r => r.enumeratorId === member)
+          .flatMap(r => r.enumerator.districts.map(d => d.district?.name))
+          .filter(Boolean) as string[]
+      ),
+    ].sort();
+
+    result.released += await prisma.$transaction(
       async (tx) => {
+        // Same lock order as the claim path — enumerator, then districts by name —
+        // so a trim and a device syncing can never hold what the other needs.
+        // The trim reaches across ALL of this enumerator's districts, not just the
+        // ones being rebalanced, so every one of them is locked.
         await tx.$queryRaw(
-          Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_DISTRICT}::int, hashtext(${district}))`
+          Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_ENUMERATOR}::int, hashtext(${member}))`
         );
-        return releaseOverShare(district, tx);
+        for (const d of memberDistricts) {
+          await tx.$queryRaw(
+            Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_DISTRICT}::int, hashtext(${d}))`
+          );
+        }
+        return trimToGlobalQuota(member, tx);
       },
       { timeout: 120_000, maxWait: 30_000 },
     );
   }
-  return released;
+
+  // PASS 2 — per district: trim to the district share, then hand out what is free.
+  for (const district of [...canonical].sort()) {
+    const outcome = await prisma.$transaction(
+      async (tx) => levelDistrictWithin(tx, district),
+      { timeout: 120_000, maxWait: 30_000 },
+    );
+
+    result.released += outcome.released;
+    result.redistributed += outcome.redistributed;
+    result.assignments.push(...outcome.assignments);
+  }
+
+  return result;
+}
+
+async function levelDistrictWithin(tx: Db, district: string): Promise<RebalanceResult> {
+  await tx.$queryRaw(
+    Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_DISTRICT}::int, hashtext(${district}))`
+  );
+
+  const released = await releaseOverShare(district, tx);
+
+  // Recomputed after the claw-back, so openTotal and the roster reflect it.
+  const openTotal = await tx.stakeholder.count({ where: { district, status: 'OPEN' } });
+  const roster = await tx.enumeratorDistrict.findMany({
+    where: { district: { name: district }, enumerator: { isActive: true, isAdmin: false } },
+    select: { enumeratorId: true },
+  });
+
+  if (roster.length === 0 || openTotal === 0) {
+    return { released, redistributed: 0, assignments: [] };
+  }
+
+  const share = Math.min(WORK_QUOTA, Math.ceil(openTotal / roster.length));
+
+  // Two numbers per enumerator, and they are not the same thing:
+  //   heldHere   what they hold in THIS district, measured against the share
+  //   heldTotal  what they hold everywhere, measured against WORK_QUOTA
+  // Ignoring the second would let someone covering three districts be topped up to
+  // a full share in each and end up with 15 000 records on one phone.
+  const holders: Array<{ enumeratorId: string; heldHere: number; heldTotal: number }> = [];
+  for (const r of roster) {
+    holders.push({
+      enumeratorId: r.enumeratorId,
+      heldHere: await tx.stakeholder.count({
+        where: { district, assignedToId: r.enumeratorId, status: 'OPEN' },
+      }),
+      heldTotal: await tx.stakeholder.count({
+        where: { assignedToId: r.enumeratorId, status: 'OPEN' },
+      }),
+    });
+  }
+
+  holders.sort((a, b) => a.heldHere - b.heldHere);
+
+  let redistributed = 0;
+  const assignments: RebalanceResult['assignments'] = [];
+
+  for (const h of holders) {
+    const want = Math.min(share - h.heldHere, WORK_QUOTA - h.heldTotal);
+    const got = want > 0 ? await claimFromPool(tx, h.enumeratorId, district, want) : 0;
+
+    redistributed += got;
+    assignments.push({
+      district,
+      enumeratorId: h.enumeratorId,
+      share,
+      before: h.heldHere,
+      after: h.heldHere + got,
+    });
+
+    if (got > 0) {
+      logger.info(
+        `[assignment] rebalance gave ${got} row(s) in ${district} to ${h.enumeratorId} ` +
+        `(held ${h.heldHere} -> ${h.heldHere + got} of share ${share})`
+      );
+    }
+  }
+
+  if (released > 0 || redistributed > 0) {
+    logger.info(
+      `[assignment] rebalanced ${district}: reclaimed ${released}, handed out ${redistributed}, ` +
+      `share ${share} across ${roster.length} enumerator(s) of ${openTotal} open`
+    );
+  }
+
+  return { released, redistributed, assignments };
 }

@@ -7,7 +7,7 @@ import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { AppError, ValidationError, NotFoundError, ConflictError } from '../../utils/errors';
 import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
-import { releaseClaimsOutsideDistricts, rebalanceDistricts } from '../../utils/stakeholder-assignment';
+import { releaseClaims, releaseClaimsOutsideDistricts, rebalanceDistricts } from '../../utils/stakeholder-assignment';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { broadcastChange } from '../../realtime/events';
 import { logger } from '../../utils/logger';
@@ -313,6 +313,7 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
     });
 
     // Assign districts
+    let rebalance = { released: 0, redistributed: 0 };
     if (districtIds && districtIds.length > 0) {
       await prisma.enumeratorDistrict.createMany({
         data: districtIds.map((districtId: string) => ({
@@ -320,6 +321,28 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
           districtId,
         })),
       });
+
+      // Adding someone to a district changes the divisor in the fair share, so every
+      // share already handed out there is now too big. Re-level immediately and give
+      // this enumerator their portion, rather than leaving them with an empty queue
+      // until their phone happens to sync — an admin adding an enumerator to a
+      // district usually means that district needs covering now.
+      //
+      // Skipped for admins: they see whole districts and hold no work queue, so
+      // counting them as a sharer would reserve a share nobody collects.
+      if (!isAdmin) {
+        const districtRows = await prisma.district.findMany({
+          where: { id: { in: districtIds } },
+          select: { name: true },
+        });
+        rebalance = await rebalanceDistricts(districtRows.map(r => r.name));
+
+        if (rebalance.released > 0 || rebalance.redistributed > 0) {
+          for (const d of districtRows) {
+            broadcastChange(['stakeholders', 'analytics'], { action: 'update', district: d.name });
+          }
+        }
+      }
     }
 
     await prisma.auditLog.create({
@@ -328,7 +351,13 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
         entityType: 'enumerator',
         entityId: enumerator.id,
         enumeratorId: req.enumerator!.id,
-        details: { loginId, name, districtIds },
+        details: {
+          loginId,
+          name,
+          districtIds,
+          rebalancedClaims: rebalance.released,
+          redistributedClaims: rebalance.redistributed,
+        },
       },
     });
 
@@ -340,7 +369,10 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
       entityId: enumerator.id,
     });
 
-    res.status(201).json({ success: true, data: { id: enumerator.id, loginId, name } });
+    res.status(201).json({
+      success: true,
+      data: { id: enumerator.id, loginId, name, assignedStakeholders: rebalance.redistributed },
+    });
   } catch (error) {
     next(error);
   }
@@ -367,6 +399,37 @@ router.patch('/enumerators/:id', async (req: AuthenticatedRequest, res: Response
       where: { id: (req.params.id as string) },
       data: updateData,
     });
+
+    // The active flag is part of the fair-share divisor: only active, non-admin
+    // enumerators count as sharers. So this toggle silently re-cuts every share in
+    // each of their districts, and it used to do nothing about it.
+    //
+    // Deactivating also has to hand their queue back. An inactive account cannot
+    // log in, so anything it still holds is work nobody can do — and the claw-back
+    // alone would not free it, since that only trims holders above the share and a
+    // deactivated holder may be sitting exactly on it.
+    if (isActive !== undefined && !enumerator.isAdmin) {
+      const districtRows = await prisma.enumeratorDistrict.findMany({
+        where: { enumeratorId: enumerator.id },
+        select: { district: { select: { name: true } } },
+      });
+      const districtNames = [
+        ...new Set(districtRows.map(r => r.district?.name).filter(Boolean) as string[]),
+      ];
+
+      if (districtNames.length > 0) {
+        if (isActive === false) {
+          await releaseClaims(enumerator.id);
+        }
+        const rebalance = await rebalanceDistricts(districtNames);
+
+        if (rebalance.released > 0 || rebalance.redistributed > 0) {
+          for (const district of districtNames) {
+            broadcastChange(['stakeholders', 'analytics'], { action: 'update', district });
+          }
+        }
+      }
+    }
 
     // Covers the Activate/Deactivate toggle, which changes the row's badge for
     // every admin currently looking at the enumerators table.
@@ -528,6 +591,20 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
       `Enumerator ${enumerator.loginId} (${enumerator.name}) permanently deleted by ${req.enumerator!.loginId}`
     );
 
+    // The FK is ON DELETE SET NULL, so this account's claims have just returned to
+    // the pool on their own — but nothing would hand them to anybody, and the
+    // divisor in each of their districts has dropped, which entitles everyone
+    // remaining to more. Re-level so the freed work is actually redistributed
+    // instead of sitting unassigned until some device asks for it.
+    if (!enumerator.isAdmin && assignedDistrictNames.length > 0) {
+      const rebalance = await rebalanceDistricts(assignedDistrictNames);
+      if (rebalance.redistributed > 0) {
+        logger.info(
+          `[assignment] redistributed ${rebalance.redistributed} row(s) freed by deleting ${enumerator.loginId}`
+        );
+      }
+    }
+
     // Deleting touches a lot: the enumerator list, the district assignment
     // counts, previously-locked stakeholders that are now free, and the counters.
     // The per-district stakeholder:unlocked events above already told field
@@ -627,8 +704,14 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
     // they tried. Sindhudurg sat like that: all 1980 open records held by the first
     // claimer, the second enumerator permanently idle.
     //
-    // Only untouched rows move, so nobody loses work they have already started.
-    const rebalanced = await rebalanceDistricts(resliceDistricts);
+    // Only untouched rows move, so nobody loses work they have already started, and
+    // the freed rows are handed straight back out so the split is equal at once
+    // rather than after each device next syncs.
+    //
+    // Both the districts they gained and the ones they lost are levelled: leaving a
+    // district also changes its divisor, which makes everyone remaining entitled to
+    // more.
+    const rebalance = await rebalanceDistricts(resliceDistricts);
 
     await prisma.auditLog.create({
       data: {
@@ -636,7 +719,12 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
         entityType: 'enumerator',
         entityId: (req.params.id as string),
         enumeratorId: req.enumerator!.id,
-        details: { districtIds, releasedClaims: released, rebalancedClaims: rebalanced },
+        details: {
+          districtIds,
+          releasedClaims: released,
+          rebalancedClaims: rebalance.released,
+          redistributedClaims: rebalance.redistributed,
+        },
       },
     });
 
@@ -701,7 +789,7 @@ router.post('/stakeholders/rebalance', async (req: AuthenticatedRequest, res: Re
       districts = rows.map(r => r.district as string);
     }
 
-    const released = await rebalanceDistricts(districts);
+    const rebalance = await rebalanceDistricts(districts);
 
     await prisma.auditLog.create({
       data: {
@@ -709,11 +797,15 @@ router.post('/stakeholders/rebalance', async (req: AuthenticatedRequest, res: Re
         entityType: 'stakeholder',
         entityId: 'bulk',
         enumeratorId: req.enumerator!.id,
-        details: { districts, releasedClaims: released },
+        details: {
+          districts,
+          releasedClaims: rebalance.released,
+          redistributedClaims: rebalance.redistributed,
+        },
       },
     });
 
-    if (released > 0) {
+    if (rebalance.released > 0 || rebalance.redistributed > 0) {
       // Devices learn which specific rows they lost through the revocation list on
       // their next delta; this just tells the open dashboards their counts moved.
       for (const district of districts) {
@@ -723,10 +815,15 @@ router.post('/stakeholders/rebalance', async (req: AuthenticatedRequest, res: Re
 
     res.json({
       success: true,
-      data: { districts, released },
-      message: released > 0
-        ? `Returned ${released} over-share record(s) to the pool.`
-        : 'Nothing to rebalance — every enumerator is at or below their fair share.',
+      data: {
+        districts,
+        released: rebalance.released,
+        redistributed: rebalance.redistributed,
+        assignments: rebalance.assignments,
+      },
+      message: rebalance.released > 0 || rebalance.redistributed > 0
+        ? `Re-levelled ${rebalance.released} record(s) and handed out ${rebalance.redistributed}.`
+        : 'Nothing to rebalance — every enumerator already holds an equal share.',
     });
   } catch (error) {
     next(error);
