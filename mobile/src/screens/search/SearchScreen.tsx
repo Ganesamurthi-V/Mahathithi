@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, TextInput,
-  StyleSheet, ActivityIndicator, Modal, Animated, Easing
+  StyleSheet, ActivityIndicator, Animated
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,7 +11,7 @@ import { setSearchResults, appendSearchResults, setSearching } from '../../store
 import { stakeholderService } from '../../services/api';
 import { stakeholderDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
-import { colors, spacing, borderRadius, typography, shadows, animations } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -61,22 +61,24 @@ const StakeholderCard = React.memo(({ item, onPress }: { item: any, onPress: () 
 export default function SearchScreen({ navigation }: any) {
   const dispatch = useDispatch<AppDispatch>();
   const { searchResults, searchPagination, isSearching } = useSelector((state: RootState) => state.stakeholder);
-  const { user } = useSelector((state: RootState) => state.auth);
-  
-  // Cascaded Search State
-  const [availableDistricts, setAvailableDistricts] = useState<string[]>([]);
-  const [availableCities, setAvailableCities] = useState<string[]>([]);
-  const [availablePins, setAvailablePins] = useState<string[]>([]);
-  
-  const [selectedDistrict, setSelectedDistrict] = useState<string>('');
-  const [selectedCity, setSelectedCity] = useState<string>('');
-  const [selectedPin, setSelectedPin] = useState<string>('');
-  
-  const [pickerType, setPickerType] = useState<'district' | 'city' | 'pin' | null>(null);
+
+  // Two INDEPENDENT free-text filters. Either one alone, both together, or neither
+  // — there is no ordering and no field is gated on another.
+  //
+  // This replaced a cascade (District picker -> City enabled -> PIN enabled) where
+  // each field was disabled until the one above it was filled. That forced the
+  // operator to pick a district before they could type a village, and a village
+  // before a PIN — the exact step-by-step the request asks to remove. The local
+  // search DAO already treats every filter as an optional, independent AND term, so
+  // only the UI was imposing the order.
+  //
+  // `village` maps to the DAO's `city` filter, which matches city OR village, so a
+  // single box covers both the way an enumerator thinks of a place name.
+  const [village, setVillage] = useState<string>('');
+  const [pin, setPin] = useState<string>('');
 
   // Animations
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const filterSlideAnim = useRef(new Animated.Value(500)).current;
 
   useEffect(() => {
     Animated.loop(
@@ -86,47 +88,6 @@ export default function SearchScreen({ navigation }: any) {
       ])
     ).start();
   }, []);
-
-  useEffect(() => {
-    if (pickerType) {
-      Animated.spring(filterSlideAnim, { toValue: 0, useNativeDriver: true, ...animations.spring.bouncy }).start();
-    } else {
-      Animated.timing(filterSlideAnim, { toValue: 500, duration: 250, useNativeDriver: true }).start();
-    }
-  }, [pickerType]);
-
-  // Load assigned districts from user profile
-  useEffect(() => {
-    if (user && user.districts) {
-      setAvailableDistricts(user.districts.map((d: any) => d.name));
-    }
-  }, [user]);
-
-  // Cascade logic
-  useEffect(() => {
-    if (selectedDistrict) {
-      stakeholderDao.getUniqueCities(selectedDistrict).then(setAvailableCities);
-      setSelectedCity('');
-      setSelectedPin('');
-      setAvailablePins([]);
-    } else {
-      setAvailableCities([]);
-      setSelectedCity('');
-      setAvailablePins([]);
-      setSelectedPin('');
-    }
-  }, [selectedDistrict]);
-
-  useEffect(() => {
-    if (selectedCity) {
-      stakeholderDao.getUniquePins(selectedCity).then(setAvailablePins);
-      setSelectedPin('');
-    } else {
-      setAvailablePins([]);
-      setSelectedPin('');
-    }
-  }, [selectedCity]);
-
 
   const search = useCallback(async (activeFilters: Record<string, string>, page = 1) => {
     dispatch(setSearching(true));
@@ -210,22 +171,35 @@ export default function SearchScreen({ navigation }: any) {
     }
   }, [dispatch]);
 
-  // Execute search when filters change (debounced for TextInputs)
+  // Only the non-empty fields become filters, so typing in one box does not require
+  // the other. Trimmed so a stray space is not treated as a filter that returns
+  // nothing.
+  const buildFilters = useCallback(() => {
+    const f: Record<string, string> = {};
+    const v = village.trim();
+    const p = pin.trim();
+    if (v) f.city = v;      // DAO `city` filter matches city OR village
+    if (p) f.pinCode = p;
+    return f;
+  }, [village, pin]);
+
+  // Execute search when either filter changes (debounced for typing).
   useEffect(() => {
     const handler = setTimeout(() => {
-      if (selectedDistrict || selectedCity || selectedPin) {
-        search({ district: selectedDistrict, city: selectedCity, pinCode: selectedPin });
+      const filters = buildFilters();
+      if (Object.keys(filters).length > 0) {
+        search(filters);
       } else {
         dispatch(setSearchResults({ stakeholders: [], pagination: { page: 1, total: 0, hasMore: false } }));
       }
     }, 500);
 
     return () => clearTimeout(handler);
-  }, [selectedDistrict, selectedCity, selectedPin, search, dispatch]);
+  }, [village, pin, buildFilters, search, dispatch]);
 
   const loadMore = () => {
     if (searchPagination.hasMore && !isSearching) {
-      search({ district: selectedDistrict, city: selectedCity, pinCode: selectedPin }, searchPagination.page + 1);
+      search(buildFilters(), searchPagination.page + 1);
     }
   };
 
@@ -239,42 +213,38 @@ export default function SearchScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.container}>
-        {/* Cascaded Selection Area */}
+        {/* Two independent filters — fill either, both, or neither. */}
         <View style={styles.cascadeSection}>
-          <TouchableOpacity style={styles.cascadeButton} onPress={() => setPickerType('district')}>
-            <Text style={styles.cascadeLabel}>District</Text>
-            <Text style={styles.cascadeValue}>{selectedDistrict || 'Select District ▼'}</Text>
-          </TouchableOpacity>
-          
-          <View style={[styles.cascadeButton, !selectedDistrict && styles.cascadeDisabled]}>
-            <Text style={styles.cascadeLabel}>City / Village</Text>
-            <TextInput 
+          <View style={styles.cascadeButton}>
+            <Text style={styles.cascadeLabel}>Village / City</Text>
+            <TextInput
               style={styles.cascadeInput}
-              value={selectedCity}
-              onChangeText={setSelectedCity}
-              placeholder="Enter City or Village"
+              value={village}
+              onChangeText={setVillage}
+              placeholder="Type a village or city (optional)"
               placeholderTextColor={colors.textMuted}
-              editable={!!selectedDistrict}
+              returnKeyType="search"
             />
           </View>
-          
-          <View style={[styles.cascadeButton, !selectedCity && styles.cascadeDisabled]}>
+
+          <View style={styles.cascadeButton}>
             <Text style={styles.cascadeLabel}>PIN Code</Text>
-            <TextInput 
+            <TextInput
               style={styles.cascadeInput}
-              value={selectedPin}
-              onChangeText={setSelectedPin}
-              placeholder="Enter PIN Code"
+              value={pin}
+              onChangeText={setPin}
+              placeholder="Type a PIN code (optional)"
               placeholderTextColor={colors.textMuted}
               keyboardType="number-pad"
-              editable={!!selectedCity}
               maxLength={6}
+              returnKeyType="search"
             />
           </View>
-          
-          {(selectedDistrict || selectedCity || selectedPin) ? (
+
+          {(village || pin) ? (
             <TouchableOpacity style={styles.resetButton} onPress={() => {
-              setSelectedDistrict('');
+              setVillage('');
+              setPin('');
               dispatch(setSearchResults({ stakeholders: [], pagination: { page: 1, total: 0, hasMore: false } }));
             }}>
               <Text style={styles.resetButtonText}>Reset Search</Text>
@@ -311,7 +281,7 @@ export default function SearchScreen({ navigation }: any) {
                   <Icon name="account-search" size={60} color={colors.textMuted} />
                 </Animated.View>
                 <Text style={styles.emptyTitle}>Find Stakeholders</Text>
-                <Text style={styles.emptyText}>Select a District, City, and PIN to locate stakeholders in your assigned area.</Text>
+                <Text style={styles.emptyText}>Search by village/city, by PIN code, or both. Either field on its own works.</Text>
               </View>
             ) : null
           }
@@ -320,44 +290,6 @@ export default function SearchScreen({ navigation }: any) {
           }
         />
 
-        {/* Picker Modal */}
-        <Modal visible={!!pickerType} animationType="fade" transparent>
-          <TouchableOpacity style={styles.filterOverlay} activeOpacity={1} onPress={() => setPickerType(null)}>
-            <Animated.View style={[styles.filterModal, { transform: [{ translateY: filterSlideAnim }] }]}>
-              <View style={styles.pickerHeader}>
-                <Text style={styles.filterTitle}>
-                  Select {pickerType === 'district' ? 'District' : pickerType === 'city' ? 'City' : 'PIN'}
-                </Text>
-                <TouchableOpacity onPress={() => setPickerType(null)}>
-                  <Icon name="close" size={24} color={colors.textSecondary} style={styles.closePickerIcon} />
-                </TouchableOpacity>
-              </View>
-              
-              <FlatList
-                data={
-                  pickerType === 'district' ? availableDistricts :
-                  pickerType === 'city' ? availableCities :
-                  pickerType === 'pin' ? availablePins : []
-                }
-                keyExtractor={(i) => i}
-                style={{ maxHeight: moderateScale(300) }}
-                renderItem={({item}) => (
-                  <TouchableOpacity style={styles.pickerItem} onPress={() => {
-                    if (pickerType === 'district') setSelectedDistrict(item);
-                    if (pickerType === 'city') setSelectedCity(item);
-                    if (pickerType === 'pin') setSelectedPin(item);
-                    setPickerType(null);
-                  }}>
-                    <Text style={styles.pickerItemText}>{item}</Text>
-                  </TouchableOpacity>
-                )}
-                ListEmptyComponent={
-                  <Text style={styles.emptyPickerText}>No options available</Text>
-                }
-              />
-            </Animated.View>
-          </TouchableOpacity>
-        </Modal>
       </View>
     </SafeAreaView>
   );
@@ -371,9 +303,7 @@ const styles = StyleSheet.create({
     padding: spacing.md, borderWidth: 1, borderColor: colors.border,
     marginBottom: spacing.sm, ...shadows.card
   },
-  cascadeDisabled: { opacity: 0.5 },
   cascadeLabel: { ...typography.caption, color: colors.textMuted },
-  cascadeValue: { ...typography.body, color: colors.textPrimary, fontWeight: '600', marginTop: 2 },
   cascadeInput: { ...typography.body, color: colors.textPrimary, fontWeight: '600', marginTop: 2, padding: 0 },
   resetButton: { marginTop: spacing.xs, alignItems: 'center', padding: spacing.sm },
   resetButtonText: { color: colors.error, fontWeight: '600', fontSize: moderateScale(14) },
@@ -398,17 +328,4 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: moderateScale(56), marginBottom: spacing.lg },
   emptyTitle: { ...typography.h2, color: colors.textPrimary, marginBottom: spacing.sm },
   emptyText: { ...typography.bodySmall, color: colors.textMuted, textAlign: 'center', paddingHorizontal: spacing.xxxl, lineHeight: moderateScale(20) },
-  
-  filterOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
-  filterModal: {
-    backgroundColor: colors.bgCard, borderTopLeftRadius: borderRadius.xl, borderTopRightRadius: borderRadius.xl,
-    padding: spacing.xl, paddingBottom: spacing.xxxl,
-    ...shadows.elevated,
-  },
-  pickerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg },
-  filterTitle: { ...typography.h2, color: colors.textPrimary },
-  closePickerIcon: { fontSize: moderateScale(24), color: colors.textMuted, padding: spacing.xs },
-  pickerItem: { paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
-  pickerItemText: { ...typography.body, color: colors.textPrimary, fontSize: moderateScale(16) },
-  emptyPickerText: { ...typography.body, color: colors.textMuted, textAlign: 'center', padding: spacing.xl },
 });
