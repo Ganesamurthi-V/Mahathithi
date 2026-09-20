@@ -748,6 +748,72 @@ export const stakeholderDao = {
     }
     return rows;
   },
+
+  /**
+   * Every distinct PIN code present in the local cache, with how many
+   * stakeholders sit under each.
+   *
+   * Unlike `getUniquePins(city)` this takes no parent value. The search UI
+   * offers PIN as a standalone filter, so its dropdown cannot require a city
+   * to be chosen first — that was the cascade the field team asked us to drop.
+   *
+   * Scope is naturally small: the local table only holds the stakeholders
+   * assigned to this enumerator (capped at 5,000), so the list is short,
+   * relevant to the area they actually work, and available fully offline.
+   */
+  async getAllPinCodes(): Promise<Array<{ value: string; count: number }>> {
+    const database = await getDB();
+    const [results] = await database.executeSql(
+      `SELECT pin_code AS value, COUNT(*) AS count
+         FROM stakeholders
+        WHERE pin_code IS NOT NULL AND TRIM(pin_code) != ''
+        GROUP BY pin_code
+        ORDER BY pin_code ASC`
+    );
+    const rows: Array<{ value: string; count: number }> = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      const r = results.rows.item(i);
+      rows.push({ value: String(r.value), count: r.count });
+    }
+    return rows;
+  },
+
+  /**
+   * Every distinct place name in the local cache, pooled from BOTH the `city`
+   * and `village` columns.
+   *
+   * The two columns are merged on purpose: `search()`'s `city` filter matches
+   * either column, and an enumerator thinks in terms of one "place name" rather
+   * than which column the import happened to land it in. Pooling keeps the
+   * dropdown consistent with what the filter will actually match.
+   *
+   * Counts are summed per name, so a name appearing as a city on some rows and
+   * a village on others reports its combined total.
+   */
+  async getAllPlaceNames(): Promise<Array<{ value: string; count: number }>> {
+    const database = await getDB();
+    const [results] = await database.executeSql(
+      `SELECT value, SUM(count) AS count FROM (
+         SELECT city AS value, COUNT(*) AS count
+           FROM stakeholders
+          WHERE city IS NOT NULL AND TRIM(city) != ''
+          GROUP BY city
+         UNION ALL
+         SELECT village AS value, COUNT(*) AS count
+           FROM stakeholders
+          WHERE village IS NOT NULL AND TRIM(village) != ''
+          GROUP BY village
+       )
+       GROUP BY value COLLATE NOCASE
+       ORDER BY value ASC`
+    );
+    const rows: Array<{ value: string; count: number }> = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      const r = results.rows.item(i);
+      rows.push({ value: String(r.value), count: r.count });
+    }
+    return rows;
+  },
 };
 
 /**

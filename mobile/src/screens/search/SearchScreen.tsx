@@ -1,10 +1,11 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, TextInput,
-  StyleSheet, ActivityIndicator, Animated
+  StyleSheet, ActivityIndicator, Animated, Modal, Keyboard
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { setSearchResults, appendSearchResults, setSearching } from '../../store/slices/stakeholderSlice';
@@ -77,8 +78,59 @@ export default function SearchScreen({ navigation }: any) {
   const [village, setVillage] = useState<string>('');
   const [pin, setPin] = useState<string>('');
 
+  // Each field can be filled two ways: typed, or picked from a dropdown of the
+  // values that actually exist in this enumerator's local data.
+  //
+  // The dropdown is the reason both lists are loaded up front. The field team is
+  // large and not uniformly technical, and a typo in a place name silently
+  // returns zero results with nothing to explain why — the operator cannot tell
+  // "spelled it wrong" apart from "nothing here". Picking from a list of known
+  // values makes an empty result impossible to reach by accident.
+  //
+  // Sourced from SQLite, not the server, so the pickers work with no signal and
+  // only ever offer areas the operator has been assigned.
+  const [placeOptions, setPlaceOptions] = useState<Array<{ value: string; count: number }>>([]);
+  const [pinOptions, setPinOptions] = useState<Array<{ value: string; count: number }>>([]);
+  const [optionsLoading, setOptionsLoading] = useState(true);
+
+  // Which dropdown is open, and the type-to-narrow text inside it. A district
+  // can carry a few hundred PINs, so the sheet needs its own filter box to stay
+  // usable — but typing there only narrows the list, it never becomes the filter.
+  const [openPicker, setOpenPicker] = useState<null | 'place' | 'pin'>(null);
+  const [pickerQuery, setPickerQuery] = useState('');
+
+  // The filter panel folds away so the result list gets the full screen. It
+  // collapses on its own once a value is committed (picked, or entered from the
+  // keyboard), which is the point at which the operator stops caring about the
+  // inputs and starts reading results.
+  const [collapsed, setCollapsed] = useState(false);
+
   // Animations
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Refreshed on every focus rather than once on mount. This screen lives in a
+  // bottom tab and stays mounted, so a mount-only load would keep serving the
+  // option lists from whenever the app started — a batch synced mid-shift would
+  // be searchable but invisible in the dropdowns until a restart.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        try {
+          const [places, pins] = await Promise.all([
+            stakeholderDao.getAllPlaceNames().catch(() => []),
+            stakeholderDao.getAllPinCodes().catch(() => []),
+          ]);
+          if (cancelled) return;
+          setPlaceOptions(places);
+          setPinOptions(pins);
+        } finally {
+          if (!cancelled) setOptionsLoading(false);
+        }
+      })();
+      return () => { cancelled = true; };
+    }, [])
+  );
 
   useEffect(() => {
     Animated.loop(
@@ -203,6 +255,50 @@ export default function SearchScreen({ navigation }: any) {
     }
   };
 
+  // Options shown in the open sheet, narrowed by the sheet's own filter box.
+  // PIN narrowing is prefix-based to mirror how the DAO matches it
+  // (`pin_code LIKE '412%'`); place names match anywhere in the string, since an
+  // operator may only remember the tail of a compound name.
+  const pickerItems = useMemo(() => {
+    const source = openPicker === 'pin' ? pinOptions : placeOptions;
+    const q = pickerQuery.trim().toLowerCase();
+    if (!q) return source;
+    return openPicker === 'pin'
+      ? source.filter(o => o.value.toLowerCase().startsWith(q))
+      : source.filter(o => o.value.toLowerCase().includes(q));
+  }, [openPicker, pinOptions, placeOptions, pickerQuery]);
+
+  const openSheet = (which: 'place' | 'pin') => {
+    Keyboard.dismiss();
+    setPickerQuery('');
+    setOpenPicker(which);
+  };
+
+  const chooseOption = (value: string) => {
+    if (openPicker === 'pin') {
+      setPin(value);
+    } else {
+      setVillage(value);
+    }
+    setOpenPicker(null);
+    setPickerQuery('');
+    setCollapsed(true);
+  };
+
+  const resetSearch = () => {
+    setVillage('');
+    setPin('');
+    setCollapsed(false);
+    dispatch(setSearchResults({ stakeholders: [], pagination: { page: 1, total: 0, hasMore: false } }));
+  };
+
+  // Text shown on the folded bar so the active filters stay visible while the
+  // inputs themselves are hidden.
+  const filterSummary = [
+    village.trim() || null,
+    pin.trim() ? `PIN ${pin.trim()}` : null,
+  ].filter(Boolean).join('  •  ');
+
   const renderStakeholder = useCallback(({ item }: { item: any }) => (
     <StakeholderCard 
       item={item} 
@@ -213,44 +309,92 @@ export default function SearchScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.container}>
-        {/* Two independent filters — fill either, both, or neither. */}
-        <View style={styles.cascadeSection}>
-          <View style={styles.cascadeButton}>
-            <Text style={styles.cascadeLabel}>Village / City</Text>
-            <TextInput
-              style={styles.cascadeInput}
-              value={village}
-              onChangeText={setVillage}
-              placeholder="Type a village or city (optional)"
-              placeholderTextColor={colors.textMuted}
-              returnKeyType="search"
-            />
-          </View>
+        {/*
+          Folded state: a one-line bar holding the active filters. Tapping it
+          anywhere brings the panel back, so nothing is unreachable — this only
+          trades panel height for result rows.
+        */}
+        {collapsed ? (
+          <TouchableOpacity style={styles.collapsedBar} onPress={() => setCollapsed(false)} activeOpacity={0.8}>
+            <Icon name="filter-variant" size={moderateScale(18)} color={colors.primary} />
+            <Text style={styles.collapsedText} numberOfLines={1}>
+              {filterSummary || 'Tap to set a filter'}
+            </Text>
+            <Icon name="chevron-down" size={moderateScale(22)} color={colors.textMuted} />
+          </TouchableOpacity>
+        ) : (
+          /* Two independent filters — fill either, both, or neither. */
+          <View style={styles.cascadeSection}>
+            <View style={styles.panelHeader}>
+              <Text style={styles.panelTitle}>Search Stakeholders</Text>
+              <TouchableOpacity
+                onPress={() => { Keyboard.dismiss(); setCollapsed(true); }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Icon name="chevron-up" size={moderateScale(24)} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
 
-          <View style={styles.cascadeButton}>
-            <Text style={styles.cascadeLabel}>PIN Code</Text>
-            <TextInput
-              style={styles.cascadeInput}
-              value={pin}
-              onChangeText={setPin}
-              placeholder="Type a PIN code (optional)"
-              placeholderTextColor={colors.textMuted}
-              keyboardType="number-pad"
-              maxLength={6}
-              returnKeyType="search"
-            />
-          </View>
+            {/* PIN sits first: it is the field team's primary way in. */}
+            <View style={styles.cascadeButton}>
+              <Text style={styles.cascadeLabel}>PIN Code</Text>
+              <View style={styles.fieldRow}>
+                <TextInput
+                  style={[styles.cascadeInput, styles.fieldInput]}
+                  value={pin}
+                  onChangeText={setPin}
+                  placeholder="Type or pick a PIN code"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  returnKeyType="search"
+                  onSubmitEditing={() => { Keyboard.dismiss(); setCollapsed(true); }}
+                />
+                <TouchableOpacity
+                  style={styles.dropdownButton}
+                  onPress={() => openSheet('pin')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose a PIN code from the list"
+                >
+                  <Icon name="menu-down" size={moderateScale(24)} color={colors.primary} />
+                </TouchableOpacity>
+              </View>
+            </View>
 
-          {(village || pin) ? (
-            <TouchableOpacity style={styles.resetButton} onPress={() => {
-              setVillage('');
-              setPin('');
-              dispatch(setSearchResults({ stakeholders: [], pagination: { page: 1, total: 0, hasMore: false } }));
-            }}>
-              <Text style={styles.resetButtonText}>Reset Search</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
+            <View style={styles.cascadeButton}>
+              <Text style={styles.cascadeLabel}>Village / City</Text>
+              <View style={styles.fieldRow}>
+                <TextInput
+                  style={[styles.cascadeInput, styles.fieldInput]}
+                  value={village}
+                  onChangeText={setVillage}
+                  placeholder="Type or pick a village / city"
+                  placeholderTextColor={colors.textMuted}
+                  returnKeyType="search"
+                  onSubmitEditing={() => { Keyboard.dismiss(); setCollapsed(true); }}
+                />
+                <TouchableOpacity
+                  style={styles.dropdownButton}
+                  onPress={() => openSheet('place')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose a village or city from the list"
+                >
+                  <Icon name="menu-down" size={moderateScale(24)} color={colors.primary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <Text style={styles.helperText}>
+              Use either field on its own, or both together.
+            </Text>
+
+            {(village || pin) ? (
+              <TouchableOpacity style={styles.resetButton} onPress={resetSearch}>
+                <Text style={styles.resetButtonText}>Reset Search</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        )}
 
         {/* Results count */}
         {searchResults.length > 0 && (
@@ -290,6 +434,74 @@ export default function SearchScreen({ navigation }: any) {
           }
         />
 
+        {/*
+          Dropdown sheet, shared by both fields. It lists only values that exist
+          in the local cache, each with its stakeholder count, so the operator
+          can see where the work actually is before committing to a filter.
+        */}
+        <Modal
+          visible={openPicker !== null}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setOpenPicker(null)}
+        >
+          <View style={styles.pickerOverlay}>
+            <View style={styles.pickerSheet}>
+              <View style={styles.pickerHeader}>
+                <Text style={styles.pickerTitle}>
+                  {openPicker === 'pin' ? 'Select PIN Code' : 'Select Village / City'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setOpenPicker(null)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Icon name="close" size={moderateScale(24)} color={colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.pickerSearchBox}>
+                <Icon name="magnify" size={moderateScale(18)} color={colors.textMuted} />
+                <TextInput
+                  style={styles.pickerSearchInput}
+                  value={pickerQuery}
+                  onChangeText={setPickerQuery}
+                  placeholder={openPicker === 'pin' ? 'Narrow the list…' : 'Narrow the list…'}
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType={openPicker === 'pin' ? 'number-pad' : 'default'}
+                  autoCorrect={false}
+                />
+              </View>
+
+              <FlatList
+                data={pickerItems}
+                keyExtractor={(item) => item.value}
+                keyboardShouldPersistTaps="handled"
+                initialNumToRender={20}
+                renderItem={({ item }) => {
+                  const isActive = openPicker === 'pin' ? item.value === pin.trim() : item.value === village.trim();
+                  return (
+                    <TouchableOpacity style={styles.pickerItem} onPress={() => chooseOption(item.value)}>
+                      <Text style={[styles.pickerItemText, isActive && styles.pickerItemTextActive]} numberOfLines={1}>
+                        {item.value}
+                      </Text>
+                      <Text style={styles.pickerItemCount}>{item.count}</Text>
+                    </TouchableOpacity>
+                  );
+                }}
+                ListEmptyComponent={
+                  <Text style={styles.pickerEmpty}>
+                    {optionsLoading
+                      ? 'Loading…'
+                      : pickerQuery.trim()
+                        ? 'No match. Clear the box above to see the full list.'
+                        : 'Nothing available offline yet. Sync your stakeholder list first.'}
+                  </Text>
+                }
+              />
+            </View>
+          </View>
+        </Modal>
+
       </View>
     </SafeAreaView>
   );
@@ -307,6 +519,52 @@ const styles = StyleSheet.create({
   cascadeInput: { ...typography.body, color: colors.textPrimary, fontWeight: '600', marginTop: 2, padding: 0 },
   resetButton: { marginTop: spacing.xs, alignItems: 'center', padding: spacing.sm },
   resetButtonText: { color: colors.error, fontWeight: '600', fontSize: moderateScale(14) },
+
+  panelHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+  panelTitle: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
+  fieldRow: { flexDirection: 'row', alignItems: 'center' },
+  fieldInput: { flex: 1 },
+  dropdownButton: { paddingLeft: spacing.sm, paddingVertical: moderateScale(2) },
+  helperText: { ...typography.caption, color: colors.textMuted, marginTop: spacing.xs, marginLeft: spacing.xs },
+
+  collapsedBar: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.md,
+    backgroundColor: colors.bgInput, borderRadius: borderRadius.md,
+    borderWidth: 1, borderColor: colors.border, ...shadows.card,
+  },
+  collapsedText: { ...typography.bodySmall, color: colors.textPrimary, fontWeight: '600', flex: 1 },
+
+  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  pickerSheet: {
+    backgroundColor: colors.bgPrimary, maxHeight: '75%',
+    borderTopLeftRadius: borderRadius.lg, borderTopRightRadius: borderRadius.lg,
+    paddingTop: spacing.lg, paddingBottom: spacing.xl,
+  },
+  pickerHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg, marginBottom: spacing.md,
+  },
+  pickerTitle: { ...typography.h2, color: colors.textPrimary },
+  pickerSearchBox: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginHorizontal: spacing.lg, marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md, paddingVertical: moderateScale(6),
+    backgroundColor: colors.bgInput, borderRadius: borderRadius.md,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  pickerSearchInput: { ...typography.body, color: colors.textPrimary, flex: 1, padding: 0 },
+  pickerItem: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  pickerItemText: { ...typography.body, color: colors.textPrimary, flex: 1, marginRight: spacing.sm },
+  pickerItemTextActive: { color: colors.primary, fontWeight: '700' },
+  pickerItemCount: { ...typography.caption, color: colors.textMuted },
+  pickerEmpty: { ...typography.bodySmall, color: colors.textMuted, textAlign: 'center', padding: spacing.xl },
+
   
   resultCount: { ...typography.caption, color: colors.textMuted, paddingHorizontal: spacing.lg, marginBottom: spacing.sm },
   listContent: { paddingHorizontal: spacing.lg, paddingBottom: moderateScale(100) },
