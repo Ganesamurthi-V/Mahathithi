@@ -183,6 +183,61 @@ export const login = (loginId: string, password: string) => {
     });
 };
 
+/**
+ * Turn any thrown request error into a message worth showing an operator.
+ *
+ * Every page was reaching into `err.response?.data?.error?.message` by hand and
+ * falling back to a hardcoded string like "Failed to update". That fallback fired
+ * for two very different situations that deserve different words:
+ *
+ *   - the server answered with a real, specific error (a 409 explaining a GST
+ *     clash, say) — that message should win, and did most of the time
+ *   - there was NO response at all — the request never reached the server, or the
+ *     connection dropped, or it timed out. `err.response` is undefined here, so
+ *     the specific-message lookup yields undefined and the generic fallback showed,
+ *     making a network problem look like a server rejection
+ *
+ * Centralising it means one place knows the server's `{ error: { message } }`
+ * envelope, distinguishes "no response" from "server said no", and reads a
+ * validation error's field details when present.
+ */
+export function getErrorMessage(err: any, fallback = 'Something went wrong. Please try again.'): string {
+  // The server's structured error envelope: { success:false, error:{ code, message, details? } }
+  const serverError = err?.response?.data?.error;
+  if (serverError?.message) {
+    // A validation error carries per-field detail; append the first one so the
+    // operator knows WHICH field, not just that something was invalid.
+    const detail = Array.isArray(serverError.details) && serverError.details.length > 0
+      ? serverError.details[0]
+      : null;
+    if (detail?.field && detail?.message) {
+      return `${serverError.message}: ${detail.field} — ${detail.message}`;
+    }
+    return serverError.message;
+  }
+
+  // A response arrived but not in our envelope (a proxy/CDN error page, a 502 from
+  // the platform, etc.). Use the status to say something truthful.
+  const status = err?.response?.status;
+  if (status) {
+    if (status === 502 || status === 503 || status === 504) {
+      return 'The server is temporarily unavailable. Please try again in a moment.';
+    }
+    if (status === 413) return 'That upload is too large.';
+    return `Request failed (${status}).`;
+  }
+
+  // No response object at all — the request never completed a round trip.
+  if (err?.code === 'ECONNABORTED' || /timeout/i.test(err?.message || '')) {
+    return 'The request timed out. Check your connection and try again.';
+  }
+  if (err?.message === 'Network Error') {
+    return 'Could not reach the server. Check your internet connection.';
+  }
+
+  return err?.message || fallback;
+}
+
 export const getProfile = () => api.get('/auth/me');
 
 // Admin - Enumerators

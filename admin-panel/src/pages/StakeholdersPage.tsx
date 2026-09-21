@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts } from '../api';
+import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage } from '../api';
 import type { District } from '../types';
 import { getDigiPin } from '../utils/digipin';
 import {
@@ -319,7 +319,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
       // can see and correct what failed.
       ctx?.previous?.forEach(([key, value]: [any, any]) => queryClient.setQueryData(key, value));
       setEditMode(true);
-      alert(err.response?.data?.error?.message || 'Failed to update stakeholder');
+      alert(getErrorMessage(err, 'Failed to update stakeholder'));
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['stakeholders'] });
@@ -346,7 +346,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
       onClose();
     },
     onError: (err: any) => {
-      alert(err.response?.data?.error?.message || 'Failed to delete stakeholder');
+      alert(getErrorMessage(err, 'Failed to delete stakeholder'));
     },
   });
 
@@ -834,11 +834,10 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
       onClose();
     },
     onError: (err: any) => {
-      // Zod returns a field-level list; surface the first one rather than a generic
-      // failure, so the operator knows which input to fix.
-      const detail = err.response?.data?.error?.details?.[0];
-      const fieldMsg = detail ? `${detail.path?.join('.') || 'field'}: ${detail.message}` : null;
-      alert(fieldMsg || err.response?.data?.error?.message || 'Failed to create stakeholder');
+      // getErrorMessage already unpacks the server's validation `details` (field +
+      // message). The old inline version read `detail.path`, but the backend sends
+      // `detail.field`, so the field name never actually showed.
+      alert(getErrorMessage(err, 'Failed to create stakeholder'));
     },
   });
 

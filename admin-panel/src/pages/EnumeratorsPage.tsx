@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getEnumerators, getDistricts, createEnumerator, updateEnumerator, deleteEnumerator, assignDistricts } from '../api';
+import { getEnumerators, getDistricts, createEnumerator, updateEnumerator, deleteEnumerator, assignDistricts, getErrorMessage } from '../api';
 import { Enumerator, District } from '../types';
 import {
   LoadingButton,
@@ -86,7 +86,7 @@ export default function EnumeratorsPage() {
     onError: (err: any, vars: any) => {
       // Reopening would lose the typed values, so report clearly instead and let
       // the operator retry from a fresh form.
-      showToast('error', `Could not create "${vars?.name}": ${err.response?.data?.error?.message || 'request failed'}`);
+      showToast('error', `Could not create "${vars?.name}": ${getErrorMessage(err, 'request failed')}`);
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ENUM_KEY });
@@ -105,7 +105,7 @@ export default function EnumeratorsPage() {
       ),
     onError: (err: any, e, ctx) => {
       rollback(ctx);
-      showToast('error', `Could not update "${e.name}": ${err.response?.data?.error?.message || 'request failed'}`);
+      showToast('error', `Could not update "${e.name}": ${getErrorMessage(err, 'request failed')}`);
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ENUM_KEY }),
   });
@@ -128,7 +128,7 @@ export default function EnumeratorsPage() {
     onSuccess: () => showToast('success', 'Districts assigned successfully'),
     onError: (err: any, _vars, ctx) => {
       rollback(ctx);
-      showToast('error', err.response?.data?.error?.message || 'Failed to assign districts');
+      showToast('error', getErrorMessage(err, 'Failed to assign districts'));
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ENUM_KEY });
@@ -154,7 +154,7 @@ export default function EnumeratorsPage() {
       // attached, and that message names them. Without the rollback the row would
       // vanish from the table while still existing on the server.
       rollback(ctx);
-      showToast('error', err.response?.data?.error?.message || 'Failed to delete enumerator');
+      showToast('error', getErrorMessage(err, 'Failed to delete enumerator'));
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ENUM_KEY });

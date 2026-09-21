@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { login as apiLogin } from '../api';
+import { login as apiLogin, getErrorMessage } from '../api';
 import { User } from '../types';
 import { LoadingButton } from '../components/Loading';
 
@@ -30,7 +30,15 @@ export default function LoginPage({ onLogin }: { onLogin: (user: User) => void }
 
       onLogin(enumerator);
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Login failed');
+      // A wrong password is a 401 with a clear message; a server/network fault is
+      // not, and must not read as "Login failed" (i.e. bad credentials). Distinguish
+      // them for the operator.
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        setError(err.response?.data?.error?.message || 'Incorrect login ID or password.');
+      } else {
+        setError(getErrorMessage(err, 'Login failed'));
+      }
     }
     setSubmitting(false);
   };
