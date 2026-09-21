@@ -14,10 +14,10 @@ import { logger } from '../../utils/logger';
 
 /**
  * L1 FIX: enforce minimum password strength before hashing.
- * Requires: 10+ chars, 1 uppercase, 1 lowercase, 1 number, 1 special char.
+ * Requires: 8+ chars, 1 uppercase, 1 lowercase, 1 number, 1 special char.
  */
 function validatePassword(password: string) {
-  if (password.length < 10) throw new ValidationError('Password must be at least 10 characters long');
+  if (password.length < 8) throw new ValidationError('Password must be at least 8 characters long');
   if (!/[A-Z]/.test(password)) throw new ValidationError('Password must contain at least one uppercase letter');
   if (!/[a-z]/.test(password)) throw new ValidationError('Password must contain at least one lowercase letter');
   if (!/[0-9]/.test(password)) throw new ValidationError('Password must contain at least one number');
