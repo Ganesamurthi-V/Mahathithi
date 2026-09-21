@@ -75,6 +75,7 @@ export default function SearchScreen({ navigation }: any) {
   //
   // `village` maps to the DAO's `city` filter, which matches city OR village, so a
   // single box covers both the way an enumerator thinks of a place name.
+  const [name, setName] = useState<string>('');
   const [village, setVillage] = useState<string>('');
   const [pin, setPin] = useState<string>('');
 
@@ -228,14 +229,16 @@ export default function SearchScreen({ navigation }: any) {
   // nothing.
   const buildFilters = useCallback(() => {
     const f: Record<string, string> = {};
+    const nm = name.trim();
     const v = village.trim();
     const p = pin.trim();
+    if (nm) f.name = nm;    // DAO `name` filter matches standardized OR original name
     if (v) f.city = v;      // DAO `city` filter matches city OR village
     if (p) f.pinCode = p;
     return f;
-  }, [village, pin]);
+  }, [name, village, pin]);
 
-  // Execute search when either filter changes (debounced for typing).
+  // Execute search when any filter changes (debounced for typing).
   useEffect(() => {
     const handler = setTimeout(() => {
       const filters = buildFilters();
@@ -247,7 +250,7 @@ export default function SearchScreen({ navigation }: any) {
     }, 500);
 
     return () => clearTimeout(handler);
-  }, [village, pin, buildFilters, search, dispatch]);
+  }, [name, village, pin, buildFilters, search, dispatch]);
 
   const loadMore = () => {
     if (searchPagination.hasMore && !isSearching) {
@@ -286,6 +289,7 @@ export default function SearchScreen({ navigation }: any) {
   };
 
   const resetSearch = () => {
+    setName('');
     setVillage('');
     setPin('');
     setCollapsed(false);
@@ -295,6 +299,7 @@ export default function SearchScreen({ navigation }: any) {
   // Text shown on the folded bar so the active filters stay visible while the
   // inputs themselves are hidden.
   const filterSummary = [
+    name.trim() ? `"${name.trim()}"` : null,
     village.trim() || null,
     pin.trim() ? `PIN ${pin.trim()}` : null,
   ].filter(Boolean).join('  •  ');
@@ -335,7 +340,38 @@ export default function SearchScreen({ navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            {/* PIN sits first: it is the field team's primary way in. */}
+            {/* Business name — free text only. A dropdown here would be a list as
+                long as the whole dataset, so there is nothing useful to pick from;
+                the DAO matches it as a substring against both name columns. */}
+            <View style={styles.cascadeButton}>
+              <Text style={styles.cascadeLabel}>Business Name</Text>
+              <View style={styles.fieldRow}>
+                <TextInput
+                  style={[styles.cascadeInput, styles.fieldInput]}
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Type a business name"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                  onSubmitEditing={() => { Keyboard.dismiss(); setCollapsed(true); }}
+                />
+                {name.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.dropdownButton}
+                    onPress={() => setName('')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear the business name"
+                  >
+                    <Icon name="close-circle" size={moderateScale(20)} color={colors.textMuted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* PIN sits first among the location filters: it is the field team's
+                primary way in. */}
             <View style={styles.cascadeButton}>
               <Text style={styles.cascadeLabel}>PIN Code</Text>
               <View style={styles.fieldRow}>
@@ -385,10 +421,10 @@ export default function SearchScreen({ navigation }: any) {
             </View>
 
             <Text style={styles.helperText}>
-              Use either field on its own, or both together.
+              Search by name, PIN, or village/city. Use any field on its own, or combine them.
             </Text>
 
-            {(village || pin) ? (
+            {(name || village || pin) ? (
               <TouchableOpacity style={styles.resetButton} onPress={resetSearch}>
                 <Text style={styles.resetButtonText}>Reset Search</Text>
               </TouchableOpacity>
@@ -425,7 +461,7 @@ export default function SearchScreen({ navigation }: any) {
                   <Icon name="account-search" size={60} color={colors.textMuted} />
                 </Animated.View>
                 <Text style={styles.emptyTitle}>Find Stakeholders</Text>
-                <Text style={styles.emptyText}>Search by village/city, by PIN code, or both. Either field on its own works.</Text>
+                <Text style={styles.emptyText}>Search by business name, PIN code, or village/city. Any field on its own works, or combine them.</Text>
               </View>
             ) : null
           }

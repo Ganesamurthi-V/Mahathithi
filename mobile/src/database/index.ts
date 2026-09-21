@@ -478,7 +478,10 @@ export const stakeholderDao = {
     const params: any[] = [];
 
     if (filters.name) {
-      conditions.push(`(company_name_standardized LIKE ? OR company_name_original LIKE ?)`);
+      // COLLATE NOCASE so "amazon" matches "AMAZON" — the raw data is mixed-case
+      // and an enumerator will not type a company name in the exact casing it was
+      // imported in. Matches the case-insensitive idx_sh_name index too.
+      conditions.push(`(company_name_standardized LIKE ? COLLATE NOCASE OR company_name_original LIKE ? COLLATE NOCASE)`);
       params.push(`%${filters.name}%`, `%${filters.name}%`);
     }
     if (filters.district) {
@@ -547,7 +550,10 @@ export const stakeholderDao = {
     const params: any[] = [];
 
     if (filters.name) {
-      conditions.push(`(company_name_standardized LIKE ? OR company_name_original LIKE ?)`);
+      // COLLATE NOCASE so "amazon" matches "AMAZON" — the raw data is mixed-case
+      // and an enumerator will not type a company name in the exact casing it was
+      // imported in. Matches the case-insensitive idx_sh_name index too.
+      conditions.push(`(company_name_standardized LIKE ? COLLATE NOCASE OR company_name_original LIKE ? COLLATE NOCASE)`);
       params.push(`%${filters.name}%`, `%${filters.name}%`);
     }
     if (filters.district) {
