@@ -341,7 +341,6 @@ enum PhotoCategory {
   BUILDING_FRONT
   SIGNBOARD
   INTERIOR
-  STAKEHOLDER
   ADDITIONAL
   DISPLAY_IMAGE
   HEADER_SLIDER
@@ -349,7 +348,10 @@ enum PhotoCategory {
   PAN_CARD_DOC
   ESTABLISHMENT_CERT_DOC
   CUSTOM_DOC
-  // Legacy values — PostgreSQL cannot drop enum values; kept to match the DB
+  // Legacy values — PostgreSQL cannot drop enum values; kept to match the DB.
+  // STAKEHOLDER was the "Stakeholder" photo slot in Step 3, removed from the form
+  // by request; the value survives here only so existing rows still validate.
+  STAKEHOLDER
   UDYOG_AADHAR_DOC
   AADHAR_CARD_DOC
   CANCELLED_CHEQUE_DOC

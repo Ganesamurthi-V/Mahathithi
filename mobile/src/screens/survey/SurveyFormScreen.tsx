@@ -72,7 +72,9 @@ const PHOTO_CATEGORIES = [
   { key: 'BUILDING_FRONT', label: 'Building Front', icon: 'office-building', required: true },
   { key: 'SIGNBOARD', label: 'Signboard', icon: 'sign-direction', required: true },
   { key: 'INTERIOR', label: 'Interior', icon: 'home-variant-outline', required: true },
-  { key: 'STAKEHOLDER', label: 'Stakeholder', icon: 'account-box-outline', required: true },
+  // STAKEHOLDER slot removed by request. Its DB enum value (PhotoCategory.STAKEHOLDER)
+  // is intentionally kept — PostgreSQL cannot drop an enum value, and old surveys may
+  // still reference it — but it is no longer offered or required in the form.
   { key: 'ADDITIONAL', label: 'Additional', icon: 'camera-plus-outline', required: false },
 ];
 
