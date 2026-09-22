@@ -69,12 +69,14 @@ const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'S
 const STEP_LABELS = ['Category', 'Business', 'Images', 'Details', 'Rooms', 'Socials', 'Docs', 'Terms'];
 
 // Every photo is OPTIONAL now — nothing here blocks a save. The enumerator captures
-// what they can, saves a partial draft, and submits to the server once complete.
-// STAKEHOLDER slot removed earlier; its DB enum value is kept for old rows.
+// Required media for a SUBMIT. A partial draft can still be saved with anything
+// missing (Save as Draft has no checks); these only gate the final Submit, which
+// blocks and warns until every one is captured. STAKEHOLDER slot removed earlier;
+// its DB enum value is kept for old rows.
 const PHOTO_CATEGORIES = [
-  { key: 'BUILDING_FRONT', label: 'Building Front', icon: 'office-building', required: false },
-  { key: 'SIGNBOARD', label: 'Signboard', icon: 'sign-direction', required: false },
-  { key: 'INTERIOR', label: 'Interior', icon: 'home-variant-outline', required: false },
+  { key: 'BUILDING_FRONT', label: 'Building Front', icon: 'office-building', required: true },
+  { key: 'SIGNBOARD', label: 'Signboard', icon: 'sign-direction', required: true },
+  { key: 'INTERIOR', label: 'Interior', icon: 'home-variant-outline', required: true },
   { key: 'ADDITIONAL', label: 'Additional', icon: 'camera-plus-outline', required: false },
 ];
 
@@ -1043,18 +1045,56 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   };
 
   /**
-   * Submit a completed survey. The only hard requirement kept is a GPS fix —
-   * the survey's whole purpose is to prove an on-site visit, so a location is
-   * needed for that to mean anything. Everything else is optional; the operator
-   * decides when it is "complete enough" to submit. A completed survey closes the
-   * stakeholder and is uploaded to the server in the background.
+   * Everything a SUBMIT requires, checked in one place and reused by both the
+   * Step 8 checklist and the submit gate. Mirrors the server's completeSurvey rules
+   * exactly, plus the required media slots, so nothing that would be rejected on
+   * upload can be submitted in the first place. Returns the list of what is still
+   * missing; empty means good to go.
+   */
+  const collectMissingRequirements = (data: SurveyFormData): string[] => {
+    const missing: string[] = [];
+    if (!data.businessName?.trim()) missing.push('Name of Your Business (Step 2)');
+    if (!data.ownerName?.trim()) missing.push('Owner / Proprietor Name (Step 2)');
+    if (!data.mobileNumber?.trim()) missing.push('Mobile Number (Step 2)');
+    if (!gps) missing.push('GPS Location (Step 2) — wait for the location to lock');
+    if (!selectedCategory) missing.push('Business Category (Step 1)');
+    if (selectedSubCategories.length < 1) missing.push('At least one Sub Category (Step 1)');
+
+    // Media — every required photo slot + the walkthrough video.
+    for (const cat of PHOTO_CATEGORIES) {
+      if (cat.required && !photos[cat.key]) missing.push(`${cat.label} photo (Step 3)`);
+    }
+    if (!video) missing.push('Walkthrough Video (Step 3)');
+
+    if (description.trim().length < 50) {
+      missing.push(`Description of at least 50 characters (Step 4) — currently ${description.trim().length}`);
+    }
+    if (!aboutBusiness.trim()) missing.push('About Business (Step 7)');
+    if (selectedCategory === 'Accommodations' && rooms.length < 1) {
+      missing.push('At least 1 Room (Step 5)');
+    }
+    if (!agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability) {
+      missing.push('All 3 Terms & Conditions checkboxes (Step 8)');
+    }
+    return missing;
+  };
+
+  /**
+   * Submit a completed survey. EVERYTHING required must be present first — all the
+   * text fields, media (photos + video) and terms. If anything is missing the
+   * submit is blocked and the operator is shown the full list to fix, rather than
+   * letting an incomplete survey reach the sync pipeline and be rejected later by
+   * the server. They can still Save as Draft with gaps and finish afterwards.
    */
   const onSubmit = async (data: SurveyFormData) => {
-    if (!gps) {
+    const missing = collectMissingRequirements(data);
+    if (missing.length > 0) {
       Alert.alert(
-        'Location needed',
-        'A GPS location is required before submitting, since the survey records an on-site visit. ' +
-        'Wait for the location to lock, or Save as Draft and submit once it does.'
+        'Survey incomplete',
+        'Please complete these before submitting:\n\n' +
+          missing.map(m => `•  ${m}`).join('\n') +
+          '\n\nFix them and submit again, or use "Save as Draft" to finish later.',
+        [{ text: 'OK' }]
       );
       return;
     }
@@ -1378,7 +1418,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                   <Icon name="video" size={28} color={video ? colors.success : colors.primary} />
                   <View style={{ flex: 1, marginLeft: spacing.md }}>
                     <Text style={styles.slotLabel}>Walkthrough Video</Text>
-                    <Text style={styles.slotReq}>Optional (Max 60s)</Text>
+                    <Text style={styles.slotReq}>Required (Max 60s)</Text>
                   </View>
                   {video && <Icon name="check-circle" size={24} color={colors.success} />}
                 </View>
@@ -1511,23 +1551,15 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             <View style={styles.reviewCard}>
               <Text style={styles.reviewTitle}>Before you submit</Text>
               {(() => {
-                const photoCount = Object.keys(photos).filter(k => PHOTO_CATEGORIES.some(c => c.key === k)).length;
-                const problems: string[] = [];
-                if (!watchAllFields.businessName?.trim()) problems.push('Business name is required');
-                if (!watchAllFields.mobileNumber?.trim()) problems.push('Mobile number is required');
-                if (!gps) problems.push('GPS location is required');
-                if (photoCount < 1) problems.push('At least 1 photo is required');
-                if (!video) problems.push('A walkthrough video is required');
-                if (description.trim().length < 50) problems.push(`Description must be at least 50 characters (now ${description.trim().length})`);
-                if (selectedCategory === 'Accommodations' && rooms.length < 1) problems.push('At least 1 room is required for Accommodations');
-                if (!agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability) problems.push('All 3 Terms & Conditions must be checked');
-
+                // Same source of truth as the Submit gate, so the list here is
+                // exactly what will block submission.
+                const problems = collectMissingRequirements(watchAllFields);
                 if (problems.length === 0) {
-                  return <Text style={styles.reviewOk}>• Everything the server needs is filled — ready to submit.</Text>;
+                  return <Text style={styles.reviewOk}>• Everything required is filled — ready to submit.</Text>;
                 }
                 return (
                   <>
-                    <Text style={styles.reviewNote}>The server will reject the upload until these are fixed. You can Save as Draft and finish later.</Text>
+                    <Text style={styles.reviewNote}>Submit is blocked until these are completed. Save as Draft to finish later.</Text>
                     {problems.map((p, i) => <Text key={i} style={styles.reviewError}>• {p}</Text>)}
                   </>
                 );
