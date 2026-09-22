@@ -100,6 +100,12 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
   const { stakeholderId } = route.params;
   const [stakeholder, setStakeholder] = useState<any>(null);
   const [survey, setSurvey] = useState<any>(null);
+  // The FULL survey row (all columns), kept separately from the trimmed `survey`
+  // used for this screen's 3-line preview. The survey FORM reads ~30 saved fields
+  // (business_name, category, description, rooms, terms, ...), so it must receive
+  // the complete row — mapSurveyCamel() below keeps only a handful, which is why a
+  // reopened draft looked empty. This preserves everything the enumerator saved.
+  const [rawSurvey, setRawSurvey] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editData, setEditData] = useState<any>({});
@@ -216,6 +222,9 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
       const localSurvey = await surveyDao.getByStakeholder(stakeholderId);
       if (localSurvey) {
         setSurvey(mapSurveyCamel(localSurvey));
+        // Keep the raw row so "Survey" opens the form with every saved value
+        // (draft or complete) intact, not just the 3 preview fields.
+        setRawSurvey(localSurvey);
       }
 
       if (shLocal) {
@@ -244,6 +253,10 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
           const svRes = await surveyService.getByStakeholder(stakeholderId);
           if (svRes.data?.data) {
             setSurvey(svRes.data.data);
+            // Prefer the local draft as the form source: a draft is not on the
+            // server, so an online fetch would only overwrite rawSurvey for an
+            // already-completed survey. Keep whichever is present, favouring local.
+            setRawSurvey((prev: any) => prev ?? svRes.data.data);
           }
         }
       } catch (e) {
@@ -400,7 +413,7 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
               primary
               icon="clipboard-text-outline"
               text="Survey"
-              onPress={() => navigation.navigate('SurveyForm', { stakeholderId, stakeholder: s, survey })}
+              onPress={() => navigation.navigate('SurveyForm', { stakeholderId, stakeholder: s, survey: rawSurvey })}
             />
           </View>
           {canDelete && (
