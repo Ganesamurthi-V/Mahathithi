@@ -321,8 +321,8 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             gpsAccuracy: m.gps_accuracy,
             capturedAt: m.captured_at,
             duration: m.duration,
-            // Only 'camera' vs 'library' matters to the UI tag; older rows have no
-            // source recorded, so default to camera (the on-site path).
+            // Restores the on-site vs gallery tag. Rows saved before the `source`
+            // column existed have none, so default to camera (the on-site path).
             source: m.source || 'camera',
           };
           if (m.type === 'VIDEO') {
@@ -933,6 +933,8 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         longitude: p.longitude,
         gpsAccuracy: p.gpsAccuracy,
         capturedAt: p.capturedAt,
+        // Persist where it came from so a reopened draft shows the right tag.
+        source: p.source || 'camera',
         isSynced: false,
       });
     }
@@ -950,6 +952,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         gpsAccuracy: video.gpsAccuracy,
         capturedAt: video.capturedAt,
         duration: video.duration,
+        source: video.source || 'camera',
         isSynced: false,
       });
     }

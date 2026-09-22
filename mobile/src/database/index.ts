@@ -206,6 +206,7 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
       retry_count INTEGER DEFAULT 0,
       next_retry_at TEXT,
       last_error TEXT,
+      source TEXT,
       FOREIGN KEY (survey_id) REFERENCES surveys(id)
     );
   `);
@@ -214,6 +215,10 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
   try { await database.executeSql('ALTER TABLE media ADD COLUMN retry_count INTEGER DEFAULT 0;'); } catch(e){}
   try { await database.executeSql('ALTER TABLE media ADD COLUMN next_retry_at TEXT;'); } catch(e){}
   try { await database.executeSql('ALTER TABLE media ADD COLUMN last_error TEXT;'); } catch(e){}
+  // 'camera' | 'library' — remembers whether a photo/video was captured on-site or
+  // uploaded from the gallery, so reopening a saved draft restores the correct
+  // "Uploaded from gallery" tag instead of defaulting every restored item to camera.
+  try { await database.executeSql('ALTER TABLE media ADD COLUMN source TEXT;'); } catch(e){}
 
   await database.executeSql(`
     CREATE TABLE IF NOT EXISTS phone_validations (
@@ -1212,8 +1217,8 @@ export const mediaDao = {
     // existing row in place, which keeps retry_count/next_retry_at/last_error
     // intact when the user retakes a photo.
     await database.executeSql(
-      `INSERT INTO media (id, survey_id, stakeholder_id, type, photo_category, file_path, file_name, file_size, mime_type, latitude, longitude, gps_accuracy, captured_at, duration, thumbnail_path, is_synced, retry_count, next_retry_at, last_error)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,NULL)
+      `INSERT INTO media (id, survey_id, stakeholder_id, type, photo_category, file_path, file_name, file_size, mime_type, latitude, longitude, gps_accuracy, captured_at, duration, thumbnail_path, is_synced, source, retry_count, next_retry_at, last_error)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,NULL)
       ON CONFLICT(id) DO UPDATE SET
         survey_id = excluded.survey_id,
         stakeholder_id = excluded.stakeholder_id,
@@ -1229,11 +1234,12 @@ export const mediaDao = {
         captured_at = excluded.captured_at,
         duration = excluded.duration,
         thumbnail_path = excluded.thumbnail_path,
-        is_synced = excluded.is_synced`,
+        is_synced = excluded.is_synced,
+        source = excluded.source`,
       [id, media.surveyId, media.stakeholderId || null, media.type, media.photoCategory,
        media.filePath, media.fileName, media.fileSize, media.mimeType,
        media.latitude, media.longitude, media.gpsAccuracy, media.capturedAt,
-       media.duration, media.thumbnailPath, media.isSynced ? 1 : 0]
+       media.duration, media.thumbnailPath, media.isSynced ? 1 : 0, media.source || null]
     );
     return id;
   },
