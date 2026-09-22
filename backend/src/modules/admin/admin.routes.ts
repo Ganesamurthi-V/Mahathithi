@@ -9,7 +9,7 @@ import { AppError, ValidationError, NotFoundError, ConflictError } from '../../u
 import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
 import { releaseClaims, releaseClaimsOutsideDistricts, rebalanceDistricts } from '../../utils/stakeholder-assignment';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
-import { broadcastChange } from '../../realtime/events';
+import { broadcastChange, notifyEnumerator } from '../../realtime/events';
 import { logger } from '../../utils/logger';
 
 /**
@@ -342,6 +342,15 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
             broadcastChange(['stakeholders', 'analytics'], { action: 'update', district: d.name });
           }
         }
+
+        // If this account is already logged in on a device (created, then the
+        // person opens the app), reach it directly so its queue appears without a
+        // manual refresh. Harmless when no socket is connected yet — the first
+        // login's initial sync delivers the same rows.
+        notifyEnumerator(enumerator.id, ['stakeholders', 'analytics'], {
+          action: 'update',
+          entityType: 'stakeholders',
+        });
       }
     }
 
@@ -427,6 +436,17 @@ router.patch('/enumerators/:id', async (req: AuthenticatedRequest, res: Response
           for (const district of districtNames) {
             broadcastChange(['stakeholders', 'analytics'], { action: 'update', district });
           }
+        }
+
+        // On REACTIVATION the account regains a share, and its socket (if the
+        // person just logged back in) may have connected before the rebalance ran,
+        // so reach it directly to pull the delta now. On deactivation the device is
+        // being logged out anyway, so a notify is unnecessary there.
+        if (isActive === true) {
+          notifyEnumerator(enumerator.id, ['stakeholders', 'analytics'], {
+            action: 'update',
+            entityType: 'stakeholders',
+          });
         }
       }
     }
@@ -737,14 +757,21 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
       entityType: 'enumerators',
     });
 
-    // The part that was missing entirely: this broadcast never reached field
-    // devices, so reassigning districts silently re-cut every slice while the
-    // phones carried on with the old one. Two enumerators could then hold
-    // overlapping stakeholders — the exact duplication the partition prevents —
-    // until someone happened to run a full sync.
+    // District-scoped broadcast, for every OTHER enumerator already in these
+    // districts whose share just shifted — their sockets are already in these rooms.
     for (const district of resliceDistricts) {
       broadcastChange(['stakeholders', 'analytics'], { action: 'update', district });
     }
+
+    // The enumerator being reassigned is the one case a district broadcast cannot
+    // reach: their socket joined its rooms at connect time and has not joined the
+    // newly assigned district's room. Notify them directly on their stable
+    // per-enumerator channel so their device pulls the delta and updates its counts
+    // at once, instead of only after an app restart or repeated manual refreshes.
+    notifyEnumerator(req.params.id as string, ['stakeholders', 'analytics'], {
+      action: 'update',
+      entityType: 'stakeholders',
+    });
 
     res.json({ success: true, message: 'Districts assigned successfully' });
   } catch (error) {

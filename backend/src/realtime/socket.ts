@@ -64,6 +64,22 @@ export function initRealtime(httpServer: HTTPServer): SocketIOServer {
   });
 
   io.on('connection', (socket: AuthenticatedSocket) => {
+    // Per-enumerator room, joined by EVERY socket regardless of role.
+    //
+    // District rooms are computed once, here, from the assignments the account had
+    // at connect time. That is the whole problem this fixes: if an admin assigns a
+    // NEW district to an already-connected enumerator, their socket never joined
+    // that district's room, so a district-scoped broadcast never reaches them —
+    // the change only surfaced on a full reconnect (app restart / manual sync),
+    // which is the "lots of refreshes" the field team hit.
+    //
+    // A room keyed on the enumerator id is stable across any assignment change, so
+    // the server can always reach a specific person's device directly. The roster
+    // mutations emit to this room, and the device reacts by pulling the delta.
+    if (socket.enumeratorId) {
+      socket.join(`enum:${socket.enumeratorId}`);
+    }
+
     if (socket.isAdmin) {
       socket.join('admin:global');
     } else {
@@ -99,6 +115,19 @@ export function initRealtime(httpServer: HTTPServer): SocketIOServer {
 export function emitToDistrict(district: string | null | undefined, event: string, payload: unknown): void {
   if (!io || !district) return;
   io.to(`district:${district.toUpperCase()}`).emit(event, payload);
+}
+
+/**
+ * Emit directly to one enumerator's device(s), by their stable per-enumerator room.
+ *
+ * This is the channel that survives a district reassignment: it does not depend on
+ * which district rooms the socket happened to join at connect time, so a roster
+ * change reaches the affected enumerator's phone immediately rather than waiting
+ * for a reconnect.
+ */
+export function emitToEnumerator(enumeratorId: string | null | undefined, event: string, payload: unknown): void {
+  if (!io || !enumeratorId) return;
+  io.to(`enum:${enumeratorId}`).emit(event, payload);
 }
 
 export function emitToAdmins(event: string, payload: unknown): void {

@@ -1,4 +1,4 @@
-import { emitToAdmins, emitToDistrict } from './socket';
+import { emitToAdmins, emitToDistrict, emitToEnumerator } from './socket';
 import { logger } from '../utils/logger';
 
 /**
@@ -100,5 +100,42 @@ export function broadcastChange(
     }
   } catch (err) {
     logger.error('[realtime] broadcastChange failed (write already committed):', err);
+  }
+}
+
+/**
+ * Tell ONE enumerator's device that their assignment moved, so it re-syncs now.
+ *
+ * WHY THIS IS SEPARATE FROM broadcastChange
+ * broadcastChange targets district rooms, which a socket joins once at connect time
+ * from the assignments it had THEN. A newly assigned district is a room the live
+ * socket never joined, so a district-scoped broadcast cannot reach the very person
+ * whose roster just changed — the classic symptom being a reassigned enumerator
+ * whose counts only update after an app restart or several manual refreshes.
+ *
+ * The per-enumerator room (enum:{id}) is stable across any assignment change, so
+ * this always reaches the right device. The payload is an ordinary data:changed,
+ * so the mobile client's existing handler picks it up and pulls the delta — no new
+ * client-side event type to wire in.
+ */
+export function notifyEnumerator(
+  enumeratorId: string | null | undefined,
+  resources: DataResource[],
+  options: Omit<BroadcastOptions, 'district'> = {}
+): void {
+  if (!enumeratorId || !resources.length) return;
+
+  const payload: DataChangedPayload = {
+    resources,
+    action: options.action,
+    entityId: options.entityId,
+    entityType: options.entityType,
+    at: new Date().toISOString(),
+  };
+
+  try {
+    emitToEnumerator(enumeratorId, 'data:changed', payload);
+  } catch (err) {
+    logger.error('[realtime] notifyEnumerator failed (write already committed):', err);
   }
 }
