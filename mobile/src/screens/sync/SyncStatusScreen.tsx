@@ -8,11 +8,11 @@ import {
   setPendingCount, setFailedCount, setDeadLetterCount,
 } from '../../store/slices/syncSlice';
 import { runAutoSync, retryFailedSyncNow, resetDeadLettersAndRetry, refreshSyncCountsThunk } from '../../store/slices/syncThunks';
-import { syncQueueDao } from '../../database';
+import { syncQueueDao, surveyDao, stakeholderDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
 
-export default function SyncStatusScreen() {
+export default function SyncStatusScreen({ navigation }: any) {
   const dispatch = useDispatch<AppDispatch>();
   const { isSyncing, lastSyncTime, pendingCount, failedCount, deadLetterCount, syncProgress } = useSelector(
     (state: RootState) => state.sync
@@ -21,7 +21,7 @@ export default function SyncStatusScreen() {
   const [isRetrying, setIsRetrying] = useState(false);
   // Dead-lettered items now carry the server's reason, so the user can see WHY
   // something is stuck instead of just being told a number.
-  const [stuckDetails, setStuckDetails] = useState<Array<{ kind: string; id: string; error: string }>>([]);
+  const [stuckDetails, setStuckDetails] = useState<Array<{ kind: string; id: string; error: string; surveyId?: string; stakeholderId?: string }>>([]);
 
   // Animations
   const spinAnim = useRef(new Animated.Value(0)).current;
@@ -114,6 +114,24 @@ export default function SyncStatusScreen() {
     }
   }, [dispatch]);
 
+  // Open a rejected survey back in the form so the enumerator can read the reason,
+  // fix it (e.g. lengthen a too-short description), and submit again. The server
+  // rejected it on complete() — the fields are all still in SQLite, so we load the
+  // full row + its stakeholder and hand both to the form, exactly like reopening a
+  // draft. Re-submitting from the form re-enters the sync pipeline.
+  const openStuckSurvey = useCallback(async (surveyId?: string, stakeholderId?: string) => {
+    if (!surveyId || !stakeholderId) return;
+    try {
+      const [rawSurvey, stakeholder] = await Promise.all([
+        surveyDao.getByStakeholder(stakeholderId),
+        stakeholderDao.getById(stakeholderId),
+      ]);
+      navigation.navigate('SurveyForm', { stakeholderId, stakeholder, survey: rawSurvey });
+    } catch (e) {
+      Alert.alert('Could not open survey', 'Please try again from the Stakeholders list.');
+    }
+  }, [navigation]);
+
   // SYNC FIX: distinct, deliberate action for items that exhausted automatic
   // retries (5 attempts). Asks for confirmation since these have already failed
   // repeatedly and a blind retry without checking connectivity/data first may
@@ -191,12 +209,27 @@ export default function SyncStatusScreen() {
                 These stopped retrying automatically. Some may need a stable connection; others were rejected by the server and will not succeed without a fix.
               </Text>
 
-              {stuckDetails.slice(0, 5).map((d, i) => (
-                <View key={i} style={styles.stuckRow}>
-                  <Text style={styles.stuckKind}>{d.kind}</Text>
-                  <Text style={styles.stuckError} numberOfLines={2}>{d.error}</Text>
-                </View>
-              ))}
+              {stuckDetails.slice(0, 5).map((d, i) => {
+                // A stuck SURVEY can be reopened and fixed; other kinds (a lone
+                // photo/video) cannot be edited into validity, so they stay static.
+                const canEdit = d.kind === 'Survey' && !!d.surveyId && !!d.stakeholderId;
+                const RowWrap: any = canEdit ? TouchableOpacity : View;
+                return (
+                  <RowWrap
+                    key={i}
+                    style={styles.stuckRow}
+                    {...(canEdit ? { onPress: () => openStuckSurvey(d.surveyId, d.stakeholderId), activeOpacity: 0.7 } : {})}
+                  >
+                    <Text style={styles.stuckKind}>{d.kind}</Text>
+                    <Text style={styles.stuckError} numberOfLines={3}>{d.error}</Text>
+                    {canEdit && (
+                      <Text style={styles.stuckAction}>
+                        <Icon name="pencil" size={12} color={colors.primary} /> Tap to edit & re-submit
+                      </Text>
+                    )}
+                  </RowWrap>
+                );
+              })}
               {stuckDetails.length > 5 && (
                 <Text style={styles.stuckMore}>+{stuckDetails.length - 5} more</Text>
               )}
@@ -339,6 +372,7 @@ const styles = StyleSheet.create({
   },
   stuckKind: { ...typography.caption, fontWeight: '700', color: colors.textPrimary },
   stuckError: { ...typography.caption, color: colors.textMuted, marginTop: 2 },
+  stuckAction: { ...typography.caption, color: colors.primary, fontWeight: '600', marginTop: 4 },
   stuckMore: { ...typography.caption, color: colors.textMuted, marginBottom: spacing.md, fontStyle: 'italic' },
   retryButton: {
     backgroundColor: colors.error, borderRadius: borderRadius.md,

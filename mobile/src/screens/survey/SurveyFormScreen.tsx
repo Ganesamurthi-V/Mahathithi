@@ -1427,8 +1427,13 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         {currentStep === 4 && (
           <View style={styles.formSection}>
             <Text style={styles.sectionHeader}>Description</Text>
-            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={description} onChangeText={setDescription} placeholder="Describe your business" placeholderTextColor={colors.textMuted} />
-            <Text style={{ ...typography.caption, color: colors.textMuted, marginTop: spacing.xs }}>{description.length} characters</Text>
+            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={description} onChangeText={setDescription} placeholder="Describe your business (min 50 characters)" placeholderTextColor={colors.textMuted} />
+            {/* Soft hint mirroring the server rule: turns green once it will pass. */}
+            <Text style={{ ...typography.caption, color: description.trim().length >= 50 ? colors.success : colors.warning, marginTop: spacing.xs }}>
+              {description.trim().length >= 50
+                ? `${description.trim().length} characters`
+                : `${description.trim().length} / 50 characters minimum`}
+            </Text>
             {selectedCategory === 'Accommodations' && (
               <>
                 <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Facilities</Text>
@@ -1493,21 +1498,40 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setAgreedToTerms(!agreedToTerms)}><Icon name={agreedToTerms ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={agreedToTerms ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I agree to the Terms & Conditions</Text></TouchableOpacity>
             <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setDeclaredInfoCorrect(!declaredInfoCorrect)}><Icon name={declaredInfoCorrect ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={declaredInfoCorrect ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I declare that all information provided is true and correct</Text></TouchableOpacity>
             <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setAcknowledgedDotLiability(!acknowledgedDotLiability)}><Icon name={acknowledgedDotLiability ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={acknowledgedDotLiability ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I acknowledge that the Department of Tourism (DOT) is not liable for any financial losses</Text></TouchableOpacity>
-            {/* A soft checklist, not a gate. It flags what is still empty so the
-                operator can decide whether to finish now or save a draft — none of
-                these block submission any more. */}
+            {/*
+              These are the EXACT rules the server enforces on submit (see
+              survey.service.ts completeSurvey). Shown here as soft marks so the
+              enumerator knows, before submitting, what the server will reject — and
+              can fix it now or Save as Draft instead. They warn but do not disable
+              Submit: the operator may still try, and if the server rejects it the
+              Sync screen shows the reason with a tap-to-edit link.
+
+              Kept in sync with the server: if a rule changes there, change it here.
+            */}
             <View style={styles.reviewCard}>
-              <Text style={styles.reviewTitle}>Completion Checklist</Text>
-              {!gps && <Text style={styles.reviewError}>• GPS Location is missing (required to submit)</Text>}
-              {!selectedCategory && <Text style={styles.reviewPending}>• Business Category not selected</Text>}
-              {!description.trim() && <Text style={styles.reviewPending}>• Description is empty</Text>}
-              {selectedCategory === 'Accommodations' && rooms.length < 1 && <Text style={styles.reviewPending}>• No rooms added</Text>}
-              {!video && <Text style={styles.reviewPending}>• Walkthrough Video not recorded</Text>}
-              {!aboutBusiness && <Text style={styles.reviewPending}>• About Business is empty</Text>}
-              {gps && selectedCategory && description.trim() && video && aboutBusiness &&
-                (selectedCategory !== 'Accommodations' || rooms.length >= 1) && (
-                  <Text style={styles.reviewOk}>• Everything looks complete — ready to submit.</Text>
-              )}
+              <Text style={styles.reviewTitle}>Before you submit</Text>
+              {(() => {
+                const photoCount = Object.keys(photos).filter(k => PHOTO_CATEGORIES.some(c => c.key === k)).length;
+                const problems: string[] = [];
+                if (!watchAllFields.businessName?.trim()) problems.push('Business name is required');
+                if (!watchAllFields.mobileNumber?.trim()) problems.push('Mobile number is required');
+                if (!gps) problems.push('GPS location is required');
+                if (photoCount < 1) problems.push('At least 1 photo is required');
+                if (!video) problems.push('A walkthrough video is required');
+                if (description.trim().length < 50) problems.push(`Description must be at least 50 characters (now ${description.trim().length})`);
+                if (selectedCategory === 'Accommodations' && rooms.length < 1) problems.push('At least 1 room is required for Accommodations');
+                if (!agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability) problems.push('All 3 Terms & Conditions must be checked');
+
+                if (problems.length === 0) {
+                  return <Text style={styles.reviewOk}>• Everything the server needs is filled — ready to submit.</Text>;
+                }
+                return (
+                  <>
+                    <Text style={styles.reviewNote}>The server will reject the upload until these are fixed. You can Save as Draft and finish later.</Text>
+                    {problems.map((p, i) => <Text key={i} style={styles.reviewError}>• {p}</Text>)}
+                  </>
+                );
+              })()}
             </View>
 
             {/* Two explicit actions. Save Draft stores partial progress locally with

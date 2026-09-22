@@ -1672,17 +1672,26 @@ export const syncQueueDao = {
    * Human-readable detail for the items that are stuck, so the Sync Center can
    * tell the user *what* is failing and *why* instead of just a number.
    */
-  async getStuckItemDetails(): Promise<Array<{ kind: string; id: string; error: string }>> {
+  async getStuckItemDetails(): Promise<Array<{ kind: string; id: string; error: string; surveyId?: string; stakeholderId?: string }>> {
     const database = await getDB();
-    const out: Array<{ kind: string; id: string; error: string }> = [];
+    const out: Array<{ kind: string; id: string; error: string; surveyId?: string; stakeholderId?: string }> = [];
 
+    // For a stuck SURVEY, also return its local id and stakeholder_id so the Sync
+    // screen can open the survey form directly — letting the enumerator read the
+    // rejection reason, fix it (e.g. a too-short description), and re-submit.
     const [sRes] = await database.executeSql(
-      `SELECT id, business_name, last_error FROM surveys WHERE is_synced = 0 AND retry_count >= ?`,
+      `SELECT id, stakeholder_id, business_name, last_error FROM surveys WHERE is_synced = 0 AND retry_count >= ?`,
       [MAX_AUTO_RETRIES]
     );
     for (let i = 0; i < sRes.rows.length; i++) {
       const r = sRes.rows.item(i);
-      out.push({ kind: 'Survey', id: r.business_name || r.id, error: r.last_error || 'Unknown error' });
+      out.push({
+        kind: 'Survey',
+        id: r.business_name || r.id,
+        error: r.last_error || 'Unknown error',
+        surveyId: r.id,
+        stakeholderId: r.stakeholder_id,
+      });
     }
 
     const [mRes] = await database.executeSql(
