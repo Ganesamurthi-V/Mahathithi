@@ -530,12 +530,27 @@ export const stakeholderDao = {
     // pulled all 38 columns (long address/lineage text) per row just to throw most
     // away. Tapping a row re-fetches the full record via getById (SELECT *), so the
     // detail screen is unaffected. priority_weight stays for the ORDER BY.
+    //
+    // has_draft: 1 when this stakeholder has a locally-saved, partially-completed
+    // survey (is_draft = 1, is_completed = 0). It drives BOTH the ordering below —
+    // drafts float to the top so an enumerator sees unfinished work first — and a
+    // badge on the card. Computed as a correlated EXISTS so the list stays a single
+    // offline query; surveys is small (one row per stakeholder worked), so this is
+    // cheap next to the 295K-row stakeholders scan the WHERE already does.
+    // Only `stakeholders` is in the FROM, so the WHERE's bare column names stay
+    // unambiguous — no need to alias/prefix them. The correlated subquery names its
+    // own table (surveys sv), so there is no collision either.
     const [results] = await database.executeSql(
       `SELECT id, primary_key_id, company_name_standardized, company_name_original,
               district, city, pin_code, category, nic_description, status,
-              locked_by_id, priority_weight
+              locked_by_id, priority_weight,
+              EXISTS (
+                SELECT 1 FROM surveys sv
+                WHERE sv.stakeholder_id = stakeholders.id
+                  AND sv.is_draft = 1 AND sv.is_completed = 0
+              ) AS has_draft
        FROM stakeholders ${whereClause}
-       ORDER BY priority_weight DESC, company_name_standardized ASC LIMIT ? OFFSET ?`,
+       ORDER BY has_draft DESC, priority_weight DESC, company_name_standardized ASC LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
 
@@ -1006,9 +1021,14 @@ export const surveyDao = {
    */
   async getRetryable(): Promise<any[]> {
     const database = await getDB();
+    // is_completed = 1 is the gate: a partially-filled DRAFT (is_completed = 0,
+    // is_draft = 1) is saved locally only and must NEVER enter the upload pipeline.
+    // Only a survey the enumerator explicitly submitted is uploaded. Its media and
+    // text still live in SQLite either way — a draft is simply not sent.
     const [results] = await database.executeSql(
       `SELECT * FROM surveys
        WHERE is_synced = 0
+         AND is_completed = 1
          AND retry_count < ?
          AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))`,
       [MAX_AUTO_RETRIES]
@@ -1057,16 +1077,20 @@ export const surveyDao = {
   },
 
   // The four counters below key off `is_completed = 0` rather than `is_synced = 0`
-  // so they cover BOTH incomplete phases a survey can get stuck in:
+  // so they cover BOTH incomplete phases a SUBMITTED survey can get stuck in:
   //   • text payload not yet uploaded      (is_synced = 0)
   //   • uploaded but complete() failing    (is_synced = 1, is_completed = 0)
+  //
+  // They all exclude drafts (is_draft = 1): a partial draft is deliberately never
+  // uploaded, so it is not "pending" or "failed" sync work and must not show in the
+  // Sync Center counts or be swept by a manual "retry" / "reset dead letters".
 
   /** Surveys still auto-retrying (under the cap). */
   async getFailedCount(): Promise<number> {
     const database = await getDB();
     const [res] = await database.executeSql(
       `SELECT COUNT(*) as count FROM surveys
-       WHERE is_completed = 0 AND retry_count > 0 AND retry_count < ?`,
+       WHERE is_completed = 0 AND is_draft = 0 AND retry_count > 0 AND retry_count < ?`,
       [MAX_AUTO_RETRIES]
     );
     return res.rows.item(0).count ?? 0;
@@ -1076,7 +1100,7 @@ export const surveyDao = {
   async getDeadLetterCount(): Promise<number> {
     const database = await getDB();
     const [res] = await database.executeSql(
-      `SELECT COUNT(*) as count FROM surveys WHERE is_completed = 0 AND retry_count >= ?`,
+      `SELECT COUNT(*) as count FROM surveys WHERE is_completed = 0 AND is_draft = 0 AND retry_count >= ?`,
       [MAX_AUTO_RETRIES]
     );
     return res.rows.item(0).count ?? 0;
@@ -1086,7 +1110,7 @@ export const surveyDao = {
   async retryAllFailedNow(): Promise<number> {
     const database = await getDB();
     const [res] = await database.executeSql(
-      `UPDATE surveys SET next_retry_at = datetime('now') WHERE is_completed = 0 AND retry_count < ?`,
+      `UPDATE surveys SET next_retry_at = datetime('now') WHERE is_completed = 0 AND is_draft = 0 AND retry_count < ?`,
       [MAX_AUTO_RETRIES]
     );
     return res?.rowsAffected ?? 0;
@@ -1096,7 +1120,7 @@ export const surveyDao = {
   async resetDeadLetters(): Promise<number> {
     const database = await getDB();
     const [res] = await database.executeSql(
-      `UPDATE surveys SET retry_count = 0, next_retry_at = NULL WHERE is_completed = 0 AND retry_count >= ?`,
+      `UPDATE surveys SET retry_count = 0, next_retry_at = NULL WHERE is_completed = 0 AND is_draft = 0 AND retry_count >= ?`,
       [MAX_AUTO_RETRIES]
     );
     return res?.rowsAffected ?? 0;
@@ -1223,11 +1247,18 @@ export const mediaDao = {
    */
   async getRetryable(): Promise<any[]> {
     const db = await getDB();
+    // Exclude media belonging to a partial DRAFT survey (is_draft = 1,
+    // is_completed = 0). A draft is never uploaded, so its photos/video must not be
+    // either — and must not count as eligible sync work. The media still lives in
+    // SQLite and is restored into the form when the draft is reopened.
     const [results] = await db.executeSql(
       `SELECT * FROM media
        WHERE is_synced = 0
          AND retry_count < ?
-         AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))`,
+         AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
+         AND survey_id NOT IN (
+           SELECT id FROM surveys WHERE is_draft = 1 AND is_completed = 0
+         )`,
       [MAX_AUTO_RETRIES]
     );
     const rows = [];
@@ -1547,11 +1578,20 @@ export const syncQueueDao = {
     );
     const pendingSyncQueue = syncQueueResult.rows.item(0).count ?? 0;
 
+    // Drafts (is_completed = 0 AND is_draft = 1) are deliberately never uploaded,
+    // so they are NOT "pending upload" — excluded from both the survey rows and
+    // their media, or a saved-but-unfinished form would show as stuck sync work.
     const [surveyResult] = await database.executeSql(`
       SELECT COUNT(DISTINCT id) as count FROM (
-        SELECT id FROM surveys WHERE is_synced = 0 AND retry_count < ?
+        SELECT id FROM surveys
+          WHERE is_synced = 0 AND retry_count < ?
+            AND NOT (is_completed = 0 AND is_draft = 1)
         UNION
-        SELECT survey_id as id FROM media WHERE is_synced = 0 AND retry_count < ?
+        SELECT m.survey_id as id FROM media m
+          WHERE m.is_synced = 0 AND m.retry_count < ?
+            AND m.survey_id NOT IN (
+              SELECT id FROM surveys WHERE is_completed = 0 AND is_draft = 1
+            )
       )
     `, [MAX_AUTO_RETRIES, MAX_AUTO_RETRIES]);
     const pendingSurveys = surveyResult.rows.item(0).count ?? 0;

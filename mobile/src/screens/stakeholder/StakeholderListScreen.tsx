@@ -81,9 +81,18 @@ const StakeholderCard = React.memo(({ item, index, onPress }: { item: any, index
           <Text style={styles.orgName} numberOfLines={1}>
             {item.companyNameStandardized || 'Unknown Organization'}
           </Text>
-          <View style={[styles.badge, { backgroundColor: STATUS_COLORS[item.status] || colors.statusPending }]}>
-            <Text style={styles.badgeText}>{(item.status || 'OPEN').replace('_', ' ')}</Text>
-          </View>
+          {/* A locally-saved, unfinished survey. Shown instead of the status badge
+              so the enumerator can spot work to resume at a glance — these rows are
+              also ordered to the top of the list. */}
+          {item.hasDraft ? (
+            <View style={[styles.badge, { backgroundColor: colors.warning }]}>
+              <Text style={styles.badgeText}>DRAFT</Text>
+            </View>
+          ) : (
+            <View style={[styles.badge, { backgroundColor: STATUS_COLORS[item.status] || colors.statusPending }]}>
+              <Text style={styles.badgeText}>{(item.status || 'OPEN').replace('_', ' ')}</Text>
+            </View>
+          )}
         </View>
         <View style={styles.metaRow}>
           <Text style={styles.meta}><Icon name="map-marker" size={14} color={colors.textMuted} /> {item.district || 'â€”'}</Text>

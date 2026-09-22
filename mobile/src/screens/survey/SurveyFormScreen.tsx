@@ -292,7 +292,58 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const scrollViewRef = useRef<any>(null);
   const isSubmitSuccessRef = useRef(false);
 
+  // Reopening a saved (draft or otherwise) survey must restore the photos and
+  // video the enumerator already captured — otherwise the media slots look empty
+  // and it appears the app "forgot" their work. The text fields are prefilled from
+  // existingSurvey above; this does the same for media, reading the rows saved
+  // against this survey and rebuilding the `photos` map + `video` from them.
+  useEffect(() => {
+    const localSurveyId = existingSurvey?.id;
+    if (!localSurveyId) return;
 
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await mediaDao.getBySurveyLocal(localSurveyId);
+        if (cancelled || !rows?.length) return;
+
+        const restoredPhotos: Record<string, any> = {};
+        let restoredVideo: any = null;
+
+        for (const m of rows) {
+          const media = {
+            uri: m.file_path,
+            fileName: m.file_name,
+            fileSize: m.file_size,
+            type: m.mime_type,
+            latitude: m.latitude,
+            longitude: m.longitude,
+            gpsAccuracy: m.gps_accuracy,
+            capturedAt: m.captured_at,
+            duration: m.duration,
+            // Only 'camera' vs 'library' matters to the UI tag; older rows have no
+            // source recorded, so default to camera (the on-site path).
+            source: m.source || 'camera',
+          };
+          if (m.type === 'VIDEO') {
+            restoredVideo = media;
+          } else if (m.photo_category) {
+            // Photos and documents alike live in the `photos` map keyed by category
+            // (DISPLAY_IMAGE, GST_DOC, etc.), matching how they were saved.
+            restoredPhotos[m.photo_category] = media;
+          }
+        }
+
+        if (cancelled) return;
+        if (Object.keys(restoredPhotos).length > 0) setPhotos(restoredPhotos);
+        if (restoredVideo) setVideo(restoredVideo);
+      } catch (e) {
+        console.warn('[Survey] Failed to restore saved media for draft:', e);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [existingSurvey?.id]);
 
   useEffect(() => {
     if (scrollViewRef.current) {
