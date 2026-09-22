@@ -6,7 +6,7 @@ import {
   setPendingCount, setFailedCount, setDeadLetterCount,
   startInitialSync, updateInitialSyncProgress, initialSyncComplete, initialSyncFailed
 } from './syncSlice';
-import { syncService, mediaService, surveyService, stakeholderService, facilityService } from '../../services/api';
+import { syncService, mediaService, surveyService, stakeholderService, facilityService, dashboardService } from '../../services/api';
 import { announceLocalDataChange } from '../../services/realtime';
 import { surveyDao, syncQueueDao, stakeholderDao, appStateDao, mediaDao, facilityDao } from '../../database';
 
@@ -868,18 +868,44 @@ export const pullServerChangesThunk = createAsyncThunk(
  * surveys have actually been uploaded — so the moment right after a sync is exactly
  * when a top-up can succeed, and before it there is nothing to claim.
  *
+ * WHY IT ASKS THE DASHBOARD FIRST
+ * The claim endpoint is only worth calling when there is genuinely room AND pool to
+ * fill it. The dashboard stats endpoint already computes exactly that as
+ * `assignment.canClaimMore` (below fair share, pool > 0, under the ceiling), and it
+ * is a cheap read that does not take the claim's write transaction. Gating on it
+ * means the common case — a device already holding its full share, which is most
+ * devices most of the time — never calls claim at all.
+ *
+ * That also stops a specific noise problem: while the backend deploy is behind, the
+ * claim endpoint can 500, and calling it every sync spammed a warning on a device
+ * that had nothing to claim anyway. No claim call, no warning.
+ *
  * The claim itself does not return the rows. It stamps them with a fresh updated_at,
  * so the ordinary delta feed picks them up; that keeps one download path instead of
  * a second one that could disagree with it. Hence the pull immediately after.
- *
- * Cheap when there is nothing to do: the server answers `claimed: 0` for a full
- * queue or an empty pool, and no pull follows.
  */
 export const topUpWorkQueueThunk = createAsyncThunk(
   'sync/topUpWorkQueue',
   async (_, { dispatch }) => {
     const net = await NetInfo.fetch();
     if (!net.isConnected) return { claimed: 0 };
+
+    // Ask the dashboard whether there is anything to claim before touching the
+    // claim endpoint. Cheap, read-only, and true only when this device is below its
+    // fair share with pool available.
+    try {
+      const statsRes = await dashboardService.getStats();
+      const canClaimMore = statsRes.data?.data?.assignment?.canClaimMore;
+      if (!canClaimMore) {
+        // Nothing to gain — the queue is already full for this device. Skip the
+        // claim call entirely.
+        return { claimed: 0 };
+      }
+    } catch {
+      // If even the stats read fails (offline mid-sync, transient server error),
+      // do not attempt the heavier claim call. It will be retried on the next sync.
+      return { claimed: 0 };
+    }
 
     try {
       const res = await stakeholderService.claimWork();
@@ -894,15 +920,15 @@ export const topUpWorkQueueThunk = createAsyncThunk(
         // Pull them into SQLite. Without this the device owns rows it has never
         // seen, and the operator's list would not grow until the next sync.
         await dispatch(pullServerChangesThunk() as any);
-      } else if (result.poolRemaining === 0) {
-        console.log('[TopUp] nothing left unassigned in this district.');
       }
 
       return { claimed };
     } catch (err: any) {
       // Never rethrow: this is an opportunistic refill hanging off the end of a
-      // sync, and failing it must not fail the sync that already succeeded.
-      console.warn('[TopUp] failed:', err?.message);
+      // sync, and failing it must not fail the sync that already succeeded. Logged
+      // at info level, not warn: the dashboard said there was work, so a failure
+      // here is a transient server issue the next sync will retry, not an alarm.
+      console.log('[TopUp] claim skipped (server busy), will retry next sync:', err?.message);
       return { claimed: 0 };
     }
   }
