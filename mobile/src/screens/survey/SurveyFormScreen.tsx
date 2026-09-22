@@ -32,6 +32,7 @@ interface SurveyFormData {
   aadharNumber: string;
   udyamAadharRegNo: string;
   panNumber: string;
+  gstNumber: string;
   nearestPoliceStation: string;
   nearestHealthcareCenter: string;
 }
@@ -68,13 +69,13 @@ const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'S
 
 const STEP_LABELS = ['Category', 'Business', 'Images', 'Details', 'Rooms', 'Socials', 'Docs', 'Terms'];
 
+// Every photo is OPTIONAL now — nothing here blocks a save. The enumerator captures
+// what they can, saves a partial draft, and submits to the server once complete.
+// STAKEHOLDER slot removed earlier; its DB enum value is kept for old rows.
 const PHOTO_CATEGORIES = [
-  { key: 'BUILDING_FRONT', label: 'Building Front', icon: 'office-building', required: true },
-  { key: 'SIGNBOARD', label: 'Signboard', icon: 'sign-direction', required: true },
-  { key: 'INTERIOR', label: 'Interior', icon: 'home-variant-outline', required: true },
-  // STAKEHOLDER slot removed by request. Its DB enum value (PhotoCategory.STAKEHOLDER)
-  // is intentionally kept — PostgreSQL cannot drop an enum value, and old surveys may
-  // still reference it — but it is no longer offered or required in the form.
+  { key: 'BUILDING_FRONT', label: 'Building Front', icon: 'office-building', required: false },
+  { key: 'SIGNBOARD', label: 'Signboard', icon: 'sign-direction', required: false },
+  { key: 'INTERIOR', label: 'Interior', icon: 'home-variant-outline', required: false },
   { key: 'ADDITIONAL', label: 'Additional', icon: 'camera-plus-outline', required: false },
 ];
 
@@ -314,6 +315,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       aadharNumber: '',
       udyamAadharRegNo: existingSurvey?.udyam_aadhar_reg_no || existingSurvey?.udyamAadharRegNo || '',
       panNumber: existingSurvey?.pan_number || existingSurvey?.panNumber || '',
+      gstNumber: existingSurvey?.gst_number || existingSurvey?.gstNumber || '',
       nearestPoliceStation: existingSurvey?.nearestPoliceStation || existingSurvey?.nearest_police_station || '',
       nearestHealthcareCenter: existingSurvey?.nearestHealthcareCenter || existingSurvey?.nearest_healthcare_center || '',
     },
@@ -352,10 +354,12 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     let basePercent = Math.round((filledFields / fields.length) * 40); // Text fields = 40%
     if (gps) basePercent += 10; // GPS = 10%
     
-    // Media progress (50% max)
-    const requiredPhotos = PHOTO_CATEGORIES.filter(c => c.required).length;
-    const capturedPhotosCount = Object.keys(photos).filter(k => PHOTO_CATEGORIES.find(c => c.key === k)?.required).length;
-    const mediaPercent = Math.round(((capturedPhotosCount + (video ? 1 : 0)) / (requiredPhotos + 1)) * 50);
+    // Media progress (50% max). Nothing is "required" any more, so this simply
+    // reflects how much media has been captured across all photo slots + the video,
+    // as a rough guide to how complete the survey is.
+    const totalMediaSlots = PHOTO_CATEGORIES.length + 1; // + walkthrough video
+    const capturedMediaCount = Object.keys(photos).filter(k => PHOTO_CATEGORIES.some(c => c.key === k)).length + (video ? 1 : 0);
+    const mediaPercent = Math.round((capturedMediaCount / totalMediaSlots) * 50);
 
     setCompletionPercent(Math.min(100, basePercent + mediaPercent));
   }, [watchAllFields, gps, photos, video]);
@@ -858,38 +862,19 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     }
   };
 
-  const onSubmit = async (data: SurveyFormData) => {
-    // === STRICT VALIDATION ===
-    if (!gps) {
-      Alert.alert('Incomplete Survey', 'GPS Location is required to submit the survey.');
-      return;
-    }
-    if (!selectedCategory) {
-      Alert.alert('Incomplete Survey', 'Please select a Business Category in Step 1.');
-      return;
-    }
-    const missingPhotos = PHOTO_CATEGORIES.filter(c => c.required && !photos[c.key]);
-    if (missingPhotos.length > 0) {
-      Alert.alert('Incomplete Survey', `Please capture: ${missingPhotos.map(m => m.label).join(', ')}`);
-      return;
-    }
-    if (!video) {
-      Alert.alert('Incomplete Survey', 'Walkthrough Video is required.');
-      return;
-    }
-    if (description.trim().length < 50) {
-      Alert.alert('Incomplete Survey', 'Description must be at least 50 characters (Step 4).');
-      return;
-    }
-    if (selectedCategory === 'Accommodations' && rooms.length < 1) {
-      Alert.alert('Incomplete Survey', 'At least 1 room is required for Accommodation listings (Step 5).');
-      return;
-    }
-    if (!agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability) {
-      Alert.alert('Incomplete Survey', 'Please accept all Terms & Conditions in Step 8.');
-      return;
-    }
-    setSaving(true);
+  /**
+   * Write the current form state to local SQLite.
+   *
+   * Shared by both actions. `completed` decides the two things that differ between
+   * a partial draft and a finished submission:
+   *   - the survey's is_draft / is_completed flags
+   *   - whether the stakeholder is marked CLOSED (removed from the work queue)
+   *
+   * A DRAFT never closes the stakeholder — the enumerator can reopen and keep
+   * editing, and it stays in their list. Only a completed submission closes it and
+   * hands it to the sync pipeline for upload.
+   */
+  const persistSurvey = async (data: SurveyFormData, completed: boolean) => {
     // DATA-INTEGRITY FIX: reuse the existing local row for this stakeholder if
     // one is already on the device. Generating a fresh `local_<ts>` id on every
     // save created a SECOND survey row for the same stakeholder; because
@@ -923,41 +908,83 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       agreedToTerms,
       declaredInfoCorrect,
       acknowledgedDotLiability,
-      // Sync metadata
+      // Sync metadata. A draft is is_completed=false and NOT synced to the server
+      // (the sync pipeline only uploads completed surveys); a completed one is
+      // flagged so the pipeline picks it up.
       localId: surveyId,
-      isDraft: true,
-      isCompleted: false,
+      isDraft: !completed,
+      isCompleted: completed,
       isSynced: false,
     };
 
-    try {
-      // Save to local SQLite first (offline-first) — this is instant.
-      // save() returns the canonical row id it actually wrote, which is what the
-      // media rows must reference.
-      const savedSurveyId = await surveyDao.save(surveyPayload);
-      await saveMediaToDb(savedSurveyId);
-      console.log('[Survey] Saved locally to SQLite.');
+    // save() returns the canonical row id it actually wrote, which is what the
+    // media rows must reference.
+    const savedSurveyId = await surveyDao.save(surveyPayload);
+    await saveMediaToDb(savedSurveyId);
+    return savedSurveyId;
+  };
 
-      // Mark stakeholder as CLOSED locally so it disappears from the work queue
-      // The server will also mark it CLOSED when complete() succeeds during sync
+  /**
+   * Save a partial draft locally. No validation, nothing required — whatever has
+   * been filled in so far is stored on the device and the enumerator can come back
+   * to it. The stakeholder stays OPEN in their list and nothing is sent to the
+   * server yet.
+   */
+  const onSaveDraft = async (data: SurveyFormData) => {
+    setSaving(true);
+    try {
+      await persistSurvey(data, false);
+      announceLocalDataChange(['stakeholders', 'surveys']);
+      dispatch(refreshSyncCountsThunk() as any);
+      isSubmitSuccessRef.current = true;
+      navigation.navigate('Main', { screen: 'Stakeholders' });
+      Alert.alert('Draft Saved', 'Your progress has been saved on this device. You can finish and submit it later.');
+    } catch (e: any) {
+      console.error('❌ [Survey] Failed to save draft:', e);
+      Alert.alert('Error', 'Failed to save draft. Please try again.');
+    }
+    setSaving(false);
+  };
+
+  /**
+   * Submit a completed survey. The only hard requirement kept is a GPS fix —
+   * the survey's whole purpose is to prove an on-site visit, so a location is
+   * needed for that to mean anything. Everything else is optional; the operator
+   * decides when it is "complete enough" to submit. A completed survey closes the
+   * stakeholder and is uploaded to the server in the background.
+   */
+  const onSubmit = async (data: SurveyFormData) => {
+    if (!gps) {
+      Alert.alert(
+        'Location needed',
+        'A GPS location is required before submitting, since the survey records an on-site visit. ' +
+        'Wait for the location to lock, or Save as Draft and submit once it does.'
+      );
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await persistSurvey(data, true);
+      console.log('[Survey] Completed survey saved locally.');
+
+      // Mark stakeholder as CLOSED locally so it disappears from the work queue.
+      // The server also marks it CLOSED when complete() succeeds during sync.
       await stakeholderDao.update(stakeholderId, { status: 'CLOSED' });
 
       // The stakeholder was just marked CLOSED locally, so the list screen we are
       // about to navigate to is already stale. Announcing before navigating means
-      // it renders the correct set on arrival rather than showing the completed
-      // record for a moment and then dropping it.
+      // it renders the correct set on arrival.
       announceLocalDataChange(['stakeholders', 'surveys', 'analytics']);
 
-      // Trigger background sync immediately — don't wait for it
+      // Trigger background sync immediately — don't wait for it. The runAutoSync
+      // pipeline picks up the unsynced completed survey + media and uploads them.
       dispatch(refreshSyncCountsThunk() as any);
       dispatch(runAutoSync() as any);
-      // The existing runAutoSync pipeline (triggered by AppNavigator's NetInfo
-      // listener or the Sync Center) will pick up the unsynced survey + media
-      // and upload everything in the background. No need to block the UI.
 
       isSubmitSuccessRef.current = true;
       navigation.navigate('Main', { screen: 'Stakeholders' });
-      Alert.alert('Survey Saved', 'Your survey has been saved. It will upload automatically in the background.');
+      Alert.alert('Survey Submitted', 'Your survey has been saved and will upload automatically in the background.');
     } catch (e: any) {
       console.error('❌ [Survey] Failed to save locally:', e);
       Alert.alert('Error', 'Failed to save survey. Please try again.');
@@ -1062,7 +1089,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           <View>
             {/* Step 1: Category & Type */}
             <View style={styles.formSection}>
-              <Text style={styles.sectionHeader}>Business Category *</Text>
+              <Text style={styles.sectionHeader}>Business Category</Text>
               <Text style={{ ...typography.caption, color: colors.textMuted, marginBottom: spacing.md }}>Select one category that best describes your business</Text>
               <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, backgroundColor: colors.bgInput }}>
                 <Picker
@@ -1082,7 +1109,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
               {selectedCategory !== '' && (
                 <>
-                  <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Sub Categories * (max 3)</Text>
+                  <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Sub Categories (max 3)</Text>
                   <Text style={{ ...typography.caption, color: colors.textMuted, marginBottom: spacing.md }}>Select up to 3 sub-categories</Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
                     {(SUB_CATEGORIES[selectedCategory] || []).map(sub => {
@@ -1149,8 +1176,8 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             {/* Business Name & Owner */}
             <View style={styles.formSection}>
               <Text style={styles.sectionHeader}>Business Information</Text>
-              <AnimatedInput field={{ name: 'businessName', label: 'Name of Your Business *', placeholder: 'Business name', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
-              <AnimatedInput field={{ name: 'ownerName', label: 'Owner / Proprietor / Director Name *', placeholder: 'Full name', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'businessName', label: 'Name of Your Business', placeholder: 'Business name' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'ownerName', label: 'Owner / Proprietor / Director Name', placeholder: 'Full name' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
               {/* Country & State (read-only) */}
               <View style={{ flexDirection: 'row', gap: spacing.md, marginBottom: spacing.lg }}>
@@ -1169,25 +1196,26 @@ export default function SurveyFormScreen({ route, navigation }: any) {
               </View>
 
               {/* District Picker */}
-              <AnimatedInput field={{ name: 'district', label: 'District *', placeholder: 'Select district', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
-              <AnimatedInput field={{ name: 'city', label: 'City *', placeholder: 'City name', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'district', label: 'District', placeholder: 'Select district' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'city', label: 'City', placeholder: 'City name' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
-              <AnimatedInput field={{ name: 'pinCode', label: 'Pin / Zip Code *', placeholder: '6-digit pin code', required: true, keyboardType: 'numeric', maxLength: 6 }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
-              <AnimatedInput field={{ name: 'businessAddress', label: 'Business Address *', placeholder: 'Full business address', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'pinCode', label: 'Pin / Zip Code', placeholder: '6-digit pin code', keyboardType: 'numeric', maxLength: 6 }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'businessAddress', label: 'Business Address', placeholder: 'Full business address' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
               <Text style={styles.sectionHeader}>Contact Details</Text>
-              <AnimatedInput field={{ name: 'mobileNumber', label: 'Mobile Number *', placeholder: '10-digit mobile number', required: true, keyboardType: 'phone-pad', maxLength: 10, prefix: '+91', pattern: { value: /^[0-9]{10}$/, message: 'Invalid number' } }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
-              <AnimatedInput field={{ name: 'email', label: 'Email Address *', placeholder: 'email@example.com', required: true, keyboardType: 'email-address' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'mobileNumber', label: 'Mobile Number', placeholder: '10-digit mobile number', keyboardType: 'phone-pad', maxLength: 10, prefix: '+91', pattern: { value: /^[0-9]{10}$/, message: 'Invalid number' } }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'email', label: 'Email Address', placeholder: 'email@example.com', keyboardType: 'email-address' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
               <Text style={styles.sectionHeader}>Government IDs</Text>
               {/* Aadhar with auto-formatting: displays as "1234 5678 9012" but stores as "123456789012" */}
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Aadhar Card Number *</Text>
+                <Text style={styles.label}>Aadhar Card Number</Text>
                 <View style={[styles.inputWrapper, { borderWidth: 1, borderColor: colors.border }]}>
                   <Controller
                     control={control}
                     name="aadharNumber"
-                    rules={{ required: 'Aadhar Card Number is required', pattern: { value: /^\d{12}$/, message: 'Must be 12 digits' } }}
+                    // Optional — validate the 12-digit format only if a value is typed.
+                    rules={{ pattern: { value: /^\d{12}$/, message: 'Must be 12 digits' } }}
                     render={({ field: { onChange, value } }) => (
                       <TextInput
                         style={styles.input}
@@ -1206,8 +1234,10 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                 </View>
                 {errors.aadharNumber && <Text style={styles.errorText}>{errors.aadharNumber?.message}</Text>}
               </View>
-              <AnimatedInput field={{ name: 'udyamAadharRegNo', label: 'Udyam Aadhar Registration No. *', placeholder: 'e.g. UDYAM-MH-00-0000000', required: true }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
-              <AnimatedInput field={{ name: 'panNumber', label: 'PAN Card Number * (ALL CAPS)', placeholder: 'e.g. ABCDE1234F', required: true, maxLength: 10, pattern: { value: /^[A-Z]{5}[0-9]{4}[A-Z]$/, message: 'Invalid PAN format' } }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'udyamAadharRegNo', label: 'Udyam Aadhar Registration No.', placeholder: 'e.g. UDYAM-MH-00-0000000' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'panNumber', label: 'PAN Card Number (ALL CAPS)', placeholder: 'e.g. ABCDE1234F', maxLength: 10, pattern: { value: /^[A-Z]{5}[0-9]{4}[A-Z]$/, message: 'Invalid PAN format' } }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              {/* GST asked right below PAN, per request. Optional; format checked only if entered. */}
+              <AnimatedInput field={{ name: 'gstNumber', label: 'GST Number', placeholder: 'e.g. 27ABCDE1234F1Z5', maxLength: 15, pattern: { value: /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[0-9A-Z]{1}Z[0-9A-Z]{1}$/, message: 'Invalid GST format' } }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
               <Text style={styles.sectionHeader}>Nearest Facilities</Text>
               {nearestFacilityFields.map(f => (
@@ -1283,7 +1313,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                   <Icon name="video" size={28} color={video ? colors.success : colors.primary} />
                   <View style={{ flex: 1, marginLeft: spacing.md }}>
                     <Text style={styles.slotLabel}>Walkthrough Video</Text>
-                    <Text style={styles.slotReq}>Required (Max 60s)</Text>
+                    <Text style={styles.slotReq}>Optional (Max 60s)</Text>
                   </View>
                   {video && <Icon name="check-circle" size={24} color={colors.success} />}
                 </View>
@@ -1314,9 +1344,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
         {currentStep === 4 && (
           <View style={styles.formSection}>
-            <Text style={styles.sectionHeader}>Description * (min 50 chars)</Text>
-            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={description} onChangeText={setDescription} placeholder="Describe your business (min 50 characters)" placeholderTextColor={colors.textMuted} />
-            <Text style={{ ...typography.caption, color: description.length >= 50 ? colors.success : colors.textMuted, marginTop: spacing.xs }}>{description.length}/50 min</Text>
+            <Text style={styles.sectionHeader}>Description</Text>
+            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={description} onChangeText={setDescription} placeholder="Describe your business" placeholderTextColor={colors.textMuted} />
+            <Text style={{ ...typography.caption, color: colors.textMuted, marginTop: spacing.xs }}>{description.length} characters</Text>
             {selectedCategory === 'Accommodations' && (
               <>
                 <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Facilities</Text>
@@ -1348,7 +1378,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
         {currentStep === 5 && selectedCategory === 'Accommodations' && (
           <View style={styles.formSection}>
-            <Text style={styles.sectionHeader}>Rooms (min 1 required)</Text>
+            <Text style={styles.sectionHeader}>Rooms</Text>
             {rooms.map((room, idx) => (
               <View key={idx} style={{ marginBottom: spacing.lg, backgroundColor: colors.bgCard, padding: spacing.md, borderRadius: borderRadius.md, borderWidth: 1, borderColor: colors.border }}>
                 <TextInput style={[styles.input, { borderBottomWidth: 1, borderBottomColor: colors.border, marginBottom: spacing.sm }]} placeholder="Room Name" value={room.name || ''} onChangeText={t => setRooms(prev => prev.map((r, i) => i === idx ? { ...r, name: t } : r))} placeholderTextColor={colors.textMuted} />
@@ -1368,12 +1398,14 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
         {currentStep === 7 && (
           <View style={styles.formSection}>
-            <Text style={styles.sectionHeader}>About Business *</Text>
+            <Text style={styles.sectionHeader}>About Business</Text>
             <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={aboutBusiness} onChangeText={setAboutBusiness} placeholder="History, achievements, brief profile..." placeholderTextColor={colors.textMuted} />
-            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Required Documents</Text>
-            {[{ key: 'GST_DOC', label: 'GST Certificate' }, { key: 'PAN_CARD_DOC', label: 'PAN Card' }, { key: 'ESTABLISHMENT_CERT_DOC', label: 'Establishment Certificate' }].map(doc => (
+            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Documents</Text>
+            {/* PAN Card and Establishment Certificate uploads removed by request.
+                GST Certificate remains, and is optional like everything else. */}
+            {[{ key: 'GST_DOC', label: 'GST Certificate' }].map(doc => (
               <View key={doc.key} style={{ marginBottom: spacing.md }}>
-                <Text style={{ ...typography.body, color: colors.textPrimary, marginBottom: spacing.xs }}>{doc.label} *</Text>
+                <Text style={{ ...typography.body, color: colors.textPrimary, marginBottom: spacing.xs }}>{doc.label}</Text>
                 {photos[doc.key] ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}><Icon name="check-circle" size={20} color={colors.success} /><Text style={{ ...typography.bodySmall, color: colors.success, flex: 1 }}>{photos[doc.key].fileName || 'Uploaded'}</Text><TouchableOpacity onPress={() => setPhotos(p => { const np = {...p}; delete np[doc.key]; return np; })}><Icon name="close-circle" size={18} color={colors.error} /></TouchableOpacity></View>
                 ) : (
@@ -1389,20 +1421,35 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setAgreedToTerms(!agreedToTerms)}><Icon name={agreedToTerms ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={agreedToTerms ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I agree to the Terms & Conditions</Text></TouchableOpacity>
             <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setDeclaredInfoCorrect(!declaredInfoCorrect)}><Icon name={declaredInfoCorrect ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={declaredInfoCorrect ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I declare that all information provided is true and correct</Text></TouchableOpacity>
             <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setAcknowledgedDotLiability(!acknowledgedDotLiability)}><Icon name={acknowledgedDotLiability ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={acknowledgedDotLiability ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I acknowledge that the Department of Tourism (DOT) is not liable for any financial losses</Text></TouchableOpacity>
+            {/* A soft checklist, not a gate. It flags what is still empty so the
+                operator can decide whether to finish now or save a draft — none of
+                these block submission any more. */}
             <View style={styles.reviewCard}>
-              <Text style={styles.reviewTitle}>Completion Review</Text>
-              {!gps && <Text style={styles.reviewError}>• GPS Location is missing</Text>}
-              {!selectedCategory && <Text style={styles.reviewError}>• Business Category not selected</Text>}
-              {description.trim().length < 50 && <Text style={styles.reviewError}>• Description too short ({description.length}/50 min)</Text>}
-              {selectedCategory === 'Accommodations' && rooms.length < 1 && <Text style={styles.reviewError}>• At least 1 room required</Text>}
-              {!video && <Text style={styles.reviewError}>• Walkthrough Video is missing</Text>}
-              {!aboutBusiness && <Text style={styles.reviewError}>• About Business is empty</Text>}
+              <Text style={styles.reviewTitle}>Completion Checklist</Text>
+              {!gps && <Text style={styles.reviewError}>• GPS Location is missing (required to submit)</Text>}
+              {!selectedCategory && <Text style={styles.reviewPending}>• Business Category not selected</Text>}
+              {!description.trim() && <Text style={styles.reviewPending}>• Description is empty</Text>}
+              {selectedCategory === 'Accommodations' && rooms.length < 1 && <Text style={styles.reviewPending}>• No rooms added</Text>}
+              {!video && <Text style={styles.reviewPending}>• Walkthrough Video not recorded</Text>}
+              {!aboutBusiness && <Text style={styles.reviewPending}>• About Business is empty</Text>}
+              {gps && selectedCategory && description.trim() && video && aboutBusiness &&
+                (selectedCategory !== 'Accommodations' || rooms.length >= 1) && (
+                  <Text style={styles.reviewOk}>• Everything looks complete — ready to submit.</Text>
+              )}
             </View>
+
+            {/* Two explicit actions. Save Draft stores partial progress locally with
+                no requirements; Submit finalises and uploads. Terms are no longer a
+                hard gate — kept as optional acknowledgements above. */}
             <Animated.View style={{ transform: [{ scale: buttonScaleAnim }], marginTop: spacing.xxl }}>
-              <TouchableOpacity style={[styles.submitBtn, (saving || !agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability) && styles.submitBtnDisabled]} onPress={handleSubmit(onSubmit)} disabled={saving || !agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability}>
-                {saving ? (<View style={{ flexDirection: 'row', alignItems: 'center' }}><ActivityIndicator color="#FFF" /><Text style={[styles.submitText, { marginLeft: spacing.md }]}>Saving...</Text></View>) : (<><Icon name="content-save-outline" size={20} color="#FFF" /><Text style={styles.submitText}>Save Survey</Text></>)}
+              <TouchableOpacity style={[styles.submitBtn, saving && styles.submitBtnDisabled]} onPress={handleSubmit(onSubmit)} disabled={saving}>
+                {saving ? (<View style={{ flexDirection: 'row', alignItems: 'center' }}><ActivityIndicator color="#FFF" /><Text style={[styles.submitText, { marginLeft: spacing.md }]}>Saving...</Text></View>) : (<><Icon name="cloud-upload-outline" size={20} color="#FFF" /><Text style={styles.submitText}>Submit Survey</Text></>)}
               </TouchableOpacity>
             </Animated.View>
+            <TouchableOpacity style={[styles.draftBtn, saving && styles.submitBtnDisabled]} onPress={handleSubmit(onSaveDraft)} disabled={saving}>
+              <Icon name="content-save-outline" size={20} color={colors.primary} />
+              <Text style={styles.draftBtnText}>Save as Draft</Text>
+            </TouchableOpacity>
           </View>
         )}
       </KeyboardAwareScrollView>
@@ -1587,6 +1634,19 @@ const styles = StyleSheet.create({
   reviewError: {
     ...typography.bodySmall, color: colors.error, marginBottom: spacing.xs,
   },
+  // Neutral "not filled yet" note — informational, does not block submission.
+  reviewPending: {
+    ...typography.bodySmall, color: colors.textMuted, marginBottom: spacing.xs,
+  },
+  reviewOk: {
+    ...typography.bodySmall, color: colors.success, marginBottom: spacing.xs,
+  },
+  draftBtn: {
+    marginTop: spacing.md, borderRadius: borderRadius.full, padding: spacing.lg,
+    alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: spacing.sm,
+    borderWidth: 1, borderColor: colors.primary, backgroundColor: 'transparent',
+  },
+  draftBtnText: { ...typography.button, color: colors.primary, fontSize: 16 },
   reviewNote: {
     ...typography.caption, color: colors.textSecondary, marginTop: spacing.lg, fontStyle: 'italic',
   },

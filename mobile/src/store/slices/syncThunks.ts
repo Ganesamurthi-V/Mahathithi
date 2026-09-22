@@ -476,6 +476,7 @@ export const runAutoSync = createAsyncThunk(
               aadharNumber: surveyLocal.aadhar_number || undefined,
               udyamAadharRegNo: surveyLocal.udyam_aadhar_reg_no || undefined,
               panNumber: surveyLocal.pan_number || undefined,
+              gstNumber: surveyLocal.gst_number || undefined,
               description: surveyLocal.description || undefined,
               accommodationFacilities: surveyLocal.accommodation_facilities ? JSON.parse(surveyLocal.accommodation_facilities) : undefined,
               accommodationPolicies: surveyLocal.accommodation_policies || undefined,

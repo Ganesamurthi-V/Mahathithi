@@ -131,6 +131,7 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
       aadhar_number TEXT,
       udyam_aadhar_reg_no TEXT,
       pan_number TEXT,
+      gst_number TEXT,
       description TEXT,
       accommodation_facilities TEXT,
       accommodation_policies TEXT,
@@ -162,6 +163,7 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN aadhar_number TEXT;'); } catch(e){}
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN udyam_aadhar_reg_no TEXT;'); } catch(e){}
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN pan_number TEXT;'); } catch(e){}
+  try { await database.executeSql('ALTER TABLE surveys ADD COLUMN gst_number TEXT;'); } catch(e){}
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN description TEXT;'); } catch(e){}
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN accommodation_facilities TEXT;'); } catch(e){}
   try { await database.executeSql('ALTER TABLE surveys ADD COLUMN accommodation_policies TEXT;'); } catch(e){}
@@ -949,11 +951,11 @@ export const surveyDao = {
         latitude, longitude, gps_accuracy, nearest_police_station,
         nearest_healthcare_center, is_draft, is_completed, is_synced,
         sub_categories, business_name, owner_name, district, city, pin_code,
-        business_address, aadhar_number, udyam_aadhar_reg_no, pan_number,
+        business_address, aadhar_number, udyam_aadhar_reg_no, pan_number, gst_number,
         description, accommodation_facilities, accommodation_policies, working_hours,
         rooms, about_business,
         agreed_to_terms, declared_info_correct, acknowledged_dot_liability, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [id, survey.stakeholderId, survey.enumeratorId,
        survey.mobileNumber, survey.email, survey.businessCategory,
        survey.latitude, survey.longitude, survey.gpsAccuracy,
@@ -966,6 +968,7 @@ export const surveyDao = {
        survey.city || null, survey.pinCode || null,
        survey.businessAddress || null,
        survey.aadharNumber || null, survey.udyamAadharRegNo || null, survey.panNumber || null,
+       survey.gstNumber || null,
        // Step 4
        survey.description || null,
        survey.accommodationFacilities ? JSON.stringify(survey.accommodationFacilities) : null,

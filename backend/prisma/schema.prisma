@@ -286,6 +286,7 @@ model Survey {
   aadharNumber    String?  @map("aadhar_number")       // AES-256-GCM encrypted
   udyamAadharRegNo String? @map("udyam_aadhar_reg_no")
   panNumber       String?  @map("pan_number")
+  gstNumber       String?  @map("gst_number")
 
   // Details
   description               String?  @map("description")
