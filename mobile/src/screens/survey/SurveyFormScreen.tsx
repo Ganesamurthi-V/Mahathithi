@@ -15,7 +15,6 @@ import { colors, spacing, borderRadius, typography, shadows } from '../../theme'
 import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
-import DocumentPicker from 'react-native-document-picker';
 import Video from 'react-native-video';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Picker } from '@react-native-picker/picker';
@@ -806,9 +805,52 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         longitude: location.longitude,
         gpsAccuracy: location.accuracy,
         capturedAt: new Date().toISOString(),
+        source: 'camera',
       });
     }
     setRecording(false);
+  };
+
+  /**
+   * Pick an existing video from the device gallery for the walkthrough slot.
+   *
+   * Same reasoning as pickPhotoFromLibrary: an uploaded video was recorded at some
+   * other time and place, so it is NOT stamped with the live fix. It keeps its own
+   * EXIF coordinates if the picker surfaces any, otherwise null; capturedAt uses the
+   * asset's own timestamp when available. No GPS lock is required to pick one.
+   */
+  const pickVideoFromLibrary = async () => {
+    const result = await launchImageLibrary({
+      mediaType: 'video',
+      includeExtra: true,
+    });
+
+    if (result.didCancel) return;
+    if (result.errorCode) {
+      Alert.alert('Could not open gallery', result.errorMessage || 'Please try again.');
+      return;
+    }
+
+    if (result.assets && result.assets[0]) {
+      const asset = result.assets[0];
+      const exif = (asset as any).exif ?? {};
+      const exifLat = exif.GPSLatitude ?? exif.latitude ?? null;
+      const exifLon = exif.GPSLongitude ?? exif.longitude ?? null;
+      const timestamp = (asset as any).timestamp;
+
+      setVideo({
+        uri: asset.uri,
+        fileName: asset.fileName,
+        fileSize: asset.fileSize,
+        type: asset.type,
+        duration: asset.duration,
+        latitude: typeof exifLat === 'number' ? exifLat : null,
+        longitude: typeof exifLon === 'number' ? exifLon : null,
+        gpsAccuracy: null,
+        capturedAt: timestamp ? new Date(timestamp).toISOString() : new Date().toISOString(),
+        source: 'library',
+      });
+    }
   };
 
   // === SAVE LOGIC ===
@@ -1016,38 +1058,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     if (idx > 0) setCurrentStep(visibleSteps[idx - 1]);
   };
 
-  // Document picker — supports PDF, Word, images, and other document types
-  const pickDocument = async (category: string) => {
-    try {
-      const result = await DocumentPicker.pickSingle({
-        type: [
-          DocumentPicker.types.pdf,
-          DocumentPicker.types.images,
-          DocumentPicker.types.doc,
-          DocumentPicker.types.docx,
-        ],
-        copyTo: 'cachesDirectory',
-      });
-      const location = gps || { latitude: 0, longitude: 0, accuracy: 0 };
-      setPhotos(prev => ({
-        ...prev,
-        [category]: {
-          uri: result.fileCopyUri || result.uri,
-          fileName: result.name,
-          fileSize: result.size,
-          type: result.type,
-          latitude: location.latitude,
-          longitude: location.longitude,
-          gpsAccuracy: location.accuracy,
-          capturedAt: new Date().toISOString(),
-        },
-      }));
-    } catch (err: any) {
-      if (!DocumentPicker.isCancel(err)) {
-        Alert.alert('Error', 'Failed to pick document. Please try again.');
-      }
-    }
-  };
+  // (Document picker removed — Step 7 no longer has any document uploads.)
 
   return (
     <View style={styles.container}>
@@ -1322,9 +1333,18 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                     <View style={{ width: '100%', height: 200, borderRadius: borderRadius.lg, overflow: 'hidden', marginBottom: spacing.md, backgroundColor: '#000' }}>
                       <Video source={{ uri: video.uri }} style={{ width: '100%', height: '100%' }} resizeMode="contain" controls={true} paused={true} />
                     </View>
+                    {/* Same marker as photos: a gallery upload is not a live on-site
+                        recording and carries no live fix. */}
+                    {video.source === 'library' && (
+                      <Text style={styles.photoSourceTag}>Uploaded from gallery</Text>
+                    )}
                     <View style={styles.photoActions}>
                       <TouchableOpacity style={[styles.retakeBtn, !gps && styles.captureBtnDisabled]} onPress={captureVideo} disabled={!gps}>
                         <Icon name="camera-retake" size={16} color={colors.textSecondary} /><Text style={styles.retakeBtnText}>Retake</Text>
+                      </TouchableOpacity>
+                      {/* Gallery re-pick has no GPS gate — it does not use the live fix. */}
+                      <TouchableOpacity style={styles.retakeBtn} onPress={pickVideoFromLibrary}>
+                        <Icon name="image-multiple" size={16} color={colors.textSecondary} /><Text style={styles.retakeBtnText}>Gallery</Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={styles.removeBtn} onPress={() => setVideo(null)}>
                         <Icon name="delete" size={16} color={colors.error} /><Text style={styles.removeBtnText}>Remove</Text>
@@ -1332,10 +1352,18 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                     </View>
                   </View>
                 ) : (
-                  <TouchableOpacity style={[styles.captureBtn, !gps && styles.captureBtnDisabled]} onPress={captureVideo} disabled={recording || !gps}>
-                    <Icon name={gps ? 'video' : 'crosshairs-gps'} size={24} color={colors.textSecondary} />
-                    <Text style={styles.captureBtnText}>{recording ? 'Opening Camera...' : !gps ? 'Waiting for GPS lock...' : 'Record Video'}</Text>
-                  </TouchableOpacity>
+                  <View style={styles.captureRow}>
+                    <TouchableOpacity style={[styles.captureBtn, styles.captureBtnHalf, !gps && styles.captureBtnDisabled]} onPress={captureVideo} disabled={recording || !gps}>
+                      <Icon name={gps ? 'video' : 'crosshairs-gps'} size={24} color={colors.textSecondary} />
+                      <Text style={styles.captureBtnText}>{recording ? 'Opening...' : !gps ? 'Waiting for GPS...' : 'Record'}</Text>
+                    </TouchableOpacity>
+                    {/* Enabled even without a GPS lock — an uploaded video is not
+                        geotagged with the live fix, so it does not need one. */}
+                    <TouchableOpacity style={[styles.captureBtn, styles.captureBtnHalf]} onPress={pickVideoFromLibrary}>
+                      <Icon name="image-multiple" size={24} color={colors.textSecondary} />
+                      <Text style={styles.captureBtnText}>Gallery</Text>
+                    </TouchableOpacity>
+                  </View>
                 )}
               </View>
             </View>
@@ -1400,18 +1428,8 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           <View style={styles.formSection}>
             <Text style={styles.sectionHeader}>About Business</Text>
             <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={aboutBusiness} onChangeText={setAboutBusiness} placeholder="History, achievements, brief profile..." placeholderTextColor={colors.textMuted} />
-            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Documents</Text>
-            {/* PAN Card and Establishment Certificate uploads removed by request.
-                GST Certificate remains, and is optional like everything else. */}
-            {[{ key: 'GST_DOC', label: 'GST Certificate' }].map(doc => (
-              <View key={doc.key} style={{ marginBottom: spacing.md }}>
-                <Text style={{ ...typography.body, color: colors.textPrimary, marginBottom: spacing.xs }}>{doc.label}</Text>
-                {photos[doc.key] ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}><Icon name="check-circle" size={20} color={colors.success} /><Text style={{ ...typography.bodySmall, color: colors.success, flex: 1 }}>{photos[doc.key].fileName || 'Uploaded'}</Text><TouchableOpacity onPress={() => setPhotos(p => { const np = {...p}; delete np[doc.key]; return np; })}><Icon name="close-circle" size={18} color={colors.error} /></TouchableOpacity></View>
-                ) : (
-                  <TouchableOpacity style={[styles.captureBtn, { paddingVertical: spacing.md }]} onPress={() => pickDocument(doc.key)}><Icon name="file-upload" size={20} color={colors.textSecondary} /><Text style={styles.captureBtnText}>Upload {doc.label}</Text></TouchableOpacity>
-                )}
-              </View>))}
+            {/* Document uploads removed by request — PAN Card, Establishment
+                Certificate and now GST Certificate. Step 7 collects About Business only. */}
           </View>
         )}
 
