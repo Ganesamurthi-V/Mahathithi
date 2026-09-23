@@ -10,7 +10,7 @@ import path from 'path';
 interface UploadMediaData {
   enumeratorId: string;
   surveyId: string;
-  type: 'PHOTO' | 'VIDEO' | 'DOCUMENT';
+  type: 'PHOTO' | 'DOCUMENT';
   photoCategory?: string;
   fileName: string;
   fileBuffer: Buffer;
@@ -19,7 +19,6 @@ interface UploadMediaData {
   latitude?: number;
   longitude?: number;
   gpsAccuracy?: number;
-  duration?: number;
   localId?: string;
 }
 
@@ -81,15 +80,6 @@ export class MediaService {
       }
     }
 
-    if (data.type === 'VIDEO') {
-      const existingVideos = await prisma.media.count({
-        where: { surveyId: resolvedSurveyId, type: 'VIDEO', deletedAt: null },
-      });
-      if (existingVideos >= 10) {
-        throw new Error('Maximum 10 videos allowed per survey');
-      }
-    }
-
     if (data.type === 'DOCUMENT') {
       const existingDocs = await prisma.media.count({
         where: { surveyId: resolvedSurveyId, type: 'DOCUMENT', deletedAt: null },
@@ -105,9 +95,7 @@ export class MediaService {
     const ext = path.extname(data.fileName).toLowerCase().replace(/[^a-z0-9.]/g, '');
     const safeStorageName = `${uuidv4()}${ext}`;
 
-    const s3Prefix =
-      data.type === 'PHOTO' ? 'photo' :
-      data.type === 'VIDEO' ? 'video' : 'document';
+    const s3Prefix = data.type === 'PHOTO' ? 'photo' : 'document';
     const s3Key = generateS3Key(
       s3Prefix,
       resolvedSurveyId,
@@ -137,7 +125,6 @@ export class MediaService {
         longitude: data.longitude,
         gpsAccuracy: data.gpsAccuracy,
         capturedAt: new Date(),
-        duration: data.duration,
         isSynced: true,
         localId: data.localId,
       },
@@ -177,7 +164,7 @@ export class MediaService {
     });
 
     // PERF: sign all presigned URLs concurrently instead of sequentially.
-    // A survey can hold up to 50 photos + 10 videos; the old serial loop made
+    // A survey can hold up to 50 photos + 50 documents; the old serial loop made
     // one S3 signing round-trip per item, so opening a media-heavy survey blocked
     // for seconds. Promise.all collapses that into a single parallel batch.
     await Promise.all(

@@ -15,14 +15,14 @@ export class MediaController {
       }
 
       // M5 FIX: validate + enforce length limits on form-data fields via Zod
-      const { surveyId, type, photoCategory, latitude, longitude, gpsAccuracy, duration, localId } = mediaUploadFieldsSchema.parse(req.body);
+      const { surveyId, type, photoCategory, latitude, longitude, gpsAccuracy, localId } = mediaUploadFieldsSchema.parse(req.body);
 
       // C3/C4 FIX: pass caller's districts and admin flag so service can enforce access
       const media = await mediaService.upload(
         {
           enumeratorId: req.enumerator!.id,
           surveyId,
-          type: type as 'PHOTO' | 'VIDEO' | 'DOCUMENT',
+          type: type as 'PHOTO' | 'DOCUMENT',
           photoCategory,
           fileName: file.originalname,
           fileBuffer: file.buffer,
@@ -31,7 +31,6 @@ export class MediaController {
           latitude: latitude ? parseFloat(latitude) : undefined,
           longitude: longitude ? parseFloat(longitude) : undefined,
           gpsAccuracy: gpsAccuracy ? parseFloat(gpsAccuracy) : undefined,
-          duration: duration ? parseInt(duration, 10) : undefined,
           localId,
         },
         req.enumerator!.districts,

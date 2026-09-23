@@ -15,7 +15,6 @@ import { colors, spacing, borderRadius, typography, shadows } from '../../theme'
 import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
-import Video from 'react-native-video';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Picker } from '@react-native-picker/picker';
 
@@ -259,8 +258,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
   // Media State
   const [photos, setPhotos] = useState<Record<string, any>>({});
-  const [video, setVideo] = useState<any>(null);
-  const [recording, setRecording] = useState(false);
 
   // ─── Step 1: Category & Type ───────────────────────────────────────────────
   const [selectedCategory, setSelectedCategory] = useState<string>(existingSurvey?.business_category || existingSurvey?.businessCategory || '');
@@ -294,11 +291,11 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   const scrollViewRef = useRef<any>(null);
   const isSubmitSuccessRef = useRef(false);
 
-  // Reopening a saved (draft or otherwise) survey must restore the photos and
-  // video the enumerator already captured — otherwise the media slots look empty
-  // and it appears the app "forgot" their work. The text fields are prefilled from
+  // Reopening a saved (draft or otherwise) survey must restore the photos the
+  // enumerator already captured — otherwise the media slots look empty and it
+  // appears the app "forgot" their work. The text fields are prefilled from
   // existingSurvey above; this does the same for media, reading the rows saved
-  // against this survey and rebuilding the `photos` map + `video` from them.
+  // against this survey and rebuilding the `photos` map from them.
   useEffect(() => {
     const localSurveyId = existingSurvey?.id;
     if (!localSurveyId) return;
@@ -310,7 +307,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         if (cancelled || !rows?.length) return;
 
         const restoredPhotos: Record<string, any> = {};
-        let restoredVideo: any = null;
 
         for (const m of rows) {
           const media = {
@@ -322,14 +318,11 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             longitude: m.longitude,
             gpsAccuracy: m.gps_accuracy,
             capturedAt: m.captured_at,
-            duration: m.duration,
             // Restores the on-site vs gallery tag. Rows saved before the `source`
             // column existed have none, so default to camera (the on-site path).
             source: m.source || 'camera',
           };
-          if (m.type === 'VIDEO') {
-            restoredVideo = media;
-          } else if (m.photo_category) {
+          if (m.photo_category) {
             // Photos and documents alike live in the `photos` map keyed by category
             // (DISPLAY_IMAGE, GST_DOC, etc.), matching how they were saved.
             restoredPhotos[m.photo_category] = media;
@@ -338,7 +331,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
         if (cancelled) return;
         if (Object.keys(restoredPhotos).length > 0) setPhotos(restoredPhotos);
-        if (restoredVideo) setVideo(restoredVideo);
       } catch (e) {
         console.warn('[Survey] Failed to restore saved media for draft:', e);
       }
@@ -381,7 +373,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       if (isSubmitSuccessRef.current) return;
 
       // Check if user has made any changes
-      const hasMedia = Object.keys(photos).length > 0 || video !== null;
+      const hasMedia = Object.keys(photos).length > 0;
       if (!isDirty && !hasMedia && !selectedCategory) return;
 
       // Prevent default navigation
@@ -397,7 +389,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       );
     });
     return unsubscribe;
-  }, [navigation, isDirty, photos, video]);
+  }, [navigation, isDirty, photos]);
 
   useEffect(() => {
     // Calculate progress
@@ -407,14 +399,14 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     if (gps) basePercent += 10; // GPS = 10%
     
     // Media progress (50% max). Nothing is "required" any more, so this simply
-    // reflects how much media has been captured across all photo slots + the video,
-    // as a rough guide to how complete the survey is.
-    const totalMediaSlots = PHOTO_CATEGORIES.length + 1; // + walkthrough video
-    const capturedMediaCount = Object.keys(photos).filter(k => PHOTO_CATEGORIES.some(c => c.key === k)).length + (video ? 1 : 0);
-    const mediaPercent = Math.round((capturedMediaCount / totalMediaSlots) * 50);
+    // reflects how much media has been captured across all photo slots, as a
+    // rough guide to how complete the survey is.
+    const totalMediaSlots = PHOTO_CATEGORIES.length;
+    const capturedMediaCount = Object.keys(photos).filter(k => PHOTO_CATEGORIES.some(c => c.key === k)).length;
+    const mediaPercent = totalMediaSlots > 0 ? Math.round((capturedMediaCount / totalMediaSlots) * 50) : 0;
 
     setCompletionPercent(Math.min(100, basePercent + mediaPercent));
-  }, [watchAllFields, gps, photos, video]);
+  }, [watchAllFields, gps, photos]);
 
   const gpsPulseAnim = useRef(new Animated.Value(1)).current;
   useEffect(() => {
@@ -649,7 +641,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   // main capture — if GPS hadn't locked yet, the enumerator couldn't take a
   // photo at all. The form already acquires a location fix once via
   // captureGPS() on load; we reuse that here. This is also more correct:
-  // every photo/video for one survey visit gets the same consistent
+  // every photo for one survey visit gets the same consistent
   // coordinates instead of slightly different ones per shot.
   //
   // The fallback path below (used only if `gps` is somehow still null) had
@@ -816,96 +808,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     }
   };
 
-  const captureVideo = async () => {
-    const hasCameraPermission = await requestCameraPermission();
-    if (!hasCameraPermission) {
-      Alert.alert('Permission Denied', 'Camera permission is required to record video.');
-      return;
-    }
-    const hasLocationPermission = await requestLocationPermission();
-    if (!hasLocationPermission) {
-      Alert.alert('Permission Denied', 'Location permission is required for geotagging videos.');
-      return;
-    }
-
-    const location = await getLocationForMedia();
-    if (!location) {
-      Alert.alert(
-        'Still Acquiring Location',
-        'GPS hasn\'t locked on yet. This can take up to a minute offline — wait for the green checkmark next to "Location" above, then try again.'
-      );
-      return;
-    }
-
-    setRecording(true);
-    const result = await launchCamera({
-      mediaType: 'video',
-      videoQuality: 'high',
-      durationLimit: 60,
-      saveToPhotos: true,
-    });
-
-    if (result.assets && result.assets[0]) {
-      const asset = result.assets[0];
-
-      setVideo({
-        uri: asset.uri,
-        fileName: asset.fileName,
-        fileSize: asset.fileSize,
-        type: asset.type,
-        duration: asset.duration,
-        latitude: location.latitude,
-        longitude: location.longitude,
-        gpsAccuracy: location.accuracy,
-        capturedAt: new Date().toISOString(),
-        source: 'camera',
-      });
-    }
-    setRecording(false);
-  };
-
-  /**
-   * Pick an existing video from the device gallery for the walkthrough slot.
-   *
-   * Same reasoning as pickPhotoFromLibrary: an uploaded video was recorded at some
-   * other time and place, so it is NOT stamped with the live fix. It keeps its own
-   * EXIF coordinates if the picker surfaces any, otherwise null; capturedAt uses the
-   * asset's own timestamp when available. No GPS lock is required to pick one.
-   */
-  const pickVideoFromLibrary = async () => {
-    const result = await launchImageLibrary({
-      mediaType: 'video',
-      includeExtra: true,
-    });
-
-    if (result.didCancel) return;
-    if (result.errorCode) {
-      Alert.alert('Could not open gallery', result.errorMessage || 'Please try again.');
-      return;
-    }
-
-    if (result.assets && result.assets[0]) {
-      const asset = result.assets[0];
-      const exif = (asset as any).exif ?? {};
-      const exifLat = exif.GPSLatitude ?? exif.latitude ?? null;
-      const exifLon = exif.GPSLongitude ?? exif.longitude ?? null;
-      const timestamp = (asset as any).timestamp;
-
-      setVideo({
-        uri: asset.uri,
-        fileName: asset.fileName,
-        fileSize: asset.fileSize,
-        type: asset.type,
-        duration: asset.duration,
-        latitude: typeof exifLat === 'number' ? exifLat : null,
-        longitude: typeof exifLon === 'number' ? exifLon : null,
-        gpsAccuracy: null,
-        capturedAt: timestamp ? new Date(timestamp).toISOString() : new Date().toISOString(),
-        source: 'library',
-      });
-    }
-  };
-
   // === SAVE LOGIC ===
 
   const saveMediaToDb = async (newSurveyId: string) => {
@@ -937,24 +839,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         capturedAt: p.capturedAt,
         // Persist where it came from so a reopened draft shows the right tag.
         source: p.source || 'camera',
-        isSynced: false,
-      });
-    }
-    if (video) {
-      await mediaDao.save({
-        surveyId: newSurveyId,
-        stakeholderId,
-        type: 'VIDEO',
-        filePath: video.uri,
-        fileName: video.fileName,
-        fileSize: video.fileSize,
-        mimeType: video.type || 'video/mp4',
-        latitude: video.latitude,
-        longitude: video.longitude,
-        gpsAccuracy: video.gpsAccuracy,
-        capturedAt: video.capturedAt,
-        duration: video.duration,
-        source: video.source || 'camera',
         isSynced: false,
       });
     }
@@ -1060,11 +944,10 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     if (!selectedCategory) missing.push('Business Category (Step 1)');
     if (selectedSubCategories.length < 1) missing.push('At least one Sub Category (Step 1)');
 
-    // Media — every required photo slot + the walkthrough video.
+    // Media — every required photo slot.
     for (const cat of PHOTO_CATEGORIES) {
       if (cat.required && !photos[cat.key]) missing.push(`${cat.label} photo (Step 3)`);
     }
-    if (!video) missing.push('Walkthrough Video (Step 3)');
 
     if (description.trim().length < 50) {
       missing.push(`Description of at least 50 characters (Step 4) — currently ${description.trim().length}`);
@@ -1081,10 +964,10 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
   /**
    * Submit a completed survey. EVERYTHING required must be present first — all the
-   * text fields, media (photos + video) and terms. If anything is missing the
-   * submit is blocked and the operator is shown the full list to fix, rather than
-   * letting an incomplete survey reach the sync pipeline and be rejected later by
-   * the server. They can still Save as Draft with gaps and finish afterwards.
+   * text fields, media (photos) and terms. If anything is missing the submit is
+   * blocked and the operator is shown the full list to fix, rather than letting an
+   * incomplete survey reach the sync pipeline and be rejected later by the server.
+   * They can still Save as Draft with gaps and finish afterwards.
    */
   const onSubmit = async (data: SurveyFormData) => {
     const missing = collectMissingRequirements(data);
@@ -1412,54 +1295,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                 );
               })}
 
-              <Text style={[styles.sectionHeader, { marginTop: spacing.lg }]}>Verification Video</Text>
-              <View style={styles.photoSlot}>
-                <View style={styles.slotHeader}>
-                  <Icon name="video" size={28} color={video ? colors.success : colors.primary} />
-                  <View style={{ flex: 1, marginLeft: spacing.md }}>
-                    <Text style={styles.slotLabel}>Walkthrough Video</Text>
-                    <Text style={styles.slotReq}>Required (Max 60s)</Text>
-                  </View>
-                  {video && <Icon name="check-circle" size={24} color={colors.success} />}
-                </View>
-                {video ? (
-                  <View>
-                    <View style={{ width: '100%', height: 200, borderRadius: borderRadius.lg, overflow: 'hidden', marginBottom: spacing.md, backgroundColor: '#000' }}>
-                      <Video source={{ uri: video.uri }} style={{ width: '100%', height: '100%' }} resizeMode="contain" controls={true} paused={true} />
-                    </View>
-                    {/* Same marker as photos: a gallery upload is not a live on-site
-                        recording and carries no live fix. */}
-                    {video.source === 'library' && (
-                      <Text style={styles.photoSourceTag}>Uploaded from gallery</Text>
-                    )}
-                    <View style={styles.photoActions}>
-                      <TouchableOpacity style={[styles.retakeBtn, !gps && styles.captureBtnDisabled]} onPress={captureVideo} disabled={!gps}>
-                        <Icon name="camera-retake" size={16} color={colors.textSecondary} /><Text style={styles.retakeBtnText}>Retake</Text>
-                      </TouchableOpacity>
-                      {/* Gallery re-pick has no GPS gate — it does not use the live fix. */}
-                      <TouchableOpacity style={styles.retakeBtn} onPress={pickVideoFromLibrary}>
-                        <Icon name="image-multiple" size={16} color={colors.textSecondary} /><Text style={styles.retakeBtnText}>Gallery</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.removeBtn} onPress={() => setVideo(null)}>
-                        <Icon name="delete" size={16} color={colors.error} /><Text style={styles.removeBtnText}>Remove</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ) : (
-                  <View style={styles.captureRow}>
-                    <TouchableOpacity style={[styles.captureBtn, styles.captureBtnHalf, !gps && styles.captureBtnDisabled]} onPress={captureVideo} disabled={recording || !gps}>
-                      <Icon name={gps ? 'video' : 'crosshairs-gps'} size={24} color={colors.textSecondary} />
-                      <Text style={styles.captureBtnText}>{recording ? 'Opening...' : !gps ? 'Waiting for GPS...' : 'Record'}</Text>
-                    </TouchableOpacity>
-                    {/* Enabled even without a GPS lock — an uploaded video is not
-                        geotagged with the live fix, so it does not need one. */}
-                    <TouchableOpacity style={[styles.captureBtn, styles.captureBtnHalf]} onPress={pickVideoFromLibrary}>
-                      <Icon name="image-multiple" size={24} color={colors.textSecondary} />
-                      <Text style={styles.captureBtnText}>Gallery</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
             </View>
           </View>
         )}
@@ -1674,8 +1509,6 @@ const styles = StyleSheet.create({
   slotLabel: { ...typography.body, fontWeight: '600', color: colors.textPrimary },
   slotReq: { ...typography.caption, color: colors.textMuted },
   photoPreview: { width: '100%', height: 200, borderRadius: borderRadius.lg, marginBottom: spacing.md },
-  videoMetaBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.bgInput, padding: spacing.lg, borderRadius: borderRadius.md, marginBottom: spacing.md },
-  videoMetaText: { ...typography.body, color: colors.textPrimary, fontWeight: '600' },
   photoActions: { flexDirection: 'row', gap: spacing.md },
   retakeBtn: { flex: 1, padding: spacing.md, borderRadius: borderRadius.md, backgroundColor: colors.bgInput, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   retakeBtnText: { color: colors.textSecondary, fontSize: 14, fontWeight: '600' },

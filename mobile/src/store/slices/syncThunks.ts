@@ -546,7 +546,6 @@ export const runAutoSync = createAsyncThunk(
             if (media.latitude != null) formData.append('latitude', String(media.latitude));
             if (media.longitude != null) formData.append('longitude', String(media.longitude));
             if (media.gps_accuracy != null) formData.append('gpsAccuracy', String(media.gps_accuracy));
-            if (media.duration != null) formData.append('duration', String(media.duration));
             formData.append('localId', media.id);
 
             formData.append('file', {

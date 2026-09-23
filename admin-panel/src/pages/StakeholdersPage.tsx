@@ -110,7 +110,7 @@ export default function StakeholdersPage() {
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
         <div>
           <h2>Stakeholders</h2>
-          <p>Browse and verify stakeholder submissions with photos and videos</p>
+          <p>Browse and verify stakeholder submissions with photos and documents</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowAddForm(true)} style={{ whiteSpace: 'nowrap' }}>
           ➕ Add Stakeholder
@@ -281,7 +281,6 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   const photos = useMemo(() => media.filter((m: any) => m.type === 'PHOTO' && !DOC_CATEGORIES.includes(m.photoCategory)), [media]);
   // 'DOCUMENT'-typed rows are handled by the Business Documents section below,
   // so they never appear in the photo grid regardless of photoCategory.
-  const videos = useMemo(() => media.filter((m: any) => m.type === 'VIDEO'), [media]);
 
   // Leaves edit mode the moment you hit Save rather than after the round trip,
   // and writes the new values straight into the cached row so the detail pane and
@@ -701,19 +700,6 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 ) : <div className="gallery-empty">No documents uploaded yet</div>;
               })()}
-            </div>
-
-            <div className="gallery-section">
-              <h4 className="gallery-section-title">🎥 Verification Video ({videos.length})</h4>
-              {videos.length > 0 ? (
-                <div className="video-grid">
-                  {videos.map((video: any) => (
-                    <div key={video.id} className="video-card">
-                      <video controls preload="metadata" style={{ width: '100%', borderRadius: '8px' }}><source src={video.fileUrl} />No video</video>
-                    </div>
-                  ))}
-                </div>
-              ) : <div className="gallery-empty">No video uploaded yet</div>}
             </div>
           </div>
         )}

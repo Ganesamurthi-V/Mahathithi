@@ -334,8 +334,12 @@ model Survey {
 
 enum MediaType {
   PHOTO
-  VIDEO
   DOCUMENT
+  // Legacy value — the walkthrough video feature was removed. PostgreSQL cannot
+  // drop an enum value while old rows still reference it, so VIDEO is retained
+  // here purely so existing media rows keep validating. No new VIDEO rows are
+  // ever created by the app.
+  VIDEO
 }
 
 enum PhotoCategory {
@@ -377,8 +381,6 @@ model Media {
   gpsAccuracy     Float?        @map("gps_accuracy")
   digipin         String?       @map("digipin")
   capturedAt      DateTime      @map("captured_at")
-  duration        Int?          @map("duration")    // seconds, for video
-  thumbnailPath   String?       @map("thumbnail_path") // for video
 
   // Sync
   isSynced        Boolean       @default(false) @map("is_synced")

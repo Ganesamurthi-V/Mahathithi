@@ -117,14 +117,17 @@ export default function StakeholderListScreen({ navigation }: any) {
   const loadStakeholders = async (p = 1, isPullToRefresh = false) => {
     if (isPullToRefresh) setLoading(true);
     try {
-      // Offline-First Architecture: Always read from SQLite
-      const localData = await stakeholderDao.search({}, p);
+      // Offline-First Architecture: Always read from SQLite.
+      // excludeDrafts: stakeholders with a locally-saved draft survey are hidden
+      // here and shown on the Drafts screen instead — this list is only "new"
+      // stakeholders not yet started.
+      const localData = await stakeholderDao.search({}, p, 20, { excludeDrafts: true });
       if (p === 1) {
         setStakeholders(localData);
         // PERF: don't block the list render on the COUNT(*) over 295K rows.
         // Fetch the badge count separately without awaiting so the cards
         // paint immediately; the badge fills in a beat later.
-        stakeholderDao.searchCount({}).then(setTotalCount).catch(() => {});
+        stakeholderDao.searchCount({}, { excludeDrafts: true }).then(setTotalCount).catch(() => {});
       } else {
         setStakeholders(prev => [...prev, ...localData]);
       }
@@ -155,8 +158,8 @@ export default function StakeholderListScreen({ navigation }: any) {
   useEffect(() => {
     const onLocked = ({ stakeholderId }: { stakeholderId: string }) => {
       setStakeholders(prev => prev.filter(s => s.id !== stakeholderId));
-      // Keep the badge honest after removing a row.
-      stakeholderDao.searchCount({}).then(setTotalCount).catch(() => {});
+      // Keep the badge honest after removing a row (drafts excluded, same as the list).
+      stakeholderDao.searchCount({}, { excludeDrafts: true }).then(setTotalCount).catch(() => {});
     };
 
     const onUnlocked = () => {

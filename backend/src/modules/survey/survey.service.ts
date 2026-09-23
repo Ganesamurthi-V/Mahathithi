@@ -204,8 +204,7 @@ export class SurveyService {
    * - Contact Person filled
    * - Phone filled
    * - GPS captured
-   * - Minimum 4 photos
-   * - 1 video
+   * - Minimum 1 photo
    * - Phone verification completed
    */
   async completeSurvey(
@@ -267,12 +266,6 @@ export class SurveyService {
       validationErrors.push(`Minimum 1 photo required (currently: ${photos.length})`);
     }
 
-    // 5. 1 video
-    const videos = survey.media.filter(m => m.type === 'VIDEO');
-    if (videos.length < 1) {
-      validationErrors.push('At least 1 verification video is required');
-    }
-
     // New-form validations
     if (!survey.description || survey.description.trim().length < 50) {
       validationErrors.push('Description must be at least 50 characters');
@@ -325,7 +318,6 @@ export class SurveyService {
           details: {
             stakeholderId: survey.stakeholderId,
             photosCount: photos.length,
-            videosCount: videos.length,
           },
         },
       }),

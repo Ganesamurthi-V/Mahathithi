@@ -3,7 +3,6 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 interface SurveyState {
   currentSurvey: any | null;
   photos: any[];
-  video: any | null;
   gpsData: { latitude: number; longitude: number; accuracy: number } | null;
   isDirty: boolean;
 }
@@ -11,7 +10,6 @@ interface SurveyState {
 const initialState: SurveyState = {
   currentSurvey: null,
   photos: [],
-  video: null,
   gpsData: null,
   isDirty: false,
 };
@@ -39,17 +37,12 @@ const surveySlice = createSlice({
       state.photos.splice(action.payload, 1);
       state.isDirty = true;
     },
-    setVideo: (state, action: PayloadAction<any>) => {
-      state.video = action.payload;
-      state.isDirty = true;
-    },
     setGpsData: (state, action: PayloadAction<{ latitude: number; longitude: number; accuracy: number }>) => {
       state.gpsData = action.payload;
     },
     resetSurvey: (state) => {
       state.currentSurvey = null;
       state.photos = [];
-      state.video = null;
       state.gpsData = null;
       state.isDirty = false;
     },
@@ -58,6 +51,6 @@ const surveySlice = createSlice({
 
 export const {
   setCurrentSurvey, updateSurveyField, addPhoto, removePhoto,
-  setVideo, setGpsData, resetSurvey,
+  setGpsData, resetSurvey,
 } = surveySlice.actions;
 export default surveySlice.reducer;

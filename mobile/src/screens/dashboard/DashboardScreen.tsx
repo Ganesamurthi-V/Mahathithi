@@ -6,6 +6,7 @@ import { RootState, AppDispatch } from '../../store';
 import { setStats, setLoading } from '../../store/slices/dashboardSlice';
 import { logout } from '../../store/slices/authSlice';
 import { dashboardService } from '../../services/api';
+import { surveyDao } from '../../database';
 import { colors, spacing, borderRadius, typography, shadows, iconSizes } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 import { useLiveData } from '../../hooks/useLiveData';
@@ -83,6 +84,11 @@ export default function DashboardScreen({ navigation }: any) {
 
   const [greeting, setGreeting] = useState('Welcome back,');
 
+  // Draft count is device-local (drafts never sync), so it is read straight from
+  // SQLite rather than the server-backed dashboard stats. Kept out of the Redux
+  // stats slice for the same reason — it has no server counterpart.
+  const [draftCount, setDraftCount] = useState(0);
+
   useEffect(() => {
     const hour = new Date().getHours();
     if (hour < 12) setGreeting('Good morning,');
@@ -95,6 +101,14 @@ export default function DashboardScreen({ navigation }: any) {
   // and updates them in the background when the network responds.
   const loadStats = useCallback(async (manualRefresh = false) => {
     if (manualRefresh) dispatch(setLoading(true));
+    // Local draft count first — it works fully offline and does not depend on the
+    // server request below succeeding.
+    try {
+      const drafts = await surveyDao.getDraftCount();
+      setDraftCount(drafts);
+    } catch (e) {
+      // Leave the last known draft count on screen if the read fails.
+    }
     try {
       const res = await dashboardService.getStats();
       dispatch(setStats(res.data.data.stakeholders));
@@ -175,6 +189,20 @@ export default function DashboardScreen({ navigation }: any) {
           <StatCard key={card.label} card={card} index={index} />
         ))}
       </View>
+
+      {/* Drafts — single line, styled like the Assigned Districts bar. Shown
+          separately from the Completed card so an unfinished form is never
+          counted as done. Tapping it opens the list of draft surveys to resume. */}
+      <TouchableOpacity style={styles.draftRow} activeOpacity={0.8} onPress={() => navigation.navigate('Drafts')}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Icon name="file-document-edit-outline" size={moderateScale(20)} color={colors.primary} style={{ marginRight: spacing.sm }} />
+          <Text style={styles.draftLabel}>DRAFTS</Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+          <Text style={styles.draftValue}>{draftCount.toLocaleString()}</Text>
+          <Icon name="chevron-right" size={moderateScale(20)} color={colors.textMuted} />
+        </View>
+      </TouchableOpacity>
 
       {/* Sync Status */}
       <Text style={[styles.sectionTitle, { marginBottom: spacing.lg }]}>Sync Status</Text>
@@ -283,7 +311,7 @@ const styles = StyleSheet.create({
   districtTagText: { color: colors.primary, fontSize: moderateScale(13), fontWeight: '600' },
   sectionTitle: { ...typography.h3, color: colors.textPrimary, letterSpacing: 0.5 },
   statsGrid: {
-    flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.xxxl,
+    flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.lg,
   },
   statCard: {
     width: '48%',
@@ -296,6 +324,15 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: moderateScale(32), fontWeight: '700', marginBottom: spacing.xs },
   statLabel: { ...typography.bodySmall, color: colors.textSecondary, fontWeight: '500' },
+  draftRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: colors.bgCard, borderRadius: borderRadius.lg,
+    padding: spacing.lg, marginBottom: spacing.xxxl,
+    borderWidth: 1, borderColor: colors.border,
+    ...shadows.card,
+  },
+  draftLabel: { ...typography.caption, color: colors.textMuted, letterSpacing: 1, fontWeight: '700', fontSize: moderateScale(11) },
+  draftValue: { ...typography.h3, color: colors.primary, fontWeight: '700' },
   syncCard: {
     backgroundColor: colors.bgCard, borderRadius: borderRadius.xl,
     padding: spacing.xl, borderWidth: 1, borderColor: colors.border,

@@ -485,11 +485,10 @@ export const updateEnumeratorSchema = z.object({
 
 export const mediaUploadFieldsSchema = z.object({
   surveyId: text(200),
-  type: z.enum(['PHOTO', 'VIDEO', 'DOCUMENT']),
+  type: z.enum(['PHOTO', 'DOCUMENT']),
   photoCategory: optText(100),
   latitude: z.string().max(30).optional(),
   longitude: z.string().max(30).optional(),
   gpsAccuracy: z.string().max(20).optional(),
-  duration: z.string().max(20).optional(),
   localId: optText(100),
 });

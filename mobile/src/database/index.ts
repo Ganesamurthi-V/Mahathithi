@@ -479,10 +479,27 @@ export const stakeholderDao = {
     }
   },
 
-  async search(filters: Record<string, string>, page: number = 1, limit: number = 20): Promise<any[]> {
+  async search(
+    filters: Record<string, string>,
+    page: number = 1,
+    limit: number = 20,
+    options: { excludeDrafts?: boolean } = {}
+  ): Promise<any[]> {
     const database = await getDB();
     const conditions: string[] = [];
     const params: any[] = [];
+
+    // The Stakeholders list passes excludeDrafts so a stakeholder that already has
+    // a locally-saved DRAFT survey (is_draft = 1, is_completed = 0) drops off that
+    // list — it lives on the Drafts screen instead. Search does NOT pass this, so
+    // an enumerator can still look a draft business up by name/PIN there.
+    if (options.excludeDrafts) {
+      conditions.push(`NOT EXISTS (
+        SELECT 1 FROM surveys sv
+        WHERE sv.stakeholder_id = stakeholders.id
+          AND sv.is_draft = 1 AND sv.is_completed = 0
+      )`);
+    }
 
     if (filters.name) {
       // COLLATE NOCASE so "amazon" matches "AMAZON" — the raw data is mixed-case
@@ -566,10 +583,23 @@ export const stakeholderDao = {
     return rows;
   },
 
-  async searchCount(filters: Record<string, string>): Promise<number> {
+  async searchCount(
+    filters: Record<string, string>,
+    options: { excludeDrafts?: boolean } = {}
+  ): Promise<number> {
     const database = await getDB();
     const conditions: string[] = [];
     const params: any[] = [];
+
+    // Mirror search(): when the list excludes drafts, the "N items" badge must
+    // count the same set, or it would over-report by the number of drafts.
+    if (options.excludeDrafts) {
+      conditions.push(`NOT EXISTS (
+        SELECT 1 FROM surveys sv
+        WHERE sv.stakeholder_id = stakeholders.id
+          AND sv.is_draft = 1 AND sv.is_completed = 0
+      )`);
+    }
 
     if (filters.name) {
       // COLLATE NOCASE so "amazon" matches "AMAZON" — the raw data is mixed-case
@@ -1017,6 +1047,52 @@ export const surveyDao = {
   },
 
   /**
+   * Count locally-saved DRAFT surveys — partially filled forms the enumerator
+   * saved but has not submitted (is_draft = 1, is_completed = 0). Drafts live
+   * only on the device and never enter the sync pipeline, so this count is not
+   * available from the server and must be computed from SQLite. It is shown on
+   * the dashboard as its own figure, separate from Completed.
+   */
+  async getDraftCount(): Promise<number> {
+    const database = await getDB();
+    const [res] = await database.executeSql(
+      `SELECT COUNT(*) as count FROM surveys WHERE is_draft = 1 AND is_completed = 0`
+    );
+    return res.rows.item(0).count ?? 0;
+  },
+
+  /**
+   * List every locally-saved DRAFT survey (is_draft = 1, is_completed = 0),
+   * newest first, each joined to its stakeholder so the Drafts screen can show a
+   * business name / location and hand the survey form exactly what it needs to
+   * reopen the draft: { stakeholderId, stakeholder, survey }.
+   *
+   * `survey` is the RAW survey row (snake_case columns), matching what
+   * StakeholderDetailScreen passes as `route.params.survey` — SurveyFormScreen
+   * hydrates its fields from that raw row, so keeping the same shape means the
+   * form restores identically whether opened from a stakeholder or from here.
+   *
+   * `stakeholder` is the full stakeholder record (camelCase via mapRowToCamel),
+   * same as what the detail screen passes.
+   */
+  async getDrafts(): Promise<Array<{ stakeholderId: string; stakeholder: any; survey: any }>> {
+    const database = await getDB();
+    const [res] = await database.executeSql(
+      `SELECT * FROM surveys WHERE is_draft = 1 AND is_completed = 0 ORDER BY updated_at DESC`
+    );
+    const out: Array<{ stakeholderId: string; stakeholder: any; survey: any }> = [];
+    for (let i = 0; i < res.rows.length; i++) {
+      const survey = res.rows.item(i);
+      const stakeholder = await stakeholderDao.getById(survey.stakeholder_id);
+      // A draft can only exist for a stakeholder held locally, but guard anyway:
+      // skip an orphaned draft rather than pushing a row with no stakeholder.
+      if (!stakeholder) continue;
+      out.push({ stakeholderId: survey.stakeholder_id, stakeholder, survey });
+    }
+    return out;
+  },
+
+  /**
    * SYNC RELIABILITY FIX: surveys eligible for an upload attempt right now.
    * Excludes rows whose backoff window has not elapsed and rows that exhausted
    * MAX_AUTO_RETRIES (dead-lettered — they need explicit user action).
@@ -1192,7 +1268,7 @@ export const mediaDao = {
    * for the same photo — the file was then uploaded to S3 twice (or more) and
    * appeared duplicated in the admin panel.
    *
-   * A survey holds at most one photo per category and one walkthrough video, so
+   * A survey holds at most one photo per category, so
    * (survey_id, type, photo_category) is a natural key. Deriving the id from it
    * makes INSERT OR REPLACE overwrite the previous row in place, which is what
    * "the user retook this photo" should mean.
@@ -1217,8 +1293,8 @@ export const mediaDao = {
     // existing row in place, which keeps retry_count/next_retry_at/last_error
     // intact when the user retakes a photo.
     await database.executeSql(
-      `INSERT INTO media (id, survey_id, stakeholder_id, type, photo_category, file_path, file_name, file_size, mime_type, latitude, longitude, gps_accuracy, captured_at, duration, thumbnail_path, is_synced, source, retry_count, next_retry_at, last_error)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,NULL)
+      `INSERT INTO media (id, survey_id, stakeholder_id, type, photo_category, file_path, file_name, file_size, mime_type, latitude, longitude, gps_accuracy, captured_at, is_synced, source, retry_count, next_retry_at, last_error)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,NULL)
       ON CONFLICT(id) DO UPDATE SET
         survey_id = excluded.survey_id,
         stakeholder_id = excluded.stakeholder_id,
@@ -1232,14 +1308,12 @@ export const mediaDao = {
         longitude = excluded.longitude,
         gps_accuracy = excluded.gps_accuracy,
         captured_at = excluded.captured_at,
-        duration = excluded.duration,
-        thumbnail_path = excluded.thumbnail_path,
         is_synced = excluded.is_synced,
         source = excluded.source`,
       [id, media.surveyId, media.stakeholderId || null, media.type, media.photoCategory,
        media.filePath, media.fileName, media.fileSize, media.mimeType,
        media.latitude, media.longitude, media.gpsAccuracy, media.capturedAt,
-       media.duration, media.thumbnailPath, media.isSynced ? 1 : 0, media.source || null]
+       media.isSynced ? 1 : 0, media.source || null]
     );
     return id;
   },
@@ -1701,7 +1775,7 @@ export const syncQueueDao = {
     for (let i = 0; i < mRes.rows.length; i++) {
       const r = mRes.rows.item(i);
       out.push({
-        kind: r.type === 'VIDEO' ? 'Video' : `Photo (${r.photo_category || 'uncategorised'})`,
+        kind: r.type === 'DOCUMENT' ? `Document (${r.photo_category || 'uncategorised'})` : `Photo (${r.photo_category || 'uncategorised'})`,
         id: r.id,
         error: r.last_error || 'Unknown error',
       });

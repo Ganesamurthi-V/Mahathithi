@@ -1214,8 +1214,8 @@ interface SurveyMediaUrls {
  *
  * Categories we collect but do NOT export, because the client schema has no
  * column for them: SIGNBOARD, INTERIOR, STAKEHOLDER, ADDITIONAL, DISPLAY_IMAGE,
- * HEADER_SLIDER, CUSTOM_DOC, and all VIDEO rows. listings.header_slider is left
- * NULL as specified — no source field maps to it.
+ * HEADER_SLIDER, CUSTOM_DOC. listings.header_slider is left NULL as specified —
+ * no source field maps to it.
  */
 function mapSurveyMedia(mediaRows: any[]): SurveyMediaUrls {
   const result: SurveyMediaUrls = {
