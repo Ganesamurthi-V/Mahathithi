@@ -105,7 +105,6 @@ export const createSurveySchema = z.object({
   mobileNumber2: optText(20),
   email2: optText(200),
   website: optText(500),
-  businessCategory: optText(200),
   notes: optText(2000),
   gstNumber: optText(15),
   organizationType: optText(200),
@@ -125,10 +124,7 @@ export const createSurveySchema = z.object({
   gpsAccuracy: z.number().min(0).max(10000).optional(),
   localId: optText(100),
 
-  // ─── Step 1: Category & Type ─────────────────────────────────────────────
-  subCategories: z.array(z.string().max(100)).max(3).optional(),
-
-  // ─── Step 2: Basic Information ───────────────────────────────────────────
+  // ─── Step 1: Basic Information ───────────────────────────────────────────
   businessName: optText(500),
   ownerName: optText(200),
   district: optText(200),
@@ -157,7 +153,7 @@ export const createSurveySchema = z.object({
   establishmentCertNo: optText(100),
   fssaiNumber: optText(50),
 
-  // ─── Step 4: Details ─────────────────────────────────────────────────────
+  // ─── Step 3: Details ─────────────────────────────────────────────────────
   description: optText(5000),
   accommodationFacilities: z.array(z.string().max(100)).optional().nullable().transform((v) => (v === null ? undefined : v)),
   accommodationPolicies: optText(5000),
@@ -172,27 +168,20 @@ export const createSurveySchema = z.object({
     answer: z.string().max(2000),
   })).optional().nullable().transform((v) => (v === null ? undefined : v)),
 
-  // ─── Step 5: Rooms & Pricing (Accommodations only) ───────────────────────
+  // ─── Step 4: Rooms & Pricing ─────────────────────────────────────────────
   rooms: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
   couponCodes: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
   saleOff: z.number().min(0).max(100).optional().nullable().transform((v) => (v === null ? undefined : v)),
   additionalServiceFees: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
   bookingNote: optText(2000),
 
-  // ─── Step 6: Your Socials ────────────────────────────────────────────────
+  // ─── Socials (no dedicated step in the form) ──────────────────────────────
   socialLinks: z.array(z.object({
     platform: z.string().max(50),
     url: z.string().max(500),
   })).optional().nullable().transform((v) => (v === null ? undefined : v)),
 
-  // ─── Step 7: Business Documents ──────────────────────────────────────────
-  aboutBusiness: optText(5000),
-  registeredTravelForLife: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
-  registeredGreenLeaf: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
-  receivedTourismAward: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
-  customDocuments: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
-
-  // ─── Step 8: Terms & Conditions ──────────────────────────────────────────
+  // ─── Step 5: Terms & Conditions ──────────────────────────────────────────
   agreedToTerms: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
   declaredInfoCorrect: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
   acknowledgedDotLiability: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
@@ -348,7 +337,6 @@ export const syncSurveyItemSchema = z.object({
   mobileNumber2: optText(20),
   email2: optText(200),
   website: optText(500),
-  businessCategory: optText(200),
   notes: optText(2000),
   gstNumber: optText(15),
   organizationType: optText(200),
@@ -365,10 +353,7 @@ export const syncSurveyItemSchema = z.object({
   gpsAccuracy: z.number().min(0).max(10000).optional(),
   localId: optText(100),
 
-  // ─── Step 1: Category & Type ─────────────────────────────────────────────
-  subCategories: z.array(z.string().max(100)).max(3).optional(),
-
-  // ─── Step 2: Basic Information ───────────────────────────────────────────
+  // ─── Step 1: Basic Information ───────────────────────────────────────────
   businessName: optText(500),
   ownerName: optText(200),
   district: optText(200),
@@ -391,7 +376,7 @@ export const syncSurveyItemSchema = z.object({
   establishmentCertNo: optText(100),
   fssaiNumber: optText(50),
 
-  // ─── Step 4: Details ─────────────────────────────────────────────────────
+  // ─── Step 3: Details ─────────────────────────────────────────────────────
   description: optText(5000),
   accommodationFacilities: z.array(z.string().max(100)).optional().nullable().transform((v) => (v === null ? undefined : v)),
   accommodationPolicies: optText(5000),
@@ -413,20 +398,13 @@ export const syncSurveyItemSchema = z.object({
   additionalServiceFees: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
   bookingNote: optText(2000),
 
-  // ─── Step 6: Your Socials ────────────────────────────────────────────────
+  // ─── Socials (no dedicated step in the form) ──────────────────────────────
   socialLinks: z.array(z.object({
     platform: z.string().max(50),
     url: z.string().max(500),
   })).optional().nullable().transform((v) => (v === null ? undefined : v)),
 
-  // ─── Step 7: Business Documents ──────────────────────────────────────────
-  aboutBusiness: optText(5000),
-  registeredTravelForLife: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
-  registeredGreenLeaf: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
-  receivedTourismAward: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
-  customDocuments: z.array(z.any()).optional().nullable().transform((v) => (v === null ? undefined : v)),
-
-  // ─── Step 8: Terms & Conditions ──────────────────────────────────────────
+  // ─── Step 5: Terms & Conditions ──────────────────────────────────────────
   agreedToTerms: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
   declaredInfoCorrect: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),
   acknowledgedDotLiability: z.boolean().optional().nullable().transform((v) => (v === null ? undefined : v)),

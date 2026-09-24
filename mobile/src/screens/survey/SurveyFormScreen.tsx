@@ -16,7 +16,6 @@ import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { Picker } from '@react-native-picker/picker';
 
 interface SurveyFormData {
   businessName: string;
@@ -35,29 +34,6 @@ interface SurveyFormData {
   nearestHealthcareCenter: string;
 }
 
-// ─── Business Category & Sub-category Constants ──────────────────────────────
-const BUSINESS_CATEGORIES = [
-  'Accommodations',
-  'Aqua Tourism',
-  'Cuisine',
-  'Events and Festivals',
-  'Experiences and Activities',
-  'Experiences and Activities Slots',
-  'Guided Tours',
-  'Tour Operator, Travel Agent and Destination Management Company',
-];
-
-const SUB_CATEGORIES: Record<string, string[]> = {
-  'Accommodations': ['Hotels', 'Resort', 'Agro Tourism/ Farm Stay', 'Apartments', 'Hostels', 'Tourism Villas', 'Tree House', 'Tented Accommodation', 'Home stay', 'Bed and Breakfast', 'Log Huts', 'Staycations', 'Camping Sites', 'Others'],
-  'Aqua Tourism': ['Car Rental', 'Cruises', 'Yachts', 'Houseboats', 'Ferries', 'Sky Dive', 'Jet Ski', 'Rafting', 'Scuba Diving', 'Water Parks', 'Helicopter Rides', 'Others'],
-  'Cuisine': ['Restaurant', 'Food Safaris', 'Authentic Food/Cusines', 'Cafeterias', 'Others'],
-  'Events and Festivals': ['Art', 'Cultural', 'Exhibitions / Conferences', 'Folk Art & Culture', 'Food', 'International Trade Fairs', 'Music Concerts', 'MICE', 'Others'],
-  'Experiences and Activities': ['Adventure Activities', 'Caravan', 'Caves', 'Cultural', 'Museums', 'Spiritual', 'Theme Parks', 'Others'],
-  'Experiences and Activities Slots': ['Adventure Activities', 'Caravan', 'Caves', 'Cultural', 'Museums', 'Spiritual', 'Theme Parks', 'Others'],
-  'Guided Tours': ['Cave Tours', 'Educational Tours', 'Food Testing & Culinary Tours', 'Historical/Landmark Tours', 'Tour', 'Others'],
-  'Tour Operator, Travel Agent and Destination Management Company': ['Cave Tours', 'Day Tours', 'Educational Tours', 'Film City Tours', 'Historical/Landmark Tours', 'Guided Tours', 'Food Tour', 'Food Testing & Culinary Tours', 'Industrial Tours', 'Mining Tours', 'Special/Unique Tours', 'Tour', 'Holiday Tours', 'Others'],
-};
-
 const ACCOMMODATION_FACILITIES = [
   'WiFi', 'Pool', 'Spa', 'Pet Friendly', 'Parking', 'Restaurant', 'Bar',
   'Gym', 'Laundry', 'Air Conditioning', 'Room Service', 'Conference Room', 'Airport Shuttle',
@@ -65,17 +41,19 @@ const ACCOMMODATION_FACILITIES = [
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-const STEP_LABELS = ['Category', 'Business', 'Images', 'Details', 'Rooms', 'Socials', 'Docs', 'Terms'];
+// 5 steps. The old Category (was 1) and Docs (was 7) steps were removed by
+// request, and the remaining steps renumbered 1-5 so the breadcrumb reads
+// continuously instead of skipping numbers.
+const STEP_LABELS = ['Business', 'Images', 'Details', 'Rooms', 'Terms'];
 
-// Every photo is OPTIONAL now — nothing here blocks a save. The enumerator captures
-// Required media for a SUBMIT. A partial draft can still be saved with anything
-// missing (Save as Draft has no checks); these only gate the final Submit, which
-// blocks and warns until every one is captured. STAKEHOLDER slot removed earlier;
-// its DB enum value is kept for old rows.
+// Every photo slot is OPTIONAL. Nothing in this form is required any more —
+// neither Save as Draft nor Submit checks anything — so all slots are marked
+// optional rather than showing a "Required" label the app never enforces.
+// STAKEHOLDER slot removed earlier; its DB enum value is kept for old rows.
 const PHOTO_CATEGORIES = [
-  { key: 'BUILDING_FRONT', label: 'Building Front', icon: 'office-building', required: true },
-  { key: 'SIGNBOARD', label: 'Signboard', icon: 'sign-direction', required: true },
-  { key: 'INTERIOR', label: 'Interior', icon: 'home-variant-outline', required: true },
+  { key: 'BUILDING_FRONT', label: 'Building Front', icon: 'office-building', required: false },
+  { key: 'SIGNBOARD', label: 'Signboard', icon: 'sign-direction', required: false },
+  { key: 'INTERIOR', label: 'Interior', icon: 'home-variant-outline', required: false },
   { key: 'ADDITIONAL', label: 'Additional', icon: 'camera-plus-outline', required: false },
 ];
 
@@ -259,13 +237,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   // Media State
   const [photos, setPhotos] = useState<Record<string, any>>({});
 
-  // ─── Step 1: Category & Type ───────────────────────────────────────────────
-  const [selectedCategory, setSelectedCategory] = useState<string>(existingSurvey?.business_category || existingSurvey?.businessCategory || '');
-  const [selectedSubCategories, setSelectedSubCategories] = useState<string[]>(
-    existingSurvey?.sub_categories ? (typeof existingSurvey.sub_categories === 'string' ? JSON.parse(existingSurvey.sub_categories) : existingSurvey.sub_categories) : []
-  );
-
-  // ─── Step 4: Details ───────────────────────────────────────────────────────
+  // ─── Step 3: Details ───────────────────────────────────────────────────────
   const [description, setDescription] = useState(existingSurvey?.description || '');
   const [accommodationFacilities, setAccommodationFacilities] = useState<string[]>(
     existingSurvey?.accommodation_facilities ? (typeof existingSurvey.accommodation_facilities === 'string' ? JSON.parse(existingSurvey.accommodation_facilities) : existingSurvey.accommodation_facilities) : []
@@ -275,15 +247,12 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     existingSurvey?.working_hours ? (typeof existingSurvey.working_hours === 'string' ? JSON.parse(existingSurvey.working_hours) : existingSurvey.working_hours) : DAYS_OF_WEEK.map(d => ({ day: d, type: 'open_all_day', from: '', to: '' }))
   );
 
-  // ─── Step 5: Rooms & Pricing ───────────────────────────────────────────────
+  // ─── Step 4: Rooms & Pricing ───────────────────────────────────────────────
   const [rooms, setRooms] = useState<any[]>(
     existingSurvey?.rooms ? (typeof existingSurvey.rooms === 'string' ? JSON.parse(existingSurvey.rooms) : existingSurvey.rooms) : []
   );
 
-  // ─── Step 7: Business Documents ────────────────────────────────────────────
-  const [aboutBusiness, setAboutBusiness] = useState(existingSurvey?.about_business || '');
-
-  // ─── Step 8: Terms & Conditions ────────────────────────────────────────────
+  // ─── Step 5: Terms & Conditions ────────────────────────────────────────────
   const [agreedToTerms, setAgreedToTerms] = useState(!!existingSurvey?.agreed_to_terms);
   const [declaredInfoCorrect, setDeclaredInfoCorrect] = useState(!!existingSurvey?.declared_info_correct);
   const [acknowledgedDotLiability, setAcknowledgedDotLiability] = useState(!!existingSurvey?.acknowledged_dot_liability);
@@ -374,7 +343,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
       // Check if user has made any changes
       const hasMedia = Object.keys(photos).length > 0;
-      if (!isDirty && !hasMedia && !selectedCategory) return;
+      if (!isDirty && !hasMedia && !description.trim()) return;
 
       // Prevent default navigation
       e.preventDefault();
@@ -389,7 +358,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       );
     });
     return unsubscribe;
-  }, [navigation, isDirty, photos]);
+  }, [navigation, isDirty, photos, description]);
 
   useEffect(() => {
     // Calculate progress
@@ -872,21 +841,18 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       stakeholderId,
       enumeratorId: user!.id,
       ...data,
-      businessCategory: selectedCategory,
-      subCategories: selectedSubCategories,
       latitude: gps?.latitude,
       longitude: gps?.longitude,
       gpsAccuracy: gps?.accuracy,
-      // Step 4
+      // Step 3 — Details. The Accommodations-only gate is gone along with the
+      // Category step, so these are always collected and always saved.
       description,
-      accommodationFacilities: selectedCategory === 'Accommodations' ? accommodationFacilities : undefined,
-      accommodationPolicies: selectedCategory === 'Accommodations' ? accommodationPolicies : undefined,
+      accommodationFacilities,
+      accommodationPolicies,
       workingHours,
+      // Step 4
+      rooms,
       // Step 5
-      rooms: selectedCategory === 'Accommodations' ? rooms : undefined,
-      // Step 7
-      aboutBusiness,
-      // Step 8
       agreedToTerms,
       declaredInfoCorrect,
       acknowledgedDotLiability,
@@ -929,59 +895,13 @@ export default function SurveyFormScreen({ route, navigation }: any) {
   };
 
   /**
-   * Everything a SUBMIT requires, checked in one place and reused by both the
-   * Step 8 checklist and the submit gate. Mirrors the server's completeSurvey rules
-   * exactly, plus the required media slots, so nothing that would be rejected on
-   * upload can be submitted in the first place. Returns the list of what is still
-   * missing; empty means good to go.
-   */
-  const collectMissingRequirements = (data: SurveyFormData): string[] => {
-    const missing: string[] = [];
-    if (!data.businessName?.trim()) missing.push('Name of Your Business (Step 2)');
-    if (!data.ownerName?.trim()) missing.push('Owner / Proprietor Name (Step 2)');
-    if (!data.mobileNumber?.trim()) missing.push('Mobile Number (Step 2)');
-    if (!gps) missing.push('GPS Location (Step 2) — wait for the location to lock');
-    if (!selectedCategory) missing.push('Business Category (Step 1)');
-    if (selectedSubCategories.length < 1) missing.push('At least one Sub Category (Step 1)');
-
-    // Media — every required photo slot.
-    for (const cat of PHOTO_CATEGORIES) {
-      if (cat.required && !photos[cat.key]) missing.push(`${cat.label} photo (Step 3)`);
-    }
-
-    if (description.trim().length < 50) {
-      missing.push(`Description of at least 50 characters (Step 4) — currently ${description.trim().length}`);
-    }
-    if (!aboutBusiness.trim()) missing.push('About Business (Step 7)');
-    if (selectedCategory === 'Accommodations' && rooms.length < 1) {
-      missing.push('At least 1 Room (Step 5)');
-    }
-    if (!agreedToTerms || !declaredInfoCorrect || !acknowledgedDotLiability) {
-      missing.push('All 3 Terms & Conditions checkboxes (Step 8)');
-    }
-    return missing;
-  };
-
-  /**
-   * Submit a completed survey. EVERYTHING required must be present first — all the
-   * text fields, media (photos) and terms. If anything is missing the submit is
-   * blocked and the operator is shown the full list to fix, rather than letting an
-   * incomplete survey reach the sync pipeline and be rejected later by the server.
-   * They can still Save as Draft with gaps and finish afterwards.
+   * Submit the survey. There are NO requirements: every field, photo and
+   * acknowledgement is optional, so Submit always goes through with whatever has
+   * been filled in. The server side matches this — completeSurvey no longer
+   * validates anything — so a submission can never be rejected for being
+   * incomplete. Save as Draft remains available for work in progress.
    */
   const onSubmit = async (data: SurveyFormData) => {
-    const missing = collectMissingRequirements(data);
-    if (missing.length > 0) {
-      Alert.alert(
-        'Survey incomplete',
-        'Please complete these before submitting:\n\n' +
-          missing.map(m => `•  ${m}`).join('\n') +
-          '\n\nFix them and submit again, or use "Save as Draft" to finish later.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
     setSaving(true);
     try {
       await persistSurvey(data, true);
@@ -1016,13 +936,10 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     { name: 'nearestHealthcareCenter' as const, label: 'Nearest Healthcare Center', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading, isAutocomplete: true, facilityType: 'HEALTHCARE' },
   ];
 
-  // Helper: get visible steps (skip step 5 for non-Accommodation, skip step 6 entirely - no required fields)
-  const getVisibleSteps = () => {
-    if (selectedCategory === 'Accommodations') return [1, 2, 3, 4, 5, 7, 8];
-    return [1, 2, 3, 4, 7, 8]; // skip 5 and 6
-  };
-
-  const visibleSteps = getVisibleSteps();
+  // All 5 steps are always visible. The old conditional skipping existed only to
+  // hide the Accommodations-only Rooms step based on the Category step; with
+  // Category gone there is nothing left to branch on.
+  const visibleSteps = [1, 2, 3, 4, 5];
   const currentStepIndex = visibleSteps.indexOf(currentStep);
 
   const goToNextStep = () => {
@@ -1035,15 +952,13 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     if (idx > 0) setCurrentStep(visibleSteps[idx - 1]);
   };
 
-  // (Document picker removed — Step 7 no longer has any document uploads.)
-
   return (
     <View style={styles.container}>
       <View style={styles.progressContainer}>
         <View style={[styles.progressBar, { width: `${completionPercent}%`, backgroundColor: completionPercent === 100 ? colors.success : colors.primary }]} />
       </View>
 
-      {/* Breadcrumbs — 8 steps */}
+      {/* Breadcrumbs — 5 steps */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.breadcrumbsBar} contentContainerStyle={{ alignItems: 'center', paddingHorizontal: spacing.sm, paddingVertical: spacing.sm }}>
         {visibleSteps.map((step, idx) => (
           <React.Fragment key={step}>
@@ -1075,61 +990,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
         {currentStep === 1 && (
           <View>
-            {/* Step 1: Category & Type */}
-            <View style={styles.formSection}>
-              <Text style={styles.sectionHeader}>Business Category</Text>
-              <Text style={{ ...typography.caption, color: colors.textMuted, marginBottom: spacing.md }}>Select one category that best describes your business</Text>
-              <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, backgroundColor: colors.bgInput }}>
-                <Picker
-                  selectedValue={selectedCategory}
-                  onValueChange={(val) => {
-                    setSelectedCategory(val);
-                    setSelectedSubCategories([]);
-                  }}
-                  style={{ color: colors.textPrimary }}
-                >
-                  <Picker.Item label="-- Select Category --" value="" />
-                  {BUSINESS_CATEGORIES.map(cat => (
-                    <Picker.Item key={cat} label={cat} value={cat} />
-                  ))}
-                </Picker>
-              </View>
-
-              {selectedCategory !== '' && (
-                <>
-                  <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Sub Categories (max 3)</Text>
-                  <Text style={{ ...typography.caption, color: colors.textMuted, marginBottom: spacing.md }}>Select up to 3 sub-categories</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-                    {(SUB_CATEGORIES[selectedCategory] || []).map(sub => {
-                      const isSelected = selectedSubCategories.includes(sub);
-                      return (
-                        <TouchableOpacity
-                          key={sub}
-                          style={[styles.chipBtn, isSelected && styles.chipBtnActive]}
-                          onPress={() => {
-                            if (isSelected) {
-                              setSelectedSubCategories(prev => prev.filter(s => s !== sub));
-                            } else if (selectedSubCategories.length < 3) {
-                              setSelectedSubCategories(prev => [...prev, sub]);
-                            } else {
-                              Alert.alert('Limit Reached', 'Maximum 3 sub-categories allowed.');
-                            }
-                          }}
-                        >
-                          <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>{sub}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </>
-              )}
-            </View>
-          </View>
-        )}
-
-        {currentStep === 2 && (
-          <View>
-            {/* Step 2: Basic Information */}
+            {/* Step 1: Basic Information */}
             {/* GPS Section */}
             <View style={styles.gpsCard}>
               <View style={styles.gpsHeader}>
@@ -1183,7 +1044,6 @@ export default function SurveyFormScreen({ route, navigation }: any) {
                 </View>
               </View>
 
-              {/* District Picker */}
               <AnimatedInput field={{ name: 'district', label: 'District', placeholder: 'Select district' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
               <AnimatedInput field={{ name: 'city', label: 'City', placeholder: 'City name' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
@@ -1235,9 +1095,9 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           </View>
         )}
 
-        {currentStep === 3 && (
+        {currentStep === 2 && (
           <View>
-            {/* Step 3: Images & Media */}
+            {/* Step 2: Images & Media */}
             <View style={styles.formSection}>
               <Text style={styles.sectionHeader}>Photos</Text>
               {PHOTO_CATEGORIES.map((cat) => {
@@ -1299,29 +1159,24 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           </View>
         )}
 
-        {currentStep === 4 && (
+        {currentStep === 3 && (
           <View style={styles.formSection}>
             <Text style={styles.sectionHeader}>Description</Text>
-            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={description} onChangeText={setDescription} placeholder="Describe your business (min 50 characters)" placeholderTextColor={colors.textMuted} />
-            {/* Soft hint mirroring the server rule: turns green once it will pass. */}
-            <Text style={{ ...typography.caption, color: description.trim().length >= 50 ? colors.success : colors.warning, marginTop: spacing.xs }}>
-              {description.trim().length >= 50
-                ? `${description.trim().length} characters`
-                : `${description.trim().length} / 50 characters minimum`}
-            </Text>
-            {selectedCategory === 'Accommodations' && (
-              <>
-                <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Facilities</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-                  {ACCOMMODATION_FACILITIES.map(fac => { const isChecked = accommodationFacilities.includes(fac); return (
-                    <TouchableOpacity key={fac} style={[styles.chipBtn, isChecked && styles.chipBtnActive]} onPress={() => setAccommodationFacilities(prev => isChecked ? prev.filter(f => f !== fac) : [...prev, fac])}>
-                      <Text style={[styles.chipText, isChecked && styles.chipTextActive]}>{fac}</Text>
-                    </TouchableOpacity>); })}
-                </View>
-                <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Policies</Text>
-                <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 100, textAlignVertical: 'top', padding: spacing.md }]} multiline value={accommodationPolicies} onChangeText={setAccommodationPolicies} placeholder="Check-in/out, cancellation, refund policies..." placeholderTextColor={colors.textMuted} />
-              </>
-            )}
+            {/* No minimum length — the description can be any length, including
+                empty, and never blocks a submit. */}
+            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={description} onChangeText={setDescription} placeholder="Describe your business" placeholderTextColor={colors.textMuted} />
+            {/* Accommodation Facilities / Policies used to be shown only for the
+                Accommodations category. The Category step is gone, so they are now
+                available for every business. */}
+            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Facilities</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
+              {ACCOMMODATION_FACILITIES.map(fac => { const isChecked = accommodationFacilities.includes(fac); return (
+                <TouchableOpacity key={fac} style={[styles.chipBtn, isChecked && styles.chipBtnActive]} onPress={() => setAccommodationFacilities(prev => isChecked ? prev.filter(f => f !== fac) : [...prev, fac])}>
+                  <Text style={[styles.chipText, isChecked && styles.chipTextActive]}>{fac}</Text>
+                </TouchableOpacity>); })}
+            </View>
+            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Policies</Text>
+            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 100, textAlignVertical: 'top', padding: spacing.md }]} multiline value={accommodationPolicies} onChangeText={setAccommodationPolicies} placeholder="Check-in/out, cancellation, refund policies..." placeholderTextColor={colors.textMuted} />
             <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Working Hours</Text>
             {workingHours.map((wh, idx) => (
               <View key={wh.day} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm, gap: spacing.sm, flexWrap: 'wrap' }}>
@@ -1338,7 +1193,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           </View>
         )}
 
-        {currentStep === 5 && selectedCategory === 'Accommodations' && (
+        {currentStep === 4 && (
           <View style={styles.formSection}>
             <Text style={styles.sectionHeader}>Rooms</Text>
             {rooms.map((room, idx) => (
@@ -1358,52 +1213,15 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           </View>
         )}
 
-        {currentStep === 7 && (
-          <View style={styles.formSection}>
-            <Text style={styles.sectionHeader}>About Business</Text>
-            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={aboutBusiness} onChangeText={setAboutBusiness} placeholder="History, achievements, brief profile..." placeholderTextColor={colors.textMuted} />
-            {/* Document uploads removed by request — PAN Card, Establishment
-                Certificate and now GST Certificate. Step 7 collects About Business only. */}
-          </View>
-        )}
-
-        {currentStep === 8 && (
+        {currentStep === 5 && (
           <View style={styles.formSection}>
             <Text style={styles.sectionHeader}>Terms & Conditions</Text>
             <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setAgreedToTerms(!agreedToTerms)}><Icon name={agreedToTerms ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={agreedToTerms ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I agree to the Terms & Conditions</Text></TouchableOpacity>
             <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setDeclaredInfoCorrect(!declaredInfoCorrect)}><Icon name={declaredInfoCorrect ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={declaredInfoCorrect ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I declare that all information provided is true and correct</Text></TouchableOpacity>
             <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }} onPress={() => setAcknowledgedDotLiability(!acknowledgedDotLiability)}><Icon name={acknowledgedDotLiability ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={acknowledgedDotLiability ? colors.primary : colors.textMuted} /><Text style={{ ...typography.body, color: colors.textPrimary, marginLeft: spacing.sm, flex: 1 }}>I acknowledge that the Department of Tourism (DOT) is not liable for any financial losses</Text></TouchableOpacity>
-            {/*
-              These are the EXACT rules the server enforces on submit (see
-              survey.service.ts completeSurvey). Shown here as soft marks so the
-              enumerator knows, before submitting, what the server will reject — and
-              can fix it now or Save as Draft instead. They warn but do not disable
-              Submit: the operator may still try, and if the server rejects it the
-              Sync screen shows the reason with a tap-to-edit link.
-
-              Kept in sync with the server: if a rule changes there, change it here.
-            */}
-            <View style={styles.reviewCard}>
-              <Text style={styles.reviewTitle}>Before you submit</Text>
-              {(() => {
-                // Same source of truth as the Submit gate, so the list here is
-                // exactly what will block submission.
-                const problems = collectMissingRequirements(watchAllFields);
-                if (problems.length === 0) {
-                  return <Text style={styles.reviewOk}>• Everything required is filled — ready to submit.</Text>;
-                }
-                return (
-                  <>
-                    <Text style={styles.reviewNote}>Submit is blocked until these are completed. Save as Draft to finish later.</Text>
-                    {problems.map((p, i) => <Text key={i} style={styles.reviewError}>• {p}</Text>)}
-                  </>
-                );
-              })()}
-            </View>
-
-            {/* Two explicit actions. Save Draft stores partial progress locally with
-                no requirements; Submit finalises and uploads. Terms are no longer a
-                hard gate — kept as optional acknowledgements above. */}
+            {/* Two explicit actions. Both are always enabled: nothing in this form
+                is required, so Submit can never be blocked. Save as Draft keeps the
+                survey local; Submit finalises it and hands it to the sync pipeline. */}
             <Animated.View style={{ transform: [{ scale: buttonScaleAnim }], marginTop: spacing.xxl }}>
               <TouchableOpacity style={[styles.submitBtn, saving && styles.submitBtnDisabled]} onPress={handleSubmit(onSubmit)} disabled={saving}>
                 {saving ? (<View style={{ flexDirection: 'row', alignItems: 'center' }}><ActivityIndicator color="#FFF" /><Text style={[styles.submitText, { marginLeft: spacing.md }]}>Saving...</Text></View>) : (<><Icon name="cloud-upload-outline" size={20} color="#FFF" /><Text style={styles.submitText}>Submit Survey</Text></>)}
@@ -1585,32 +1403,12 @@ const styles = StyleSheet.create({
   navButtonNextText: {
     ...typography.button, color: '#FFF', fontSize: 16,
   },
-  reviewCard: {
-    backgroundColor: colors.bgCard, padding: spacing.xl, borderRadius: borderRadius.xl,
-    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg,
-  },
-  reviewTitle: {
-    ...typography.h3, color: colors.textPrimary, marginBottom: spacing.md,
-  },
-  reviewError: {
-    ...typography.bodySmall, color: colors.error, marginBottom: spacing.xs,
-  },
-  // Neutral "not filled yet" note — informational, does not block submission.
-  reviewPending: {
-    ...typography.bodySmall, color: colors.textMuted, marginBottom: spacing.xs,
-  },
-  reviewOk: {
-    ...typography.bodySmall, color: colors.success, marginBottom: spacing.xs,
-  },
   draftBtn: {
     marginTop: spacing.md, borderRadius: borderRadius.full, padding: spacing.lg,
     alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: spacing.sm,
     borderWidth: 1, borderColor: colors.primary, backgroundColor: 'transparent',
   },
   draftBtnText: { ...typography.button, color: colors.primary, fontSize: 16 },
-  reviewNote: {
-    ...typography.caption, color: colors.textSecondary, marginTop: spacing.lg, fontStyle: 'italic',
-  },
   chipBtn: {
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.border,

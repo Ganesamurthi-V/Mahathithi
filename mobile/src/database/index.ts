@@ -996,39 +996,38 @@ export const surveyDao = {
       existingId ||
       `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     await database.executeSql(
+      // business_category, sub_categories and about_business are no longer written:
+      // the Category and Docs steps were removed from the form. The columns remain on
+      // the table so previously-saved surveys keep their values.
       `INSERT OR REPLACE INTO surveys (id, stakeholder_id, enumerator_id,
-        mobile_number, email, business_category,
+        mobile_number, email,
         latitude, longitude, gps_accuracy, nearest_police_station,
         nearest_healthcare_center, is_draft, is_completed, is_synced,
-        sub_categories, business_name, owner_name, district, city, pin_code,
+        business_name, owner_name, district, city, pin_code,
         business_address, aadhar_number, udyam_aadhar_reg_no, pan_number, gst_number,
         description, accommodation_facilities, accommodation_policies, working_hours,
-        rooms, about_business,
+        rooms,
         agreed_to_terms, declared_info_correct, acknowledged_dot_liability, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [id, survey.stakeholderId, survey.enumeratorId,
-       survey.mobileNumber, survey.email, survey.businessCategory,
+       survey.mobileNumber, survey.email,
        survey.latitude, survey.longitude, survey.gpsAccuracy,
        survey.nearestPoliceStation, survey.nearestHealthcareCenter,
        survey.isDraft ? 1 : 0, survey.isCompleted ? 1 : 0, survey.isSynced ? 1 : 0,
-       // Step 1
-       survey.subCategories ? JSON.stringify(survey.subCategories) : null,
-       // Step 2
+       // Step 1 — Basic Information
        survey.businessName || null, survey.ownerName || null, survey.district || null,
        survey.city || null, survey.pinCode || null,
        survey.businessAddress || null,
        survey.aadharNumber || null, survey.udyamAadharRegNo || null, survey.panNumber || null,
        survey.gstNumber || null,
-       // Step 4
+       // Step 3 — Details
        survey.description || null,
        survey.accommodationFacilities ? JSON.stringify(survey.accommodationFacilities) : null,
        survey.accommodationPolicies || null,
        survey.workingHours ? JSON.stringify(survey.workingHours) : null,
-       // Step 5
+       // Step 4 — Rooms
        survey.rooms ? JSON.stringify(survey.rooms) : null,
-       // Step 7
-       survey.aboutBusiness || null,
-       // Step 8
+       // Step 5 — Terms
        survey.agreedToTerms ? 1 : 0,
        survey.declaredInfoCorrect ? 1 : 0,
        survey.acknowledgedDotLiability ? 1 : 0]

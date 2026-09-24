@@ -1,5 +1,5 @@
 import { prisma } from '../../config/database';
-import { NotFoundError, ValidationError, ConflictError } from '../../utils/errors';
+import { NotFoundError, ConflictError } from '../../utils/errors';
 import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
@@ -15,14 +15,12 @@ interface CreateSurveyData {
   enumeratorId: string;
   mobileNumber?: string;
   email?: string;
-  businessCategory?: string;
   nearestPoliceStation?: string;
   nearestHealthcareCenter?: string;
   latitude?: number;
   longitude?: number;
   gpsAccuracy?: number;
   localId?: string;
-  subCategories?: string[];
   businessName?: string;
   ownerName?: string;
   district?: string;
@@ -38,7 +36,6 @@ interface CreateSurveyData {
   accommodationPolicies?: string;
   workingHours?: any;
   rooms?: any;
-  aboutBusiness?: string;
   agreedToTerms?: boolean;
   declaredInfoCorrect?: boolean;
   acknowledgedDotLiability?: boolean;
@@ -75,10 +72,9 @@ export class SurveyService {
     }
 
     // ─── Build new-plan fields payload ───────────────────────────────────────
-    // Strip rooms/accommodation fields when category is not Accommodations
-    const isAccommodation = data.businessCategory === 'Accommodations';
+    // The Category step was removed, so there is no longer anything to branch on:
+    // the accommodation and rooms fields are always saved as sent.
     const newPlanFields = {
-      subCategories: data.subCategories ?? [],
       businessName: data.businessName,
       ownerName: data.ownerName,
       district: data.district,
@@ -90,11 +86,10 @@ export class SurveyService {
       panNumber: data.panNumber,
       gstNumber: data.gstNumber,
       description: data.description,
-      accommodationFacilities: isAccommodation ? data.accommodationFacilities : undefined,
-      accommodationPolicies: isAccommodation ? data.accommodationPolicies : undefined,
+      accommodationFacilities: data.accommodationFacilities,
+      accommodationPolicies: data.accommodationPolicies,
       workingHours: data.workingHours,
-      rooms: isAccommodation ? data.rooms : undefined,
-      aboutBusiness: data.aboutBusiness,
+      rooms: data.rooms,
       agreedToTerms: data.agreedToTerms ?? false,
       declaredInfoCorrect: data.declaredInfoCorrect ?? false,
       acknowledgedDotLiability: data.acknowledgedDotLiability ?? false,
@@ -111,7 +106,6 @@ export class SurveyService {
       update: {
         mobileNumber: data.mobileNumber,
         email: data.email,
-        businessCategory: data.businessCategory,
         nearestPoliceStation: data.nearestPoliceStation,
         nearestHealthcareCenter: data.nearestHealthcareCenter,
         latitude: data.latitude,
@@ -126,7 +120,6 @@ export class SurveyService {
         enumeratorId: data.enumeratorId,
         mobileNumber: data.mobileNumber,
         email: data.email,
-        businessCategory: data.businessCategory,
         nearestPoliceStation: data.nearestPoliceStation,
         nearestHealthcareCenter: data.nearestHealthcareCenter,
         latitude: data.latitude,
@@ -199,13 +192,15 @@ export class SurveyService {
   }
 
   /**
-   * Complete a survey with validation.
-   * Requirements:
-   * - Contact Person filled
-   * - Phone filled
-   * - GPS captured
-   * - Minimum 1 photo
-   * - Phone verification completed
+   * Complete a survey.
+   *
+   * There are NO completeness requirements — no required fields, no minimum photo
+   * count, no minimum description length, no mandatory terms. Whatever the
+   * enumerator submitted is accepted, marked completed, and the stakeholder is
+   * closed and locked to them.
+   *
+   * Still enforced: district isolation (assertStakeholderAccess) and ownership
+   * (an enumerator may only complete their own survey).
    */
   async completeSurvey(
     surveyId: string,
@@ -243,55 +238,15 @@ export class SurveyService {
       throw new ConflictError('You can only complete your own surveys');
     }
 
-    // === VALIDATION CHECKS ===
-    const validationErrors: string[] = [];
-
-    if (!survey.businessName || survey.businessName.trim() === '') {
-      validationErrors.push('Business name is required');
-    }
-
-    // 2. Phone
-    if (!survey.mobileNumber || survey.mobileNumber.trim() === '') {
-      validationErrors.push('Mobile number is required');
-    }
-
-    // 3. GPS
-    if (survey.latitude == null || survey.longitude == null) {
-      validationErrors.push('GPS coordinates are required');
-    }
-
-    // 4. Minimum 1 photo
+    // === NO COMPLETENESS VALIDATION ===
+    // Every field, photo and acknowledgement on the survey form is optional by
+    // request, so completing a survey never fails for missing data. A submission
+    // that reaches here is accepted as-is. Access and ownership are still enforced
+    // above (district isolation + "you can only complete your own surveys"); only
+    // the completeness rules were removed.
     const photos = survey.media.filter(m => m.type === 'PHOTO');
-    if (photos.length < 1) {
-      validationErrors.push(`Minimum 1 photo required (currently: ${photos.length})`);
-    }
 
-    // New-form validations
-    if (!survey.description || survey.description.trim().length < 50) {
-      validationErrors.push('Description must be at least 50 characters');
-    }
-    if (survey.businessCategory === 'Accommodations') {
-      const roomsData = survey.rooms as any[] | null;
-      if (!roomsData || !Array.isArray(roomsData) || roomsData.length < 1) {
-        validationErrors.push('At least 1 room is required for Accommodation listings');
-      }
-    }
-    if (!survey.agreedToTerms || !survey.declaredInfoCorrect || !survey.acknowledgedDotLiability) {
-      validationErrors.push('All Terms & Conditions checkboxes must be accepted');
-    }
-
-    // === DETERMINE STATUS ===
-    // B6 FIX: an incomplete survey is a failed completion, not a success.
-    // Throw a ValidationError (400) carrying the missing requirements as
-    // details instead of returning a 200 with `status: 'OPEN'`. This also
-    // removes the ambiguous `isDraft:false` + `isCompleted:false` state the
-    // old partial-update branch left behind — a survey only leaves draft when
-    // it actually completes.
-    if (validationErrors.length > 0) {
-      throw new ValidationError('Survey is incomplete', validationErrors);
-    }
-
-    // All requirements met → CLOSED + LOCK
+    // Accepted → CLOSED + LOCK
     await prisma.$transaction([
       prisma.survey.update({
         where: { id: surveyId },

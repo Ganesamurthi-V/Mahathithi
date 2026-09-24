@@ -514,18 +514,11 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   ))}
                 </div>
 
-                {/* ─── New Plan: Category & Sub-categories ─── */}
-                {survey.businessCategory && (
-                  <div style={{ marginTop: '16px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Business Category</div>
-                    <span className="badge badge-active">{survey.businessCategory}</span>
-                    {survey.subCategories && survey.subCategories.length > 0 && (
-                      <div style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                        {survey.subCategories.map((sc: string, i: number) => <span key={i} className="badge badge-pending">{sc}</span>)}
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* Business Category / Sub-categories are no longer shown: the
+                    survey form's Category step was removed, so new surveys never
+                    carry them. (The stakeholder's own `category` column, shown in
+                    the table and Record Details above, is a different field and is
+                    unaffected.) */}
 
                 {/* ─── New Plan: Business Info ─── */}
                 {(survey.businessName || survey.ownerName) && (
@@ -630,13 +623,8 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   </div>
                 )}
 
-                {/* ─── New Plan: Business Documents ─── */}
-                {survey.aboutBusiness && (
-                  <div style={{ marginTop: '16px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>About Business</div>
-                    <p style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '8px' }}>{survey.aboutBusiness}</p>
-                  </div>
-                )}
+                {/* The Business Documents step (About Business) was removed from the
+                    survey form, so there is nothing to display here any more. */}
 
                 {/* ─── New Plan: Terms ─── */}
                 {(survey.agreedToTerms || survey.declaredInfoCorrect || survey.acknowledgedDotLiability) && (
