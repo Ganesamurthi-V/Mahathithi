@@ -604,6 +604,27 @@ export const runAutoSync = createAsyncThunk(
           }
 
           // ── Step D: complete ───────────────────────────────────────────────
+          // DRAFT SYNC: only a COMPLETED survey is finalised with complete().
+          // A draft has now had its text + media backed up to the server (Steps
+          // A–C), which is the whole point — but it must stay a draft: no
+          // complete() call, so the stakeholder is never locked and the draft can
+          // still be reopened and edited. `is_completed` is read from the local
+          // row; when this loop was entered for media only (no surveyLocal row in
+          // this pass) we look the flag up so a draft's media pass never completes.
+          let isCompletedSurvey = surveyLocal ? surveyLocal.is_completed === 1 : false;
+          if (!surveyLocal) {
+            const row = await surveyDao.getById(localSurveyId);
+            isCompletedSurvey = !!row && row.is_completed === 1;
+          }
+
+          if (!isCompletedSurvey) {
+            // Draft: its data is safely on the server now. Leave it as a draft and
+            // move on — do NOT complete, do NOT mark completed, do NOT purge the
+            // stakeholder (it stays in the enumerator's work queue to finish).
+            console.log(`[Sync] Draft ${localSurveyId} backed up to server (kept as draft).`);
+            continue;
+          }
+
           // Skip if there is still unsynced media for this survey that simply
           // was not eligible this pass (e.g. sitting in a backoff window).
           const stillPending = await mediaDao.countUnsyncedForSurvey(localSurveyId);

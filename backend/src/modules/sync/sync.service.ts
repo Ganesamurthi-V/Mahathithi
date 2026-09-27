@@ -125,6 +125,13 @@ export class SyncService {
             agreedToTerms: surveyData.agreedToTerms ?? false,
             declaredInfoCorrect: surveyData.declaredInfoCorrect ?? false,
             acknowledgedDotLiability: surveyData.acknowledgedDotLiability ?? false,
+            // DRAFT SYNC: this upload path only ever carries survey DATA, never a
+            // completion. Completion happens exclusively via POST /surveys/:id/complete
+            // (which sets isDraft:false + isCompleted:true + locks the stakeholder).
+            // Forcing isDraft:true here keeps an uploaded draft a draft, and is
+            // harmless for the completed flow because the mobile pipeline uploads
+            // the text FIRST and calls /complete AFTER — complete() re-flips it.
+            isDraft: true,
             isSynced: true,
             syncedAt: new Date(),
           },
@@ -158,6 +165,10 @@ export class SyncService {
             agreedToTerms: surveyData.agreedToTerms ?? false,
             declaredInfoCorrect: surveyData.declaredInfoCorrect ?? false,
             acknowledgedDotLiability: surveyData.acknowledgedDotLiability ?? false,
+            // DRAFT SYNC: see the update branch above — an upload is always draft
+            // data; only /complete finalises. (Prisma also defaults isDraft to
+            // true on create, but we set it explicitly for clarity.)
+            isDraft: true,
             isSynced: true,
             syncedAt: new Date(),
           },

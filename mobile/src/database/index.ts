@@ -1046,6 +1046,21 @@ export const surveyDao = {
   },
 
   /**
+   * Fetch a single survey row by its local id. Used by the sync pipeline to read
+   * the is_completed / is_draft flags for a media-only pass (where the survey row
+   * itself was not among this pass's retryable set) so a draft's media upload is
+   * never mistaken for a completion.
+   */
+  async getById(id: string): Promise<any> {
+    const database = await getDB();
+    const [results] = await database.executeSql(
+      'SELECT * FROM surveys WHERE id = ? LIMIT 1',
+      [id]
+    );
+    return results.rows.length > 0 ? results.rows.item(0) : null;
+  },
+
+  /**
    * Count locally-saved DRAFT surveys — partially filled forms the enumerator
    * saved but has not submitted (is_draft = 1, is_completed = 0). Drafts live
    * only on the device and never enter the sync pipeline, so this count is not
@@ -1101,14 +1116,19 @@ export const surveyDao = {
    */
   async getRetryable(): Promise<any[]> {
     const database = await getDB();
-    // is_completed = 1 is the gate: a partially-filled DRAFT (is_completed = 0,
-    // is_draft = 1) is saved locally only and must NEVER enter the upload pipeline.
-    // Only a survey the enumerator explicitly submitted is uploaded. Its media and
-    // text still live in SQLite either way — a draft is simply not sent.
+    // DRAFT SYNC: both completed surveys AND drafts are now uploaded. Drafts sync
+    // their text + media so they survive device loss and can be resumed on another
+    // device — but the pipeline uploads a draft's data ONLY; it never calls
+    // complete() for it (that would lock the stakeholder). The completed vs draft
+    // branch is decided in the sync pipeline off the is_completed flag on the row.
+    //
+    // The only rows excluded are those already fully on the server: is_synced = 0
+    // catches never-uploaded rows; a draft that was uploaded and hasn't changed
+    // since has is_synced = 1 and drops out until the next edit re-saves it as
+    // is_synced = 0.
     const [results] = await database.executeSql(
       `SELECT * FROM surveys
        WHERE is_synced = 0
-         AND is_completed = 1
          AND retry_count < ?
          AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))`,
       [MAX_AUTO_RETRIES]
@@ -1240,12 +1260,20 @@ export const surveyDao = {
     // is_synced=1 / is_completed=0 forever and was re-attempted on every single
     // sync pass with no backoff and no dead-lettering. Same runaway loop as the
     // media case, just via a different route.
+    // DRAFT SYNC GUARD: `is_draft = 0` is essential now that drafts also upload.
+    // An uploaded draft sits at is_synced = 1 / is_completed = 0 — exactly the
+    // shape this query looks for — so without this clause a synced draft would be
+    // treated as a "stranded completion" and complete() would be called on it,
+    // locking the stakeholder. A draft is finished only when the enumerator
+    // submits it (which sets is_draft = 0, is_completed = 1); until then it is
+    // never a completion candidate.
     const [results] = await database.executeSql(
       `SELECT s.*
        FROM surveys s
        LEFT JOIN media m ON m.survey_id = s.id AND m.is_synced = 0
        WHERE s.is_synced = 1
          AND s.is_completed = 0
+         AND s.is_draft = 0
          AND m.id IS NULL
          AND s.retry_count < ?
          AND (s.next_retry_at IS NULL OR s.next_retry_at <= datetime('now'))`,
@@ -1326,18 +1354,15 @@ export const mediaDao = {
    */
   async getRetryable(): Promise<any[]> {
     const db = await getDB();
-    // Exclude media belonging to a partial DRAFT survey (is_draft = 1,
-    // is_completed = 0). A draft is never uploaded, so its photos/video must not be
-    // either — and must not count as eligible sync work. The media still lives in
-    // SQLite and is restored into the form when the draft is reopened.
+    // DRAFT SYNC: draft media now uploads too. The previous draft-exclusion
+    // subquery is gone — a draft's photos are backed up to the server alongside
+    // its text so nothing is lost if the device is wiped. The server keeps the
+    // survey as a draft; attaching media never completes or locks it.
     const [results] = await db.executeSql(
       `SELECT * FROM media
        WHERE is_synced = 0
          AND retry_count < ?
-         AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
-         AND survey_id NOT IN (
-           SELECT id FROM surveys WHERE is_draft = 1 AND is_completed = 0
-         )`,
+         AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))`,
       [MAX_AUTO_RETRIES]
     );
     const rows = [];
@@ -1359,10 +1384,16 @@ export const mediaDao = {
     );
   },
 
+  // Both counters exclude media that belongs to a still-draft survey. A draft's
+  // media backup uploads in the background but is best-effort; its failures must
+  // not inflate the user-facing "failed / stuck" sync counts, matching how the
+  // survey-side counters already exclude drafts.
   async getFailedCount(): Promise<number> {
     const db = await getDB();
     const [res] = await db.executeSql(
-      `SELECT COUNT(*) as count FROM media WHERE is_synced = 0 AND retry_count > 0 AND retry_count < ?`,
+      `SELECT COUNT(*) as count FROM media
+       WHERE is_synced = 0 AND retry_count > 0 AND retry_count < ?
+         AND survey_id NOT IN (SELECT id FROM surveys WHERE is_draft = 1 AND is_completed = 0)`,
       [MAX_AUTO_RETRIES]
     );
     return res.rows.item(0).count ?? 0;
@@ -1371,7 +1402,9 @@ export const mediaDao = {
   async getDeadLetterCount(): Promise<number> {
     const db = await getDB();
     const [res] = await db.executeSql(
-      `SELECT COUNT(*) as count FROM media WHERE is_synced = 0 AND retry_count >= ?`,
+      `SELECT COUNT(*) as count FROM media
+       WHERE is_synced = 0 AND retry_count >= ?
+         AND survey_id NOT IN (SELECT id FROM surveys WHERE is_draft = 1 AND is_completed = 0)`,
       [MAX_AUTO_RETRIES]
     );
     return res.rows.item(0).count ?? 0;
@@ -1657,9 +1690,12 @@ export const syncQueueDao = {
     );
     const pendingSyncQueue = syncQueueResult.rows.item(0).count ?? 0;
 
-    // Drafts (is_completed = 0 AND is_draft = 1) are deliberately never uploaded,
-    // so they are NOT "pending upload" — excluded from both the survey rows and
-    // their media, or a saved-but-unfinished form would show as stuck sync work.
+    // Drafts (is_completed = 0 AND is_draft = 1) are excluded from this visible
+    // "Pending Uploads" badge on purpose. Drafts DO now back up to the server in
+    // the background (they are eligible in getRetryable), but that backup is a
+    // silent safety net, not "work the enumerator still needs to push". Counting
+    // it here would make simply saving a draft light up a pending badge, which is
+    // confusing. The badge stays meaning: completed surveys awaiting upload.
     const [surveyResult] = await database.executeSql(`
       SELECT COUNT(DISTINCT id) as count FROM (
         SELECT id FROM surveys
@@ -1752,8 +1788,11 @@ export const syncQueueDao = {
     // For a stuck SURVEY, also return its local id and stakeholder_id so the Sync
     // screen can open the survey form directly — letting the enumerator read the
     // rejection reason, fix it (e.g. a too-short description), and re-submit.
+    // is_draft = 0: a draft's background backup is best-effort and must not be
+    // surfaced as user-actionable "stuck" work (it also isn't in the stuck COUNT,
+    // which filters is_draft = 0 — keeping the two consistent).
     const [sRes] = await database.executeSql(
-      `SELECT id, stakeholder_id, business_name, last_error FROM surveys WHERE is_synced = 0 AND retry_count >= ?`,
+      `SELECT id, stakeholder_id, business_name, last_error FROM surveys WHERE is_synced = 0 AND is_draft = 0 AND retry_count >= ?`,
       [MAX_AUTO_RETRIES]
     );
     for (let i = 0; i < sRes.rows.length; i++) {
@@ -1767,8 +1806,12 @@ export const syncQueueDao = {
       });
     }
 
+    // Exclude media belonging to a still-draft survey: like the survey rows above,
+    // a draft's media backup is background best-effort and not user-actionable.
     const [mRes] = await database.executeSql(
-      `SELECT id, type, photo_category, last_error FROM media WHERE is_synced = 0 AND retry_count >= ?`,
+      `SELECT id, type, photo_category, last_error FROM media
+       WHERE is_synced = 0 AND retry_count >= ?
+         AND survey_id NOT IN (SELECT id FROM surveys WHERE is_draft = 1 AND is_completed = 0)`,
       [MAX_AUTO_RETRIES]
     );
     for (let i = 0; i < mRes.rows.length; i++) {

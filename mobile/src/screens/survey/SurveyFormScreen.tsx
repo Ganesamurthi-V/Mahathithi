@@ -884,9 +884,16 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       await persistSurvey(data, false);
       announceLocalDataChange(['stakeholders', 'surveys']);
       dispatch(refreshSyncCountsThunk() as any);
+      // DRAFT SYNC: back the draft up to the server in the background so it
+      // survives device loss / reinstall and can be resumed elsewhere. This does
+      // NOT complete or lock the stakeholder — the draft uploads as a draft and
+      // stays editable and in the enumerator's work queue. (Contrast onSubmit,
+      // which marks the stakeholder CLOSED locally.) Fire-and-forget; if offline
+      // the pipeline picks it up on the next reconnect / heartbeat.
+      dispatch(runAutoSync() as any);
       isSubmitSuccessRef.current = true;
       navigation.navigate('Main', { screen: 'Stakeholders' });
-      Alert.alert('Draft Saved', 'Your progress has been saved on this device. You can finish and submit it later.');
+      Alert.alert('Draft Saved', 'Your progress has been saved and will back up to the server automatically so it is not lost.');
     } catch (e: any) {
       console.error('❌ [Survey] Failed to save draft:', e);
       Alert.alert('Error', 'Failed to save draft. Please try again.');
