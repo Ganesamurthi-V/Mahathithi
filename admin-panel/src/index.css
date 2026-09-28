@@ -70,6 +70,10 @@ body {
 .sidebar-header {
   padding: 24px 20px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .sidebar-logo {
@@ -149,6 +153,12 @@ body {
   width: 24px;
   text-align: center;
 }
+
+/* Mobile-only chrome — hidden on desktop, revealed in the responsive block below. */
+.mobile-topbar { display: none; }
+.hamburger-btn { display: none; }
+.sidebar-close { display: none; }
+.sidebar-backdrop { display: none; }
 
 /* Main Content */
 .main-content {
@@ -933,3 +943,244 @@ select.form-input {
 /* Progress toast for work that was handed off to the background, so the operator
    is told the request is on its way without being made to wait for it. */
 .toast.info { border-left: 3px solid var(--primary); }
+
+/* ============================================================================
+   RESPONSIVE / MOBILE
+   The panel is desktop-first (fixed 280px sidebar + margin-left content). These
+   breakpoints turn it into a phone/tablet layout: an off-canvas sidebar behind a
+   hamburger, full-width content, horizontally scrollable tables, single-column
+   grids, and full-screen modals.
+   ============================================================================ */
+
+/* ---- Tablet and below (<= 900px): sidebar becomes an off-canvas drawer ---- */
+@media (max-width: 900px) {
+  /* The shell is a flex ROW on desktop (sidebar | content). On mobile the sidebar
+     is a fixed off-canvas drawer, and the top bar must sit ABOVE the content, so
+     switch the shell to a column — otherwise the top bar becomes a flex sibling
+     beside the content and steals horizontal space, collapsing the main area. */
+  .app-layout {
+    flex-direction: column;
+  }
+
+  /* Fixed top bar with the hamburger. Sits above content; the sidebar drawer
+     (z 100) and its backdrop (z 90) layer above this when open. */
+  .mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 80;
+    height: 56px;
+    padding: 0 16px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .hamburger-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    font-size: 22px;
+    line-height: 1;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .mobile-topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--text-primary);
+  }
+
+  .mobile-topbar-brand .logo-icon {
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+  }
+
+  /* Drawer: off-screen by default, slides in when .open is applied. */
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: var(--shadow-lg);
+    width: 260px;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 90;
+    animation: fadeIn 0.2s ease;
+  }
+
+  /* Sidebar sits above its backdrop. */
+  .sidebar { z-index: 100; }
+
+  .sidebar-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  /* Content no longer offset by the fixed sidebar. `min-width: 0` is the key
+     fix: a flex item defaults to min-width:auto, so a wide child (a table or a
+     filter row) would stretch .main-content past the viewport and scroll the
+     whole page sideways. Pinning the width to the viewport keeps the page fixed
+     and pushes any overflow into the scrollable containers below. */
+  .main-content {
+    margin-left: 0;
+    padding: 20px 16px;
+    min-width: 0;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  /* Tables would blow out the viewport; let each scroll horizontally within its
+     container instead of stretching the page. */
+  .table-container {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+
+  table {
+    min-width: 640px;
+  }
+
+  /* Tighten the big page headers. */
+  .page-header { margin-bottom: 20px; }
+  .page-header h2 { font-size: 22px; }
+}
+
+/* ---- Phones (<= 600px): denser spacing, single-column grids, full-screen modals ---- */
+@media (max-width: 600px) {
+  .main-content {
+    padding: 16px 12px;
+  }
+
+  .card { padding: 16px; }
+
+  /* Stat cards stack to one column. */
+  .stat-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .stat-card { padding: 18px; }
+  .stat-card .stat-value { font-size: 26px; }
+
+  /* Table header often has a title + action button — let them wrap. */
+  .table-header {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  thead th { padding: 10px 14px; }
+  tbody td { padding: 12px 14px; }
+
+  /* Generic centered modal → full-screen sheet. */
+  .modal {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    padding: 20px 16px;
+  }
+
+  .modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .modal-actions .btn,
+  .modal-actions button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Two-column form/checkbox grids collapse. */
+  .checkbox-list {
+    grid-template-columns: 1fr;
+  }
+
+  /* Verification gallery modal → full screen. */
+  .gallery-modal {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+  }
+
+  .gallery-header {
+    padding: 16px;
+    border-radius: 0;
+  }
+
+  .gallery-header h3 { font-size: 17px; }
+
+  .gallery-body { padding: 16px; }
+
+  /* Detail/info and photo grids go single (info) / smaller (photos). */
+  .gallery-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .photo-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  /* Login card fills the small screen with comfortable padding. */
+  .login-card {
+    padding: 32px 22px;
+    box-shadow: none;
+  }
+
+  /* Toasts span the width instead of a fixed 360px that can overflow. */
+  .toast-container {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+  }
+
+  .toast { max-width: 100%; }
+
+  /* Lightbox close button clear of the notch/edges. */
+  .lightbox-close {
+    top: 14px;
+    right: 14px;
+  }
+}
+
+/* ---- Very small phones (<= 380px): single-column photos ---- */
+@media (max-width: 380px) {
+  .photo-grid {
+    grid-template-columns: 1fr;
+  }
+}
