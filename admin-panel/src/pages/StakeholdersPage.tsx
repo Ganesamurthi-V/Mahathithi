@@ -148,6 +148,10 @@ export default function StakeholdersPage() {
   // all, so the UI can stay silent rather than display a misleading 0.
   const totalKnown = pagination?.totalKnown === true || typeof pagination?.total === 'number';
   const total = totalKnown ? (pagination?.total ?? 0) : null;
+  // Total pages comes straight from the server (ceil(total/limit)) when a total
+  // is known; null when the count was skipped (an expensive name/org/gst/city
+  // filter is active), in which case we fall back to the "Page N" + hasMore UI.
+  const totalPages: number | null = typeof pagination?.totalPages === 'number' ? pagination.totalPages : null;
   // Prefer the server's hasMore over `length < limit`: it comes from an over-fetch,
   // so it is authoritative and works when no total exists.
   const hasMore = pagination?.hasMore ?? stakeholders.length >= 20;
@@ -229,9 +233,11 @@ export default function StakeholdersPage() {
         {isLoading
           ? <SkeletonBlock width={200} height={13} />
           : <span>
-              Showing {stakeholders.length} results
-              {total !== null && total > 0 && ` of ${total.toLocaleString()} total`}
-              {total === null && hasMore && ' (more available)'}
+              {total !== null
+                ? (total === 0
+                    ? 'No results'
+                    : `Showing ${((page - 1) * 20 + 1).toLocaleString()}–${((page - 1) * 20 + stakeholders.length).toLocaleString()} of ${total.toLocaleString()} total`)
+                : <>Showing {stakeholders.length} results{hasMore && ' (more available)'}</>}
             </span>
         }
       </div>
@@ -283,11 +289,13 @@ export default function StakeholdersPage() {
         >
           ← Previous
         </LoadingButton>
-        <span style={{ display: 'flex', alignItems: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>Page {page}</span>
+        <span style={{ display: 'flex', alignItems: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+          {totalPages !== null ? `Page ${page} of ${totalPages.toLocaleString()}` : `Page ${page}`}
+        </span>
         <LoadingButton
           variant="secondary"
           size="sm"
-          disabled={!hasMore || isFetching}
+          disabled={(totalPages !== null ? page >= totalPages : !hasMore) || isFetching}
           loading={isFetching && pendingDirection === 'next'}
           loadingText="Loading…"
           onClick={() => { setPendingDirection('next'); setPage(page + 1); }}

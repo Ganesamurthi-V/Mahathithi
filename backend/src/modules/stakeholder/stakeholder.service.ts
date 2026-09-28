@@ -182,15 +182,24 @@ export class StakeholderService {
     // early exit: it measured 7407 ms, i.e. worse than the count it replaced. Hence
     // no count at all rather than a cheaper one.
     //
-    // The non-admin district scope is excluded from this test on purpose: it is
-    // always present, so counting it as a filter would mean enumerators never see a
-    // total. It is also an indexed equality, not the expensive part.
-    const hasUserFilters = Boolean(
-      name || org || state || district || pinCode || category ||
-      nicCode || gst || taluka || city || status || digipin
-    );
+    // WHEN WE CAN AFFORD THE COUNT
+    //
+    // The count was originally skipped for ANY filter because a name/org ILIKE
+    // '%x%' scan cost ~7x the page. But that over-corrected: the indexed filters
+    // (status, district, pinCode, category-resolved-to-`in`, nicCode, taluka,
+    // digipin) count cheaply, and the admin panel wants a real total + page count
+    // for those — e.g. "Status = Partial Completed".
+    //
+    // So only the substring/ILIKE filters are treated as expensive; when none of
+    // those is active we run the exact COUNT(*) and return a total (which also
+    // yields totalPages). The unfiltered view keeps its exact total as before.
+    //
+    // District scope for a non-admin is deliberately not counted as a "filter":
+    // it is always present and indexed, so treating it as one would deny
+    // enumerators any total.
+    const hasExpensiveFilter = Boolean(name || org || gst || city);
 
-    const countPromise: Promise<number | null> = hasUserFilters
+    const countPromise: Promise<number | null> = hasExpensiveFilter
       ? Promise.resolve(null)
       : prisma.stakeholder.count({ where });
 
