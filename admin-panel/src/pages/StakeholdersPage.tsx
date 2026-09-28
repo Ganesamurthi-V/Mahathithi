@@ -426,16 +426,15 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   };
 
   // ── Media upload (admin) ──────────────────────────────────────────────────
-  // The admin can add photos and videos to a survey. Chosen category applies to
-  // photos; videos are always type VIDEO. Uploads go to the same /media/upload
-  // endpoint the app uses (admin bypasses the ownership check server-side).
+  // The admin can add PHOTOS to a survey. Video upload was removed by request.
+  // Uploads go to the same /media/upload endpoint the app uses (admin bypasses
+  // the ownership check server-side).
   const photoInputRef = useRef<HTMLInputElement>(null);
-  const videoInputRef = useRef<HTMLInputElement>(null);
   const [uploadCategory, setUploadCategory] = useState('ADDITIONAL');
 
   const uploadMut = useMutation({
-    mutationFn: ({ file, type, category }: { file: File; type: 'PHOTO' | 'VIDEO'; category?: string }) =>
-      uploadMedia(survey.id, file, type, category),
+    mutationFn: ({ file, category }: { file: File; category?: string }) =>
+      uploadMedia(survey.id, file, 'PHOTO', category),
     onSuccess: () => {
       // Refresh the gallery so the new file appears (its presigned URL comes back
       // from getBySurvey), and the survey/list in case counts are shown.
@@ -450,12 +449,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   const onPickPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow re-selecting the same file
-    if (file) uploadMut.mutate({ file, type: 'PHOTO', category: uploadCategory });
-  };
-  const onPickVideo = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (file) uploadMut.mutate({ file, type: 'VIDEO' });
+    if (file) uploadMut.mutate({ file, category: uploadCategory });
   };
 
   const DOC_CATEGORIES = ['GST_DOC', 'PAN_CARD_DOC', 'ESTABLISHMENT_CERT_DOC', 'CUSTOM_DOC'];
@@ -464,7 +458,6 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   const photos = useMemo(() => media.filter((m: any) => m.type === 'PHOTO' && !DOC_CATEGORIES.includes(m.photoCategory)), [media]);
   // 'DOCUMENT'-typed rows are handled by the Business Documents section below,
   // so they never appear in the photo grid regardless of photoCategory.
-  const videos = useMemo(() => media.filter((m: any) => m.type === 'VIDEO'), [media]);
 
   // Leaves edit mode the moment you hit Save rather than after the round trip,
   // and writes the new values straight into the cached row so the detail pane and
@@ -984,8 +977,9 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             <div className="gallery-section">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                 <h4 className="gallery-section-title" style={{ margin: 0 }}>📷 Verification Photos ({photos.length})</h4>
-                {/* Admin can add media to any survey (upload allowed even after it is
-                    finalized). Category applies to the photo; videos are type VIDEO. */}
+                {/* Admin can add photos to any survey (upload allowed even after it
+                    is finalized). Category applies to the photo. Video upload was
+                    removed by request. */}
                 {survey && (
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                     <select className="form-input" style={{ width: 'auto', padding: '4px 8px', fontSize: '12px' }} value={uploadCategory} onChange={(e) => setUploadCategory(e.target.value)} disabled={uploadMut.isPending}>
@@ -995,9 +989,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                       <option value="ADDITIONAL">Additional</option>
                     </select>
                     <input ref={photoInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPickPhoto} />
-                    <input ref={videoInputRef} type="file" accept="video/*" style={{ display: 'none' }} onChange={onPickVideo} />
                     <button className="btn btn-secondary btn-sm" onClick={() => photoInputRef.current?.click()} disabled={uploadMut.isPending}>📷 Add Photo</button>
-                    <button className="btn btn-secondary btn-sm" onClick={() => videoInputRef.current?.click()} disabled={uploadMut.isPending}>🎥 Add Video</button>
                     {uploadMut.isPending && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Uploading…</span>}
                   </div>
                 )}
@@ -1015,21 +1007,6 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                 </div>
               ) : <div className="gallery-empty">No photos uploaded yet</div>}
             </div>
-
-            {/* Videos — shown when any exist (e.g. uploaded by an admin here). The
-                mobile walkthrough video was removed, so this is normally empty. */}
-            {videos.length > 0 && (
-              <div className="gallery-section">
-                <h4 className="gallery-section-title">🎥 Videos ({videos.length})</h4>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '12px' }}>
-                  {videos.map((v: any) => (
-                    <video key={v.id} controls preload="metadata" style={{ width: '100%', borderRadius: '8px', background: '#000' }}>
-                      <source src={v.fileUrl} />
-                    </video>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>

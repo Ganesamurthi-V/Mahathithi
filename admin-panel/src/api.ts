@@ -291,18 +291,19 @@ export const finalizeSurvey = (id: string) => api.post(`/admin/surveys/${id}/fin
 export const getMediaBySurvey = (surveyId: string) => api.get(`/media/survey/${surveyId}`);
 
 /**
- * Upload a photo or video to a survey (admin verification).
+ * Upload a photo to a survey (admin verification).
  *
  * Posts multipart/form-data to the same /media/upload endpoint the mobile app
  * uses. The server accepts it because an admin bypasses the survey-ownership
- * check. `type` is 'PHOTO' or 'VIDEO'; photoCategory is optional and only
- * meaningful for photos (e.g. BUILDING_FRONT). The backend re-detects the real
- * MIME type from the file bytes, so a wrong client-declared type is rejected.
+ * check. photoCategory is optional (e.g. BUILDING_FRONT). The backend re-detects
+ * the real MIME type from the file bytes, so a wrong client-declared type is
+ * rejected. (Video upload was removed from the admin panel by request; the `type`
+ * argument is retained only so the endpoint contract stays explicit.)
  */
 export const uploadMedia = (
   surveyId: string,
   file: File,
-  type: 'PHOTO' | 'VIDEO',
+  type: 'PHOTO',
   photoCategory?: string,
 ) => {
   const form = new FormData();
