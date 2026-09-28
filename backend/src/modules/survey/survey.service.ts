@@ -1,5 +1,5 @@
 import { prisma } from '../../config/database';
-import { NotFoundError, ConflictError } from '../../utils/errors';
+import { NotFoundError, ConflictError, ValidationError } from '../../utils/errors';
 import { assertStakeholderAccess } from '../../utils/access-control';
 import { logger } from '../../utils/logger';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
@@ -9,6 +9,50 @@ import { getDigiPin } from '../../utils/digipin';
 // referenced and risked a circular dependency between the survey and
 // stakeholder services.
 
+
+// Server-side format rules for admin survey edits. Mirrors the inline validation
+// in the admin panel so a malformed value is rejected even if it bypasses the UI
+// (a client-side rule is advice, not a constraint — the endpoint is reachable
+// directly). Each rule runs ONLY on a non-empty value: these fields are optional,
+// so blank is allowed; we reject only wrongly-formatted input.
+const SURVEY_FORMAT_RULES: Record<string, { test: (v: string) => boolean; message: string }> = {
+  mobileNumber: {
+    test: (v) => /^(?:\+91[-\s]?|0)?[6-9]\d{9}$/.test(v.replace(/\s+/g, '')),
+    message: 'Mobile number must be a valid 10-digit Indian number',
+  },
+  email: {
+    test: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+    message: 'Email address is not valid',
+  },
+  pinCode: {
+    test: (v) => /^[1-9]\d{5}$/.test(v),
+    message: 'PIN code must be 6 digits',
+  },
+  aadharNumber: {
+    test: (v) => /^\d{12}$/.test(v),
+    message: 'Aadhar number must be exactly 12 digits',
+  },
+  panNumber: {
+    test: (v) => /^[A-Za-z]{5}[0-9]{4}[A-Za-z]$/.test(v),
+    message: 'PAN must be 10 characters, e.g. ABCDE1234F',
+  },
+  gstNumber: {
+    test: (v) => /^[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][0-9A-Za-z]Z[0-9A-Za-z]$/.test(v),
+    message: 'GST number must be a valid 15-character GSTIN',
+  },
+};
+
+function validateSurveyFormats(data: Record<string, any>): string[] {
+  const errors: string[] = [];
+  for (const [field, rule] of Object.entries(SURVEY_FORMAT_RULES)) {
+    const raw = data[field];
+    if (raw === undefined || raw === null) continue;
+    const v = raw.toString().trim();
+    if (v === '') continue; // optional — blank allowed
+    if (!rule.test(v)) errors.push(rule.message);
+  }
+  return errors;
+}
 
 interface CreateSurveyData {
   stakeholderId: string;
@@ -359,6 +403,14 @@ export class SurveyService {
     ];
     for (const key of allowed) {
       if (fields[key] !== undefined) data[key] = fields[key];
+    }
+
+    // Reject malformed values (mobile, email, PIN, Aadhaar, PAN, GST) before the
+    // write. Mirrors the admin panel's inline validation so the guarantee holds
+    // even for a request that skipped the UI.
+    const formatErrors = validateSurveyFormats(data);
+    if (formatErrors.length > 0) {
+      throw new ValidationError('Some fields are not in the correct format', formatErrors);
     }
 
     if (data.latitude != null && data.longitude != null) {

@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage, updateSurvey, finalizeSurvey } from '../api';
+import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage, updateSurvey, finalizeSurvey, uploadMedia } from '../api';
 import type { District } from '../types';
 import { getDigiPin } from '../utils/digipin';
 import {
@@ -43,6 +43,70 @@ const StakeholderRow = memo(function StakeholderRow({ s, onSelect }: { s: any; o
 });
 
 const TABLE_HEADERS = ['Organization', 'District', 'City / Taluka', 'PIN Code', 'DIGIPIN', 'Category', 'Status', 'Actions'];
+
+// Canonical week order for the survey Working Hours editor. Matches the mobile
+// form's day keys so an edited row round-trips to the same shape.
+const WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+// ── Survey field format validation ──────────────────────────────────────────
+// Standard Indian formats. Every rule is applied ONLY to a non-empty value:
+// these fields are optional (an admin can save a partial survey), so a blank
+// field is valid — we only warn when something is typed in the wrong shape.
+// The Aadhaar rule matches the server's own regex (/^\d{12}$/); the rest are
+// enforced client-side for data quality and mirrored in adminEditSurvey.
+const SURVEY_FIELD_RULES: Record<string, { test: (v: string) => boolean; message: string }> = {
+  // 10-digit Indian mobile starting 6-9, optional +91 / leading 0.
+  mobileNumber: {
+    test: (v) => /^(?:\+91[-\s]?|0)?[6-9]\d{9}$/.test(v.replace(/\s+/g, '')),
+    message: 'Enter a valid 10-digit mobile number (optionally with +91).',
+  },
+  email: {
+    test: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+    message: 'Enter a valid email address.',
+  },
+  // Indian PIN: 6 digits, first digit 1-9.
+  pinCode: {
+    test: (v) => /^[1-9]\d{5}$/.test(v),
+    message: 'PIN code must be 6 digits.',
+  },
+  aadharNumber: {
+    test: (v) => /^\d{12}$/.test(v),
+    message: 'Aadhar number must be exactly 12 digits.',
+  },
+  // PAN: 5 letters, 4 digits, 1 letter (case-insensitive input).
+  panNumber: {
+    test: (v) => /^[A-Za-z]{5}[0-9]{4}[A-Za-z]$/.test(v),
+    message: 'PAN must be 10 characters, e.g. ABCDE1234F.',
+  },
+  // GSTIN: 15 chars — 2 digit state, 10-char PAN, entity digit, 'Z', checksum.
+  gstNumber: {
+    test: (v) => /^[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][0-9A-Za-z]Z[0-9A-Za-z]$/.test(v),
+    message: 'GST number must be a valid 15-character GSTIN.',
+  },
+};
+
+/**
+ * Validate one survey field. Returns an error string, or '' when the value is
+ * empty (optional) or correctly formatted. Used both to render inline warnings
+ * as the admin types and to gate the Save button.
+ */
+function validateSurveyField(field: string, value: any): string {
+  const rule = SURVEY_FIELD_RULES[field];
+  if (!rule) return '';
+  const v = (value ?? '').toString().trim();
+  if (v === '') return ''; // optional — blank is fine
+  return rule.test(v) ? '' : rule.message;
+}
+
+/** Collect all format errors in a survey-edit object, keyed by field. */
+function collectSurveyFormatErrors(edit: Record<string, any>): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const field of Object.keys(SURVEY_FIELD_RULES)) {
+    const msg = validateSurveyField(field, edit[field]);
+    if (msg) errors[field] = msg;
+  }
+  return errors;
+}
 
 export default function StakeholdersPage() {
   const [filters, setFilters] = useState({ name: '', district: '', pinCode: '', digipin: '', category: '', status: '' });
@@ -301,9 +365,28 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
         udyamAadharRegNo: survey.udyamAadharRegNo || '',
         gstNumber: survey.gstNumber || '',
         description: survey.description || '',
+        // Working hours: normalize to all 7 days so the editor always shows a full
+        // week even if the enumerator only filled some. Preserve any saved row.
+        workingHours: WEEK_DAYS.map(day => {
+          const saved = Array.isArray(survey.workingHours)
+            ? survey.workingHours.find((w: any) => w.day === day)
+            : null;
+          return saved
+            ? { day, type: saved.type || 'open_all_day', from: saved.from || '', to: saved.to || '' }
+            : { day, type: 'open_all_day', from: '', to: '' };
+        }),
+        // Terms & Conditions flags.
+        agreedToTerms: !!survey.agreedToTerms,
+        declaredInfoCorrect: !!survey.declaredInfoCorrect,
+        acknowledgedDotLiability: !!survey.acknowledgedDotLiability,
       });
     }
   }, [survey]);
+
+  // Live format errors for the survey editor, recomputed as the admin types.
+  // Keyed by field name; empty object means everything is valid.
+  const surveyErrors = useMemo(() => collectSurveyFormatErrors(surveyEdit), [surveyEdit]);
+  const hasSurveyErrors = Object.keys(surveyErrors).length > 0;
 
   const surveyEditMut = useMutation({
     mutationFn: (data: any) => updateSurvey(survey.id, data),
@@ -342,12 +425,46 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
     finalizeMut.mutate();
   };
 
+  // ── Media upload (admin) ──────────────────────────────────────────────────
+  // The admin can add photos and videos to a survey. Chosen category applies to
+  // photos; videos are always type VIDEO. Uploads go to the same /media/upload
+  // endpoint the app uses (admin bypasses the ownership check server-side).
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
+  const [uploadCategory, setUploadCategory] = useState('ADDITIONAL');
+
+  const uploadMut = useMutation({
+    mutationFn: ({ file, type, category }: { file: File; type: 'PHOTO' | 'VIDEO'; category?: string }) =>
+      uploadMedia(survey.id, file, type, category),
+    onSuccess: () => {
+      // Refresh the gallery so the new file appears (its presigned URL comes back
+      // from getBySurvey), and the survey/list in case counts are shown.
+      queryClient.invalidateQueries({ queryKey: ['media', survey?.id] });
+      queryClient.invalidateQueries({ queryKey: ['survey', stakeholder.id] });
+    },
+    onError: (err: any) => {
+      alert(getErrorMessage(err, 'Failed to upload file'));
+    },
+  });
+
+  const onPickPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file
+    if (file) uploadMut.mutate({ file, type: 'PHOTO', category: uploadCategory });
+  };
+  const onPickVideo = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) uploadMut.mutate({ file, type: 'VIDEO' });
+  };
+
   const DOC_CATEGORIES = ['GST_DOC', 'PAN_CARD_DOC', 'ESTABLISHMENT_CERT_DOC', 'CUSTOM_DOC'];
   // PERF: don't re-filter the media array on every modal re-render (edit typing,
   // lightbox open/close); recompute only when the underlying media changes.
   const photos = useMemo(() => media.filter((m: any) => m.type === 'PHOTO' && !DOC_CATEGORIES.includes(m.photoCategory)), [media]);
   // 'DOCUMENT'-typed rows are handled by the Business Documents section below,
   // so they never appear in the photo grid regardless of photoCategory.
+  const videos = useMemo(() => media.filter((m: any) => m.type === 'VIDEO'), [media]);
 
   // Leaves edit mode the moment you hit Save rather than after the round trip,
   // and writes the new values straight into the cached row so the detail pane and
@@ -586,7 +703,12 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                       {surveyEditMode ? (
                         <>
                           <button className="btn btn-secondary btn-sm" onClick={() => setSurveyEditMode(false)} disabled={surveyEditMut.isPending}>Cancel</button>
-                          <button className="btn btn-primary btn-sm" onClick={() => surveyEditMut.mutate(surveyEdit)} disabled={surveyEditMut.isPending}>{surveyEditMut.isPending ? 'Saving…' : 'Save Details'}</button>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => surveyEditMut.mutate(surveyEdit)}
+                            disabled={surveyEditMut.isPending || hasSurveyErrors}
+                            title={hasSurveyErrors ? 'Fix the highlighted fields before saving' : undefined}
+                          >{surveyEditMut.isPending ? 'Saving…' : 'Save Details'}</button>
                         </>
                       ) : (
                         <>
@@ -606,24 +728,110 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                       <div className="form-group" style={{ flex: 1, minWidth: '200px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Owner / Proprietor</label><input className="form-input" value={surveyEdit.ownerName} onChange={(e) => setSurveyEdit({ ...surveyEdit, ownerName: e.target.value })} /></div>
                     </div>
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Mobile</label><input className="form-input" value={surveyEdit.mobileNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, mobileNumber: e.target.value })} /></div>
-                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Email</label><input className="form-input" value={surveyEdit.email} onChange={(e) => setSurveyEdit({ ...surveyEdit, email: e.target.value })} /></div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
+                        <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Mobile</label>
+                        <input className="form-input" style={surveyErrors.mobileNumber ? { borderColor: 'var(--danger, #ef4444)' } : undefined} value={surveyEdit.mobileNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, mobileNumber: e.target.value })} />
+                        {surveyErrors.mobileNumber && <div style={{ color: 'var(--danger, #ef4444)', fontSize: '11px', marginTop: '4px' }}>{surveyErrors.mobileNumber}</div>}
+                      </div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
+                        <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Email</label>
+                        <input className="form-input" style={surveyErrors.email ? { borderColor: 'var(--danger, #ef4444)' } : undefined} value={surveyEdit.email} onChange={(e) => setSurveyEdit({ ...surveyEdit, email: e.target.value })} />
+                        {surveyErrors.email && <div style={{ color: 'var(--danger, #ef4444)', fontSize: '11px', marginTop: '4px' }}>{surveyErrors.email}</div>}
+                      </div>
                     </div>
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                       <div className="form-group" style={{ flex: 1, minWidth: '140px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>District</label><input className="form-input" value={surveyEdit.district} onChange={(e) => setSurveyEdit({ ...surveyEdit, district: e.target.value })} /></div>
                       <div className="form-group" style={{ flex: 1, minWidth: '140px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>City</label><input className="form-input" value={surveyEdit.city} onChange={(e) => setSurveyEdit({ ...surveyEdit, city: e.target.value })} /></div>
-                      <div className="form-group" style={{ flex: 1, minWidth: '120px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>PIN Code</label><input className="form-input" value={surveyEdit.pinCode} onChange={(e) => setSurveyEdit({ ...surveyEdit, pinCode: e.target.value })} /></div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '120px', marginBottom: 0 }}>
+                        <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>PIN Code</label>
+                        <input className="form-input" style={surveyErrors.pinCode ? { borderColor: 'var(--danger, #ef4444)' } : undefined} value={surveyEdit.pinCode} onChange={(e) => setSurveyEdit({ ...surveyEdit, pinCode: e.target.value })} />
+                        {surveyErrors.pinCode && <div style={{ color: 'var(--danger, #ef4444)', fontSize: '11px', marginTop: '4px' }}>{surveyErrors.pinCode}</div>}
+                      </div>
                     </div>
                     <div className="form-group" style={{ marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Business Address</label><input className="form-input" value={surveyEdit.businessAddress} onChange={(e) => setSurveyEdit({ ...surveyEdit, businessAddress: e.target.value })} /></div>
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Aadhar Number</label><input className="form-input" value={surveyEdit.aadharNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, aadharNumber: e.target.value })} /></div>
-                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>PAN Number</label><input className="form-input" value={surveyEdit.panNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, panNumber: e.target.value })} /></div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
+                        <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Aadhar Number</label>
+                        <input className="form-input" inputMode="numeric" maxLength={12} style={surveyErrors.aadharNumber ? { borderColor: 'var(--danger, #ef4444)' } : undefined} value={surveyEdit.aadharNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, aadharNumber: e.target.value })} />
+                        {surveyErrors.aadharNumber && <div style={{ color: 'var(--danger, #ef4444)', fontSize: '11px', marginTop: '4px' }}>{surveyErrors.aadharNumber}</div>}
+                      </div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
+                        <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>PAN Number</label>
+                        <input className="form-input" maxLength={10} style={{ textTransform: 'uppercase', ...(surveyErrors.panNumber ? { borderColor: 'var(--danger, #ef4444)' } : {}) }} value={surveyEdit.panNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, panNumber: e.target.value.toUpperCase() })} />
+                        {surveyErrors.panNumber && <div style={{ color: 'var(--danger, #ef4444)', fontSize: '11px', marginTop: '4px' }}>{surveyErrors.panNumber}</div>}
+                      </div>
                     </div>
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                       <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Udyam Aadhar Reg. No.</label><input className="form-input" value={surveyEdit.udyamAadharRegNo} onChange={(e) => setSurveyEdit({ ...surveyEdit, udyamAadharRegNo: e.target.value })} /></div>
-                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>GST Number</label><input className="form-input" value={surveyEdit.gstNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, gstNumber: e.target.value })} /></div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
+                        <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>GST Number</label>
+                        <input className="form-input" maxLength={15} style={{ textTransform: 'uppercase', ...(surveyErrors.gstNumber ? { borderColor: 'var(--danger, #ef4444)' } : {}) }} value={surveyEdit.gstNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, gstNumber: e.target.value.toUpperCase() })} />
+                        {surveyErrors.gstNumber && <div style={{ color: 'var(--danger, #ef4444)', fontSize: '11px', marginTop: '4px' }}>{surveyErrors.gstNumber}</div>}
+                      </div>
                     </div>
                     <div className="form-group" style={{ marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Description</label><textarea className="form-input" rows={3} value={surveyEdit.description} onChange={(e) => setSurveyEdit({ ...surveyEdit, description: e.target.value })} /></div>
+
+                    {/* ── Working Hours ── per-day Open / Closed / custom from–to. */}
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Working Hours</label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {(surveyEdit.workingHours || []).map((wh: any, idx: number) => (
+                          <div key={wh.day} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span style={{ width: '44px', fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)' }}>{wh.day.slice(0, 3)}</span>
+                            <select
+                              className="form-input"
+                              style={{ width: 'auto', padding: '4px 8px', fontSize: '12px' }}
+                              value={wh.type}
+                              onChange={(e) => {
+                                const type = e.target.value;
+                                setSurveyEdit({
+                                  ...surveyEdit,
+                                  workingHours: surveyEdit.workingHours.map((w: any, i: number) => i === idx ? { ...w, type } : w),
+                                });
+                              }}
+                            >
+                              <option value="open_all_day">Open all day</option>
+                              <option value="closed">Closed</option>
+                              <option value="hours">Custom hours</option>
+                            </select>
+                            {wh.type === 'hours' && (
+                              <>
+                                <input
+                                  className="form-input" placeholder="09:00" style={{ width: '70px', padding: '4px 8px', fontSize: '12px' }}
+                                  value={wh.from || ''}
+                                  onChange={(e) => { const from = e.target.value; setSurveyEdit({ ...surveyEdit, workingHours: surveyEdit.workingHours.map((w: any, i: number) => i === idx ? { ...w, from } : w) }); }}
+                                />
+                                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>–</span>
+                                <input
+                                  className="form-input" placeholder="17:00" style={{ width: '70px', padding: '4px 8px', fontSize: '12px' }}
+                                  value={wh.to || ''}
+                                  onChange={(e) => { const to = e.target.value; setSurveyEdit({ ...surveyEdit, workingHours: surveyEdit.workingHours.map((w: any, i: number) => i === idx ? { ...w, to } : w) }); }}
+                                />
+                              </>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* ── Terms & Conditions ── the three acknowledgement flags. */}
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Terms &amp; Conditions</label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={!!surveyEdit.agreedToTerms} onChange={(e) => setSurveyEdit({ ...surveyEdit, agreedToTerms: e.target.checked })} />
+                          Agreed to Terms &amp; Conditions
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={!!surveyEdit.declaredInfoCorrect} onChange={(e) => setSurveyEdit({ ...surveyEdit, declaredInfoCorrect: e.target.checked })} />
+                          Declared info correct
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={!!surveyEdit.acknowledgedDotLiability} onChange={(e) => setSurveyEdit({ ...surveyEdit, acknowledgedDotLiability: e.target.checked })} />
+                          Acknowledged DOT liability
+                        </label>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                 <>
@@ -774,7 +982,26 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             )}
             
             <div className="gallery-section">
-              <h4 className="gallery-section-title">📷 Verification Photos ({photos.length})</h4>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <h4 className="gallery-section-title" style={{ margin: 0 }}>📷 Verification Photos ({photos.length})</h4>
+                {/* Admin can add media to any survey (upload allowed even after it is
+                    finalized). Category applies to the photo; videos are type VIDEO. */}
+                {survey && (
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <select className="form-input" style={{ width: 'auto', padding: '4px 8px', fontSize: '12px' }} value={uploadCategory} onChange={(e) => setUploadCategory(e.target.value)} disabled={uploadMut.isPending}>
+                      <option value="BUILDING_FRONT">Building Front</option>
+                      <option value="SIGNBOARD">Signboard</option>
+                      <option value="INTERIOR">Interior</option>
+                      <option value="ADDITIONAL">Additional</option>
+                    </select>
+                    <input ref={photoInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPickPhoto} />
+                    <input ref={videoInputRef} type="file" accept="video/*" style={{ display: 'none' }} onChange={onPickVideo} />
+                    <button className="btn btn-secondary btn-sm" onClick={() => photoInputRef.current?.click()} disabled={uploadMut.isPending}>📷 Add Photo</button>
+                    <button className="btn btn-secondary btn-sm" onClick={() => videoInputRef.current?.click()} disabled={uploadMut.isPending}>🎥 Add Video</button>
+                    {uploadMut.isPending && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Uploading…</span>}
+                  </div>
+                )}
+              </div>
               {photos.length > 0 ? (
                 <div className="photo-grid">
                   {photos.map((photo: any) => (
@@ -788,6 +1015,21 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                 </div>
               ) : <div className="gallery-empty">No photos uploaded yet</div>}
             </div>
+
+            {/* Videos — shown when any exist (e.g. uploaded by an admin here). The
+                mobile walkthrough video was removed, so this is normally empty. */}
+            {videos.length > 0 && (
+              <div className="gallery-section">
+                <h4 className="gallery-section-title">🎥 Videos ({videos.length})</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '12px' }}>
+                  {videos.map((v: any) => (
+                    <video key={v.id} controls preload="metadata" style={{ width: '100%', borderRadius: '8px', background: '#000' }}>
+                      <source src={v.fileUrl} />
+                    </video>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

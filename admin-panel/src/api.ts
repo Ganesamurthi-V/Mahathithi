@@ -290,6 +290,31 @@ export const finalizeSurvey = (id: string) => api.post(`/admin/surveys/${id}/fin
 // Media
 export const getMediaBySurvey = (surveyId: string) => api.get(`/media/survey/${surveyId}`);
 
+/**
+ * Upload a photo or video to a survey (admin verification).
+ *
+ * Posts multipart/form-data to the same /media/upload endpoint the mobile app
+ * uses. The server accepts it because an admin bypasses the survey-ownership
+ * check. `type` is 'PHOTO' or 'VIDEO'; photoCategory is optional and only
+ * meaningful for photos (e.g. BUILDING_FRONT). The backend re-detects the real
+ * MIME type from the file bytes, so a wrong client-declared type is rejected.
+ */
+export const uploadMedia = (
+  surveyId: string,
+  file: File,
+  type: 'PHOTO' | 'VIDEO',
+  photoCategory?: string,
+) => {
+  const form = new FormData();
+  form.append('surveyId', surveyId);
+  form.append('type', type);
+  if (photoCategory) form.append('photoCategory', photoCategory);
+  form.append('file', file);
+  // Let the browser set the multipart boundary — overriding the JSON default
+  // Content-Type header on this one request.
+  return api.post('/media/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+};
+
 // Export
 export const getCompletedSurveys = () => api.get('/admin/export/surveys/list');
 export type ExportFormat = 'sql' | 'csv';
