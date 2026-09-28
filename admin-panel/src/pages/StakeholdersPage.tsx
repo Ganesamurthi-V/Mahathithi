@@ -788,30 +788,6 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                 </div>
               ) : <div className="gallery-empty">No photos uploaded yet</div>}
             </div>
-
-            <div className="gallery-section">
-              <h4 className="gallery-section-title">📄 Business Documents</h4>
-              {(() => {
-                const docs = media.filter((m: any) => m.type === 'DOCUMENT' || DOC_CATEGORIES.includes(m.photoCategory));
-                return docs.length > 0 ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
-                    {docs.map((doc: any) => (
-                      <div key={doc.id} style={{ padding: '12px', backgroundColor: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                        <div style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>{categoryLabels[doc.photoCategory] || doc.photoCategory}</div>
-                        {doc.mimeType?.startsWith('image/') ? (
-                          <img src={doc.fileUrl} alt={doc.fileName} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '6px', cursor: 'pointer', marginBottom: '8px' }} onClick={() => setLightbox(doc.fileUrl)} />
-                        ) : (
-                          <div style={{ width: '100%', height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-surface)', borderRadius: '6px', marginBottom: '8px' }}>
-                            <span style={{ fontSize: '32px' }}>📄</span>
-                          </div>
-                        )}
-                        <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '12px', color: 'var(--primary)', wordBreak: 'break-all' }}>{doc.fileName || 'View Document'}</a>
-                      </div>
-                    ))}
-                  </div>
-                ) : <div className="gallery-empty">No documents uploaded yet</div>;
-              })()}
-            </div>
           </div>
         )}
       </div>
