@@ -328,4 +328,138 @@ export class SurveyService {
       orderBy: { updatedAt: 'desc' },
     });
   }
+
+  /**
+   * ADMIN: edit a survey's fields.
+   *
+   * For the admin verification workflow: a partially-completed (draft) survey the
+   * mobile enumerator uploaded can be opened by an admin, who fills in / corrects
+   * missing details before finalizing it. Unlike createOrUpdate this is NOT scoped
+   * to an owning enumerator (admins verify everyone's work) and it does NOT touch
+   * isDraft / isCompleted / stakeholder status — editing never finalizes. Only
+   * adminFinalizeSurvey (or the mobile complete()) closes a survey.
+   *
+   * Only known survey columns are written; any other keys are ignored so a stray
+   * field from the client can never reach Prisma.
+   */
+  async adminEditSurvey(surveyId: string, fields: Partial<CreateSurveyData>) {
+    const existing = await prisma.survey.findUnique({ where: { id: surveyId } });
+    if (!existing) throw new NotFoundError('Survey');
+
+    // Whitelist the editable columns. Recompute digipin if coordinates change.
+    const data: any = {};
+    const allowed: (keyof CreateSurveyData)[] = [
+      'mobileNumber', 'email', 'nearestPoliceStation', 'nearestHealthcareCenter',
+      'latitude', 'longitude', 'gpsAccuracy',
+      'businessName', 'ownerName', 'district', 'city', 'pinCode', 'businessAddress',
+      'aadharNumber', 'udyamAadharRegNo', 'panNumber', 'gstNumber',
+      'description', 'accommodationFacilities', 'accommodationPolicies',
+      'workingHours', 'rooms',
+      'agreedToTerms', 'declaredInfoCorrect', 'acknowledgedDotLiability',
+    ];
+    for (const key of allowed) {
+      if (fields[key] !== undefined) data[key] = fields[key];
+    }
+
+    if (data.latitude != null && data.longitude != null) {
+      try {
+        data.digipin = getDigiPin(data.latitude, data.longitude);
+      } catch (e) { /* leave digipin untouched if computation fails */ }
+    }
+
+    const survey = await prisma.survey.update({ where: { id: surveyId }, data });
+
+    await prisma.auditLog.create({
+      data: {
+        action: 'survey_admin_edited',
+        entityType: 'survey',
+        entityId: surveyId,
+        enumeratorId: existing.enumeratorId,
+        details: { stakeholderId: existing.stakeholderId, editedFields: Object.keys(data) },
+      },
+    });
+
+    // Admins watching the detail view / list see the edit land live.
+    broadcastChange(['surveys', 'stakeholders'], { action: 'update', entityId: surveyId });
+
+    return survey;
+  }
+
+  /**
+   * ADMIN: finalize (complete) a survey.
+   *
+   * Same terminal transition as the mobile completeSurvey — survey becomes
+   * isDraft:false / isCompleted:true and the stakeholder is set CLOSED + locked —
+   * but reached from the admin verification flow instead of the field device.
+   *
+   * Two deliberate differences from completeSurvey():
+   *   - NO ownership check. An admin finalizes any enumerator's survey; that is the
+   *     whole point of the verification step.
+   *   - The stakeholder is locked to the survey's OWN enumerator (survey.enumeratorId),
+   *     not to the admin, so field attribution is preserved.
+   *
+   * Only a CLOSED (completed) survey is ever exported, so finalizing here is what
+   * moves a verified draft into the export set.
+   */
+  async adminFinalizeSurvey(surveyId: string) {
+    const survey = await prisma.survey.findUnique({
+      where: { id: surveyId },
+      include: { stakeholder: true },
+    });
+    if (!survey) throw new NotFoundError('Survey');
+
+    if (survey.isCompleted) {
+      // Idempotent: already finalized. Return the current state rather than
+      // double-locking or writing a second audit row.
+      return { status: 'CLOSED', message: 'Survey is already completed.' };
+    }
+
+    await prisma.$transaction([
+      prisma.survey.update({
+        where: { id: surveyId },
+        data: { isDraft: false, isCompleted: true, completedAt: new Date() },
+      }),
+      prisma.stakeholder.update({
+        where: { id: survey.stakeholderId },
+        data: {
+          status: 'CLOSED',
+          // Attribute the lock to the field enumerator who did the survey, not
+          // the admin performing verification.
+          lockedById: survey.enumeratorId,
+          lockedAt: new Date(),
+        },
+      }),
+      prisma.auditLog.create({
+        data: {
+          action: 'survey_admin_finalized',
+          entityType: 'survey',
+          entityId: surveyId,
+          enumeratorId: survey.enumeratorId,
+          details: { stakeholderId: survey.stakeholderId },
+        },
+      }),
+    ]);
+
+    logger.info(`Survey admin-finalized: ${surveyId}, stakeholder ${survey.stakeholderId} closed`);
+
+    // Same fan-out as a mobile completion so every open admin view + the field
+    // device that owns it converge on CLOSED.
+    if (survey.stakeholder.district) {
+      emitToDistrictAndAdmins(survey.stakeholder.district, 'stakeholder:locked', {
+        stakeholderId: survey.stakeholderId,
+        lockedById: survey.enumeratorId,
+        lockedAt: new Date().toISOString(),
+        district: survey.stakeholder.district,
+      });
+    }
+    broadcastChange(
+      ['surveys', 'stakeholders', 'analytics', 'exports', 'auditLogs'],
+      { action: 'update', entityId: surveyId, district: survey.stakeholder.district }
+    );
+
+    return {
+      status: 'CLOSED',
+      message: 'Survey finalized. Stakeholder has been closed and is now available for export.',
+    };
+  }
 }

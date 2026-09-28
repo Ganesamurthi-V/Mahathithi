@@ -130,8 +130,15 @@ export class StakeholderService {
       });
     }
 
-    // Status filter
-    if (status) {
+    // Status filter.
+    // PARTIAL_COMPLETED is a VIRTUAL status (not a real enum value) — it means an
+    // OPEN stakeholder that already has at least one uploaded survey. Translate it
+    // to that predicate so the admin filter dropdown can select it. A plain OPEN
+    // filter still returns both OPEN-untouched and OPEN-with-surveys, matching the
+    // computed status the list projects.
+    if (status === 'PARTIAL_COMPLETED') {
+      conditions.push({ status: 'OPEN', surveys: { some: {} } });
+    } else if (status) {
       conditions.push({ status: status as any });
     }
 

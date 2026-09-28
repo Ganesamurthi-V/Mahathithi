@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage } from '../api';
+import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage, updateSurvey, finalizeSurvey } from '../api';
 import type { District } from '../types';
 import { getDigiPin } from '../utils/digipin';
 import {
@@ -15,7 +15,7 @@ import {
 // PERF: pure helper hoisted to module scope so it isn't re-created each render
 // and a memoized row can reference it without breaking memoization.
 const getStatusBadge = (status: string) => {
-  const map: Record<string, string> = { PENDING: 'badge-pending', IN_PROGRESS: 'badge-active', IN_REVIEW: 'badge-admin', CLOSED: 'badge-active' };
+  const map: Record<string, string> = { PENDING: 'badge-pending', IN_PROGRESS: 'badge-active', IN_REVIEW: 'badge-admin', PARTIAL_COMPLETED: 'badge-admin', CLOSED: 'badge-active' };
   return map[status] || 'badge-pending';
 };
 
@@ -141,7 +141,8 @@ export default function StakeholdersPage() {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Status</label>
             <select className="form-input" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
               <option value="">All</option>
-              <option value="PENDING">Open</option>
+              <option value="OPEN">Open</option>
+              <option value="PARTIAL_COMPLETED">Partial Completed</option>
               <option value="CLOSED">Closed</option>
             </select>
           </div>
@@ -275,6 +276,72 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
   });
 
   const media = mediaData?.data?.data || [];
+
+  // A survey is still a draft (PARTIAL_COMPLETED) until finalized. isCompleted is
+  // the authoritative flag; fall back to the stakeholder status for older rows.
+  const isSurveyDraft = !!survey && survey.isCompleted !== true;
+
+  // Survey-field edit state for admin verification. Seeded from the loaded survey
+  // whenever it changes; only sent fields the admin touched are persisted.
+  const [surveyEditMode, setSurveyEditMode] = useState(false);
+  const [surveyEdit, setSurveyEdit] = useState<any>({});
+  useEffect(() => {
+    if (survey) {
+      setSurveyEdit({
+        businessName: survey.businessName || '',
+        ownerName: survey.ownerName || '',
+        mobileNumber: survey.mobileNumber || '',
+        email: survey.email || '',
+        district: survey.district || '',
+        city: survey.city || '',
+        pinCode: survey.pinCode || '',
+        businessAddress: survey.businessAddress || '',
+        aadharNumber: survey.aadharNumber || '',
+        panNumber: survey.panNumber || '',
+        udyamAadharRegNo: survey.udyamAadharRegNo || '',
+        gstNumber: survey.gstNumber || '',
+        description: survey.description || '',
+      });
+    }
+  }, [survey]);
+
+  const surveyEditMut = useMutation({
+    mutationFn: (data: any) => updateSurvey(survey.id, data),
+    onSuccess: () => {
+      setSurveyEditMode(false);
+      queryClient.invalidateQueries({ queryKey: ['survey', stakeholder.id] });
+      queryClient.invalidateQueries({ queryKey: ['stakeholders'] });
+    },
+    onError: (err: any) => {
+      alert(getErrorMessage(err, 'Failed to save survey details'));
+    },
+  });
+
+  const finalizeMut = useMutation({
+    mutationFn: () => finalizeSurvey(survey.id),
+    onSuccess: () => {
+      // The stakeholder is now CLOSED. Refresh the list, the survey, analytics
+      // and the export list so the newly-eligible survey appears there.
+      queryClient.invalidateQueries({ queryKey: ['stakeholders'] });
+      queryClient.invalidateQueries({ queryKey: ['survey', stakeholder.id] });
+      queryClient.invalidateQueries({ queryKey: ['analytics'] });
+      queryClient.invalidateQueries({ queryKey: ['completedSurveys'] });
+      onClose();
+    },
+    onError: (err: any) => {
+      alert(getErrorMessage(err, 'Failed to finalize survey'));
+    },
+  });
+
+  const confirmFinalize = () => {
+    if (!window.confirm(
+      'Finalize this survey?\n\n' +
+      'The stakeholder will be marked CLOSED and the survey becomes available for export. ' +
+      'This is the same as the enumerator submitting it.'
+    )) return;
+    finalizeMut.mutate();
+  };
+
   const DOC_CATEGORIES = ['GST_DOC', 'PAN_CARD_DOC', 'ESTABLISHMENT_CERT_DOC', 'CUSTOM_DOC'];
   // PERF: don't re-filter the media array on every modal re-render (edit typing,
   // lightbox open/close); recompute only when the underlying media changes.
@@ -505,7 +572,61 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
             
             {survey && (
               <div className="gallery-section">
-                <h4 className="gallery-section-title">📝 Survey Data</h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                  <h4 className="gallery-section-title" style={{ margin: 0 }}>
+                    📝 Survey Data
+                    {isSurveyDraft && (
+                      <span className="badge badge-admin" style={{ marginLeft: '8px', verticalAlign: 'middle' }}>PARTIAL COMPLETED</span>
+                    )}
+                  </h4>
+                  {/* Verification actions — only for a draft (partial) survey. Once
+                      finalized the survey is CLOSED and read-only here. */}
+                  {isSurveyDraft && (
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      {surveyEditMode ? (
+                        <>
+                          <button className="btn btn-secondary btn-sm" onClick={() => setSurveyEditMode(false)} disabled={surveyEditMut.isPending}>Cancel</button>
+                          <button className="btn btn-primary btn-sm" onClick={() => surveyEditMut.mutate(surveyEdit)} disabled={surveyEditMut.isPending}>{surveyEditMut.isPending ? 'Saving…' : 'Save Details'}</button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="btn btn-secondary btn-sm" onClick={() => setSurveyEditMode(true)}>✏️ Edit Survey</button>
+                          <LoadingButton variant="primary" size="sm" loading={finalizeMut.isPending} loadingText="Finalizing…" onClick={confirmFinalize}>✅ Finalize &amp; Close</LoadingButton>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {surveyEditMode ? (
+                  /* ── Admin verification editor: fill in / correct before finalizing ── */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                      <div className="form-group" style={{ flex: 1, minWidth: '200px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Business Name</label><input className="form-input" value={surveyEdit.businessName} onChange={(e) => setSurveyEdit({ ...surveyEdit, businessName: e.target.value })} /></div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '200px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Owner / Proprietor</label><input className="form-input" value={surveyEdit.ownerName} onChange={(e) => setSurveyEdit({ ...surveyEdit, ownerName: e.target.value })} /></div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Mobile</label><input className="form-input" value={surveyEdit.mobileNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, mobileNumber: e.target.value })} /></div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Email</label><input className="form-input" value={surveyEdit.email} onChange={(e) => setSurveyEdit({ ...surveyEdit, email: e.target.value })} /></div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                      <div className="form-group" style={{ flex: 1, minWidth: '140px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>District</label><input className="form-input" value={surveyEdit.district} onChange={(e) => setSurveyEdit({ ...surveyEdit, district: e.target.value })} /></div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '140px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>City</label><input className="form-input" value={surveyEdit.city} onChange={(e) => setSurveyEdit({ ...surveyEdit, city: e.target.value })} /></div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '120px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>PIN Code</label><input className="form-input" value={surveyEdit.pinCode} onChange={(e) => setSurveyEdit({ ...surveyEdit, pinCode: e.target.value })} /></div>
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Business Address</label><input className="form-input" value={surveyEdit.businessAddress} onChange={(e) => setSurveyEdit({ ...surveyEdit, businessAddress: e.target.value })} /></div>
+                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Aadhar Number</label><input className="form-input" value={surveyEdit.aadharNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, aadharNumber: e.target.value })} /></div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>PAN Number</label><input className="form-input" value={surveyEdit.panNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, panNumber: e.target.value })} /></div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Udyam Aadhar Reg. No.</label><input className="form-input" value={surveyEdit.udyamAadharRegNo} onChange={(e) => setSurveyEdit({ ...surveyEdit, udyamAadharRegNo: e.target.value })} /></div>
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>GST Number</label><input className="form-input" value={surveyEdit.gstNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, gstNumber: e.target.value })} /></div>
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}><label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Description</label><textarea className="form-input" rows={3} value={surveyEdit.description} onChange={(e) => setSurveyEdit({ ...surveyEdit, description: e.target.value })} /></div>
+                  </div>
+                ) : (
+                <>
                 <div className="gallery-info-grid">
                   {[
                     { label: 'Mobile', value: survey.mobileNumber }, { label: 'Email', value: survey.email },
@@ -646,6 +767,8 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                     </div>
                     <CopyButton value={survey.digipin || stakeholder.digipin} label="📋 Copy" size="sm" />
                   </div>
+                )}
+                </>
                 )}
               </div>
             )}

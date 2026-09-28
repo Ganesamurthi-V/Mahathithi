@@ -7,6 +7,7 @@ import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { AppError, ValidationError, NotFoundError, ConflictError } from '../../utils/errors';
 import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
+import { SurveyService } from '../survey/survey.service';
 import { releaseClaims, releaseClaimsOutsideDistricts, rebalanceDistricts } from '../../utils/stakeholder-assignment';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { broadcastChange, notifyEnumerator } from '../../realtime/events';
@@ -940,6 +941,37 @@ router.get('/audit-logs', async (req: AuthenticatedRequest, res: Response, next:
 // exclusive fields — topDistricts, statusBreakdown, enumeratorPerformance — never
 // reached the client. topDistricts has been folded into the live route above;
 // statusBreakdown and enumeratorPerformance were dropped as unused.
+
+// ============================================================================
+// ADMIN SURVEY VERIFICATION — edit a synced draft + finalize it to CLOSED
+// ============================================================================
+// A partially-completed (draft) survey uploaded from the field shows as
+// PARTIAL_COMPLETED in the admin list (status OPEN + surveys > 0, computed in
+// stakeholder.service). An admin opens it, fills in the missing details via
+// PATCH, then finalizes it — which is the ONLY thing that flips the stakeholder
+// to CLOSED and makes the survey eligible for export.
+const surveyService = new SurveyService();
+
+// Edit a survey's fields (verification). Does NOT complete or lock anything.
+router.patch('/surveys/:id', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const survey = await surveyService.adminEditSurvey(req.params.id as string, req.body || {});
+    res.json({ success: true, data: survey });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Finalize a survey → isCompleted:true, stakeholder CLOSED + locked. After this
+// it appears in the export set and drops out of PARTIAL_COMPLETED.
+router.post('/surveys/:id/finalize', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await surveyService.adminFinalizeSurvey(req.params.id as string);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // ============================================================================
 // SURVEY DATA EXPORT — Maps to client's listing.* schema

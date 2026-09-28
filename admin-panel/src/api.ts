@@ -276,6 +276,17 @@ export const deleteStakeholder = (id: string) => api.delete(`/stakeholders/${id}
 export const getSurveyByStakeholder = (stakeholderId: string) =>
   api.get(`/surveys/stakeholder/${stakeholderId}`);
 
+/**
+ * Admin verification of a synced draft survey.
+ *
+ * updateSurvey edits the survey's own fields (business info, description, etc.)
+ * without finalizing — the stakeholder stays PARTIAL_COMPLETED.
+ * finalizeSurvey completes it: the stakeholder becomes CLOSED and the survey
+ * becomes eligible for export. Both are admin-only server-side.
+ */
+export const updateSurvey = (id: string, data: any) => api.patch(`/admin/surveys/${id}`, data);
+export const finalizeSurvey = (id: string) => api.post(`/admin/surveys/${id}/finalize`);
+
 // Media
 export const getMediaBySurvey = (surveyId: string) => api.get(`/media/survey/${surveyId}`);
 
