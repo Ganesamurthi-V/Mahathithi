@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Animated, Easing, DeviceEventEmitter, Modal, TextInput, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -244,9 +244,6 @@ export default function StakeholderListScreen({ navigation }: any) {
             // PERF: render only what fills the first viewport (~6-7 cards at 120px)
             // before first paint; the rest stream in via maxToRenderPerBatch.
             initialNumToRender={6}
-            getItemLayout={(data, index) => (
-              { length: 120, offset: 120 * index, index }
-            )}
           />
         )}
       </View>
@@ -324,7 +321,7 @@ const ADD_FIELDS: AddField[] = [
   { key: 'fullAddressRaw', label: 'Address', maxLength: 1000, multiline: true },
   { key: 'city', label: 'City', maxLength: 200 },
   { key: 'state', label: 'State', maxLength: 200 },
-  { key: 'pinCode', label: 'PIN Code', keyboardType: 'number-pad', maxLength: 10 },
+  { key: 'pinCode', label: 'PIN Code', placeholder: '6-digit PIN code', keyboardType: 'number-pad', maxLength: 6 },
   { key: 'nicCode', label: 'NIC Code', maxLength: 20 },
   { key: 'nicDescription', label: 'NIC Description', maxLength: 500, multiline: true },
 ];
@@ -348,23 +345,53 @@ function AddStakeholderModal({
   onCreated: (created: any) => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const { user } = useSelector((state: RootState) => state.auth);
+  const assignedDistricts = user?.districts || [];
+
+  const getInitialDistrict = useCallback(() => {
+    if (assignedDistricts.length > 0) {
+      const first = assignedDistricts[0];
+      return typeof first === 'string' ? first : first.name;
+    }
+    return '';
+  }, [assignedDistricts]);
 
   const blankForm = useCallback(() => {
     const initial: Record<string, string> = {};
     for (const f of ADD_FIELDS) initial[f.key] = '';
-    // Every record in this dataset is Maharashtra; prefilling saves a keystroke per
-    // entry and the field stays editable.
     initial.state = 'Maharashtra';
+    initial.district = getInitialDistrict();
     return initial;
-  }, []);
+  }, [getInitialDistrict]);
 
   const [form, setForm] = useState<Record<string, string>>(blankForm);
 
-  const set = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
+  useEffect(() => {
+    if (visible) {
+      setForm(blankForm());
+    }
+  }, [visible, blankForm]);
+
+  const set = (key: string, value: string) => {
+    if (key === 'pinCode') {
+      value = value.replace(/\D/g, '').slice(0, 6);
+    }
+    setForm(prev => ({ ...prev, [key]: value }));
+  };
 
   const submit = async () => {
     if (!form.companyNameStandardized.trim()) {
       Alert.alert('Name required', 'Enter the organization name.');
+      return;
+    }
+
+    if (!form.district?.trim()) {
+      Alert.alert('District required', 'Please select a district from your assigned districts.');
+      return;
+    }
+
+    if (form.pinCode && form.pinCode.length > 0 && form.pinCode.length !== 6) {
+      Alert.alert('Invalid PIN Code', 'PIN Code must be exactly 6 digits.');
       return;
     }
 
@@ -379,28 +406,22 @@ function AddStakeholderModal({
 
     setSaving(true);
     try {
-      // Only non-empty keys: the server schema is .strict(), and sending blanks
-      // would store '' where the detail screen expects a missing value (its rows
-      // are filtered on truthiness, so '' and absent render the same, but the
-      // export and search treat them differently).
       const payload: Record<string, string> = {};
       for (const f of ADD_FIELDS) {
         const v = form[f.key]?.trim();
         if (v) payload[f.key] = v;
+      }
+      if (form.district?.trim()) {
+        payload.district = form.district.trim();
       }
 
       const res = await stakeholderService.create(payload);
       const created = res.data?.data;
       if (!created?.id) throw new Error('Server did not return the created stakeholder');
 
-      // Persist locally before navigating. The survey form and its save path read
-      // the stakeholder from SQLite, so without this the survey could be written
-      // against a stakeholder the local database has never heard of.
       await stakeholderDao.upsertMany([created]);
 
       setForm(blankForm());
-      // No success alert: the handoff to the survey form is the confirmation, and a
-      // dialog in between would just be one more tap before the real work.
       onCreated(created);
     } catch (e: any) {
       const detail = e.response?.data?.error?.details?.[0];
@@ -428,11 +449,55 @@ function AddStakeholderModal({
           </View>
 
           <Text style={addStyles.note}>
-            Saved, then the survey form opens straight away. Requires an internet
-            connection.
+            Enter organization details once — the survey form opens immediately
+            after, no separate step. Requires an internet connection.
           </Text>
 
           <ScrollView style={addStyles.body} keyboardShouldPersistTaps="handled">
+            {/* District Selector — assigned districts */}
+            <View style={addStyles.field}>
+              <Text style={addStyles.label}>District *</Text>
+              {assignedDistricts.length > 0 ? (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs }}>
+                  {assignedDistricts.map((d: any) => {
+                    const dName = typeof d === 'string' ? d : d.name;
+                    const isSelected = form.district?.toLowerCase() === dName.toLowerCase();
+                    return (
+                      <TouchableOpacity
+                        key={typeof d === 'string' ? d : d.id || d.name}
+                        style={[
+                          addStyles.districtChip,
+                          isSelected && addStyles.districtChipActive,
+                        ]}
+                        onPress={() => set('district', dName)}
+                        disabled={saving}
+                        activeOpacity={0.7}
+                      >
+                        <Icon
+                          name={isSelected ? 'radiobox-marked' : 'radiobox-blank'}
+                          size={16}
+                          color={isSelected ? colors.primary : colors.textMuted}
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text style={[addStyles.districtChipText, isSelected && addStyles.districtChipTextActive]}>
+                          {dName}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : (
+                <TextInput
+                  style={addStyles.input}
+                  value={form.district ?? ''}
+                  onChangeText={t => set('district', t)}
+                  placeholder="Enter district"
+                  placeholderTextColor={colors.textMuted}
+                  editable={!saving}
+                />
+              )}
+            </View>
+
             {ADD_FIELDS.map(f => (
               <View key={f.key} style={addStyles.field}>
                 <Text style={addStyles.label}>{f.label}</Text>
@@ -451,11 +516,8 @@ function AddStakeholderModal({
               </View>
             ))}
 
-            {/* Set by the server, shown so the operator is not surprised by what
-                appears on the detail screen afterwards. */}
             <View style={addStyles.serverSet}>
               <Text style={addStyles.serverSetTitle}>Set automatically</Text>
-              <Text style={addStyles.serverSetRow}>District — your assigned district</Text>
               <Text style={addStyles.serverSetRow}>Data Source — MANUAL</Text>
               <Text style={addStyles.serverSetRow}>Status — OPEN</Text>
             </View>
@@ -476,7 +538,7 @@ function AddStakeholderModal({
             >
               {saving
                 ? <ActivityIndicator color="#fff" size="small" />
-                : <Text style={addStyles.btnPrimaryText}>Save &amp; Start Survey</Text>}
+                : <Text style={addStyles.btnPrimaryText}>Add & Start Survey</Text>}
             </TouchableOpacity>
           </View>
         </View>
@@ -529,4 +591,26 @@ const addStyles = StyleSheet.create({
   btnSecondary: { backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.border },
   btnSecondaryText: { color: colors.textPrimary, fontWeight: '600' },
   btnDisabled: { opacity: 0.6 },
+  districtChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bgCard,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  districtChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryBg || 'rgba(255,107,53,0.1)',
+  },
+  districtChipText: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+  },
+  districtChipTextActive: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
 });

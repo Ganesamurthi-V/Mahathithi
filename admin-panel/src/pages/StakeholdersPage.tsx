@@ -209,9 +209,9 @@ export default function StakeholdersPage() {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '6px' }}>Status</label>
             <select className="form-input" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
               <option value="">All</option>
-              <option value="OPEN">Open</option>
-              <option value="PARTIAL_COMPLETED">Partial Completed</option>
-              <option value="CLOSED">Closed</option>
+              <option value="OPEN">Open (No Survey)</option>
+              <option value="PARTIAL_COMPLETED">Has Survey (Draft or Submitted)</option>
+              <option value="CLOSED">Closed / Completed</option>
             </select>
           </div>
           {/* Was `isLoading ? '...' : 'Search'`, which only reacted to the very
@@ -694,7 +694,12 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                   <h4 className="gallery-section-title" style={{ margin: 0 }}>
                     📝 Survey Data
                     {isSurveyDraft && (
-                      <span className="badge badge-admin" style={{ marginLeft: '8px', verticalAlign: 'middle' }}>PARTIAL COMPLETED</span>
+                      <span
+                        className={`badge ${survey?.isDraft ? 'badge-pending' : 'badge-admin'}`}
+                        style={{ marginLeft: '8px', verticalAlign: 'middle' }}
+                      >
+                        {survey?.isDraft ? '📝 DRAFT' : 'PARTIAL COMPLETED'}
+                      </span>
                     )}
                   </h4>
                   {/* Verification actions — only for a draft (partial) survey. Once

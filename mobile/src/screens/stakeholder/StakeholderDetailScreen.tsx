@@ -482,7 +482,14 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
               </View>
               <View style={[styles.formGroup, { flex: 1 }]}>
                 <Text style={styles.inputLabel}>PIN Code</Text>
-                <TextInput keyboardType="number-pad" style={styles.input} value={editData.pinCode} onChangeText={t => setEditData({...editData, pinCode: t})} />
+                <TextInput
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  placeholder="6-digit PIN code"
+                  style={styles.input}
+                  value={editData.pinCode}
+                  onChangeText={t => setEditData({...editData, pinCode: t.replace(/\D/g, '').slice(0, 6)})}
+                />
               </View>
             </View>
             <View style={styles.formGroup}>

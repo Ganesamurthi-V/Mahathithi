@@ -41,10 +41,52 @@ const ACCOMMODATION_FACILITIES = [
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-// 5 steps. The old Category (was 1) and Docs (was 7) steps were removed by
-// request, and the remaining steps renumbered 1-5 so the breadcrumb reads
-// continuously instead of skipping numbers.
-const STEP_LABELS = ['Business', 'Images', 'Details', 'Rooms', 'Terms'];
+// ─── Category Classification ──────────────────────────────────────────────────
+// These categories represent accommodation / lodging businesses. Only they see:
+//   • Step 3: Accommodation Facilities, Accommodation Policies chips
+//   • Step 4: Rooms & Pricing
+// All other categories (Tour Operators, Restaurants, Shops, etc.) skip those
+// two sections to avoid confusing and irrelevant fields.
+const ACCOMMODATION_CATEGORIES = new Set([
+  // Hotels & variants
+  'hotel', 'hotels', 'hotel and resort', 'hotels and resorts', 'resort', 'resorts',
+  'hotel/resort', 'hotels/resorts', 'boutique hotel', 'luxury hotel', 'budget hotel',
+  // Lodging
+  'lodge', 'lodges', 'lodging', 'motel', 'motels', 'inn', 'inns',
+  'bed and breakfast', 'b&b', 'guesthouse', 'guest house', 'guest houses',
+  'homestay', 'home stay', 'service apartment', 'serviced apartment', 'serviced apartments',
+  // Hostels & dorms
+  'hostel', 'hostels', 'dormitory', 'worker hostel', 'worker hostels',
+  'dharamshala', 'dharmashala',
+  // Camp / eco
+  'camping', 'glamping', 'eco lodge', 'eco-lodge', 'eco resort',
+  // Misc accommodation
+  'accommodation', 'accommodations', 'stay', 'holiday home', 'vacation rental',
+]);
+
+/**
+ * Returns true when the given category string represents an accommodation /
+ * lodging business that should show room-related survey fields.
+ * Case-insensitive; matches partial substrings ("worker hostels" → true).
+ */
+function isAccommodationCategory(category?: string): boolean {
+  if (!category) return false;
+  const lower = category.toLowerCase().trim();
+  // Direct set lookup first for speed.
+  if (ACCOMMODATION_CATEGORIES.has(lower)) return true;
+  // Partial match for compound categories e.g. "Hotels/Resorts & Lodges".
+  for (const key of ACCOMMODATION_CATEGORIES) {
+    if (lower.includes(key)) return true;
+  }
+  return false;
+}
+
+// Step labels — Rooms is always at index 3 (1-based step 4).
+// We may remove that step for non-accommodation categories; the breadcrumb is
+// built from visibleSteps + this array so skipped steps are simply not shown.
+const ALL_STEP_LABELS = ['Business', 'Images', 'Details', 'Rooms', 'Terms'];
+// Shorter label set for non-accommodation categories (no Rooms step).
+const NON_ACCOM_STEP_LABELS = ['Business', 'Images', 'Details', 'Terms'];
 
 // Every photo slot is OPTIONAL. Nothing in this form is required any more —
 // neither Save as Draft nor Submit checks anything — so all slots are marked
@@ -943,10 +985,13 @@ export default function SurveyFormScreen({ route, navigation }: any) {
     { name: 'nearestHealthcareCenter' as const, label: 'Nearest Healthcare Center', placeholder: 'Auto-filled based on GPS', isLoading: gpsLoading, isAutocomplete: true, facilityType: 'HEALTHCARE' },
   ];
 
-  // All 5 steps are always visible. The old conditional skipping existed only to
-  // hide the Accommodations-only Rooms step based on the Category step; with
-  // Category gone there is nothing left to branch on.
-  const visibleSteps = [1, 2, 3, 4, 5];
+  // Category-aware step list. Accommodation categories (hotels, resorts, hostels,
+  // etc.) get all 5 steps including Rooms (step 4). Every other category gets 4
+  // steps: Business → Images → Details → Terms, skipping Rooms entirely so an
+  // enumerator surveying a Tour Operator or Restaurant never sees hotel fields.
+  const showRooms = isAccommodationCategory(stakeholder?.category);
+  const visibleSteps = showRooms ? [1, 2, 3, 4, 5] : [1, 2, 3, 5];
+  const STEP_LABELS = showRooms ? ALL_STEP_LABELS : NON_ACCOM_STEP_LABELS;
   const currentStepIndex = visibleSteps.indexOf(currentStep);
 
   const goToNextStep = () => {
@@ -965,7 +1010,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
         <View style={[styles.progressBar, { width: `${completionPercent}%`, backgroundColor: completionPercent === 100 ? colors.success : colors.primary }]} />
       </View>
 
-      {/* Breadcrumbs — 5 steps */}
+      {/* Breadcrumbs — 4 or 5 steps depending on category */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.breadcrumbsBar} contentContainerStyle={{ alignItems: 'center', paddingHorizontal: spacing.sm, paddingVertical: spacing.sm }}>
         {visibleSteps.map((step, idx) => (
           <React.Fragment key={step}>
@@ -974,7 +1019,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
               onPress={() => setCurrentStep(step)}
             >
               <Text style={[styles.stepText, currentStep === step ? styles.stepTextActive : styles.stepTextInactive]}>
-                {step}.{STEP_LABELS[step - 1]}
+                {idx + 1}.{STEP_LABELS[idx]}
               </Text>
             </TouchableOpacity>
             {idx < visibleSteps.length - 1 && <Icon name="chevron-right" size={14} color={colors.textMuted} style={{ marginHorizontal: 2 }} />}
@@ -1172,18 +1217,22 @@ export default function SurveyFormScreen({ route, navigation }: any) {
             {/* No minimum length — the description can be any length, including
                 empty, and never blocks a submit. */}
             <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 120, textAlignVertical: 'top', padding: spacing.md }]} multiline value={description} onChangeText={setDescription} placeholder="Describe your business" placeholderTextColor={colors.textMuted} />
-            {/* Accommodation Facilities / Policies used to be shown only for the
-                Accommodations category. The Category step is gone, so they are now
-                available for every business. */}
-            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Facilities</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-              {ACCOMMODATION_FACILITIES.map(fac => { const isChecked = accommodationFacilities.includes(fac); return (
-                <TouchableOpacity key={fac} style={[styles.chipBtn, isChecked && styles.chipBtnActive]} onPress={() => setAccommodationFacilities(prev => isChecked ? prev.filter(f => f !== fac) : [...prev, fac])}>
-                  <Text style={[styles.chipText, isChecked && styles.chipTextActive]}>{fac}</Text>
-                </TouchableOpacity>); })}
-            </View>
-            <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Policies</Text>
-            <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 100, textAlignVertical: 'top', padding: spacing.md }]} multiline value={accommodationPolicies} onChangeText={setAccommodationPolicies} placeholder="Check-in/out, cancellation, refund policies..." placeholderTextColor={colors.textMuted} />
+            {/* Accommodation Facilities / Policies — shown only for accommodation
+                categories (hotels, resorts, hostels, etc.). Tour operators and other
+                non-lodging categories skip these sections entirely. */}
+            {showRooms && (
+              <>
+                <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Facilities</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
+                  {ACCOMMODATION_FACILITIES.map(fac => { const isChecked = accommodationFacilities.includes(fac); return (
+                    <TouchableOpacity key={fac} style={[styles.chipBtn, isChecked && styles.chipBtnActive]} onPress={() => setAccommodationFacilities(prev => isChecked ? prev.filter(f => f !== fac) : [...prev, fac])}>
+                      <Text style={[styles.chipText, isChecked && styles.chipTextActive]}>{fac}</Text>
+                    </TouchableOpacity>); })}
+                </View>
+                <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Accommodation Policies</Text>
+                <TextInput style={[styles.input, { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, minHeight: 100, textAlignVertical: 'top', padding: spacing.md }]} multiline value={accommodationPolicies} onChangeText={setAccommodationPolicies} placeholder="Check-in/out, cancellation, refund policies..." placeholderTextColor={colors.textMuted} />
+              </>
+            )}
             <Text style={[styles.sectionHeader, { marginTop: spacing.xl }]}>Working Hours</Text>
             {workingHours.map((wh, idx) => (
               <View key={wh.day} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm, gap: spacing.sm, flexWrap: 'wrap' }}>
@@ -1200,7 +1249,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
           </View>
         )}
 
-        {currentStep === 4 && (
+        {currentStep === 4 && showRooms && (
           <View style={styles.formSection}>
             <Text style={styles.sectionHeader}>Rooms</Text>
             {rooms.map((room, idx) => (
