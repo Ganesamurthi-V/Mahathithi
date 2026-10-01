@@ -216,6 +216,12 @@ export class SurveyService {
       include: {
         // NEW-1 FIX: don't surface tombstoned media in survey detail
         media: { where: { deletedAt: null } },
+        enumerator: {
+          select: {
+            name: true,
+            loginId: true,
+          },
+        },
         stakeholder: {
           select: {
             companyNameStandardized: true,

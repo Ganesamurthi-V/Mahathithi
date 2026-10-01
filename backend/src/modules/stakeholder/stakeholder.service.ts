@@ -136,8 +136,10 @@ export class StakeholderService {
     // to that predicate so the admin filter dropdown can select it. A plain OPEN
     // filter still returns both OPEN-untouched and OPEN-with-surveys, matching the
     // computed status the list projects.
-    if (status === 'PARTIAL_COMPLETED') {
-      conditions.push({ status: 'OPEN', surveys: { some: {} } });
+    if (status === 'DRAFT') {
+      conditions.push({ status: 'OPEN', surveys: { some: { isDraft: true } } });
+    } else if (status === 'PARTIAL_COMPLETED') {
+      conditions.push({ status: 'OPEN', surveys: { some: { isDraft: false } } });
     } else if (status) {
       conditions.push({ status: status as any });
     }
@@ -226,6 +228,19 @@ export class StakeholderService {
           status: true,
           digipin: true,
           lockedById: true,
+          surveys: {
+            take: 1,
+            orderBy: { updatedAt: 'desc' },
+            select: {
+              isDraft: true,
+              enumerator: {
+                select: {
+                  name: true,
+                  loginId: true,
+                }
+              }
+            }
+          },
           _count: {
             select: { surveys: true }
           }
@@ -245,10 +260,29 @@ export class StakeholderService {
     const stakeholders = hasMore ? rowsPlusOne.slice(0, limit) : rowsPlusOne;
 
     return {
-      stakeholders: stakeholders.map(s => ({
-        ...s,
-        status: s.status === 'OPEN' && s._count?.surveys > 0 ? 'PARTIAL_COMPLETED' : s.status,
-      })),
+      stakeholders: stakeholders.map(s => {
+        let computedStatus: string = s.status;
+        let draftEnumerator = null;
+        
+        if (s.status === 'OPEN' && s.surveys && s.surveys.length > 0) {
+          const latestSurvey = s.surveys[0];
+          if (latestSurvey.isDraft) {
+            computedStatus = 'DRAFT';
+            draftEnumerator = latestSurvey.enumerator;
+          } else {
+            computedStatus = 'PARTIAL_COMPLETED';
+          }
+        } else if (s.status === 'OPEN' && s._count?.surveys > 0) {
+          computedStatus = 'PARTIAL_COMPLETED';
+        }
+
+        const { surveys, ...rest } = s;
+        return {
+          ...rest,
+          status: computedStatus,
+          draftEnumerator,
+        };
+      }),
       pagination: {
         page,
         limit,

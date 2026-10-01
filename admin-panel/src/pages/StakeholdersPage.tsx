@@ -15,7 +15,7 @@ import {
 // PERF: pure helper hoisted to module scope so it isn't re-created each render
 // and a memoized row can reference it without breaking memoization.
 const getStatusBadge = (status: string) => {
-  const map: Record<string, string> = { PENDING: 'badge-pending', IN_PROGRESS: 'badge-active', IN_REVIEW: 'badge-admin', PARTIAL_COMPLETED: 'badge-admin', CLOSED: 'badge-active' };
+  const map: Record<string, string> = { PENDING: 'badge-pending', IN_PROGRESS: 'badge-active', IN_REVIEW: 'badge-admin', DRAFT: 'badge-pending', PARTIAL_COMPLETED: 'badge-admin', CLOSED: 'badge-active' };
   return map[status] || 'badge-pending';
 };
 
@@ -32,7 +32,14 @@ const StakeholderRow = memo(function StakeholderRow({ s, onSelect }: { s: any; o
       <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.pinCode || '—'}</code></td>
       <td><code style={{ fontSize: '12px', background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>{s.digipin || '—'}</code></td>
       <td style={{ fontSize: '12px' }}>{s.category || '—'}</td>
-      <td><span className={`badge ${getStatusBadge(s.status)}`}>{(s.status || 'PENDING').replace('_', ' ')}</span></td>
+      <td>
+        <span className={`badge ${getStatusBadge(s.status)}`}>{(s.status || 'PENDING').replace('_', ' ')}</span>
+        {s.status === 'DRAFT' && s.draftEnumerator && (
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+            by {s.draftEnumerator.name}
+          </div>
+        )}
+      </td>
       <td>
         <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); onSelect(s); }}>
           📸 View Gallery
@@ -210,7 +217,8 @@ export default function StakeholdersPage() {
             <select className="form-input" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
               <option value="">All</option>
               <option value="OPEN">Open (No Survey)</option>
-              <option value="PARTIAL_COMPLETED">Has Survey (Draft or Submitted)</option>
+              <option value="DRAFT">Draft (Survey In Progress)</option>
+              <option value="PARTIAL_COMPLETED">Has Survey (Submitted)</option>
               <option value="CLOSED">Closed / Completed</option>
             </select>
           </div>
@@ -699,6 +707,11 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                         style={{ marginLeft: '8px', verticalAlign: 'middle' }}
                       >
                         {survey?.isDraft ? '📝 DRAFT' : 'PARTIAL COMPLETED'}
+                      </span>
+                    )}
+                    {survey?.isDraft && survey?.enumerator && (
+                      <span style={{ fontSize: '13px', color: 'var(--text-muted)', marginLeft: '8px', fontWeight: 'normal' }}>
+                        (by {survey.enumerator.name})
                       </span>
                     )}
                   </h4>
