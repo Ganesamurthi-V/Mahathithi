@@ -952,6 +952,16 @@ router.get('/audit-logs', async (req: AuthenticatedRequest, res: Response, next:
 // to CLOSED and makes the survey eligible for export.
 const surveyService = new SurveyService();
 
+// Create a survey draft for an OPEN stakeholder directly from the admin panel
+router.post('/stakeholders/:id/take-survey', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const survey = await surveyService.adminCreateSurvey(req.params.id as string, req.enumerator!.id);
+    res.json({ success: true, data: survey });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Edit a survey's fields (verification). Does NOT complete or lock anything.
 router.patch('/surveys/:id', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {

@@ -393,6 +393,53 @@ export class SurveyService {
   }
 
   /**
+   * ADMIN: Take survey for an OPEN stakeholder directly from the admin panel.
+   * Creates a new draft survey initialized with some basic data from the stakeholder.
+   */
+  async adminCreateSurvey(stakeholderId: string, adminId: string) {
+    const stakeholder = await prisma.stakeholder.findUnique({
+      where: { id: stakeholderId },
+      include: { surveys: true }
+    });
+    if (!stakeholder) throw new NotFoundError('Stakeholder');
+
+    if (stakeholder.status !== 'OPEN') {
+      throw new ConflictError('Can only take a survey for OPEN stakeholders.');
+    }
+
+    if (stakeholder.surveys && stakeholder.surveys.length > 0) {
+      throw new ConflictError('A survey already exists for this stakeholder.');
+    }
+
+    let digipin = stakeholder.digipin;
+    if (!digipin && stakeholder.latitude && stakeholder.longitude) {
+      try { digipin = getDigiPin(stakeholder.latitude, stakeholder.longitude) || digipin; } catch(e) {}
+    }
+
+    const survey = await prisma.survey.create({
+      data: {
+        stakeholderId,
+        enumeratorId: adminId,
+        businessName: stakeholder.companyNameOriginal || '',
+        businessCategory: stakeholder.category || '',
+        latitude: stakeholder.latitude,
+        longitude: stakeholder.longitude,
+        digipin,
+        isDraft: true,
+        isCompleted: false,
+        businessAddress: stakeholder.addressLine1 || stakeholder.fullAddressRaw || '',
+        district: stakeholder.district || '',
+        city: stakeholder.city || stakeholder.taluka || stakeholder.village || '',
+        gstNumber: stakeholder.gstNumber || '',
+      }
+    });
+
+    broadcastChange(['surveys', 'stakeholders'], { action: 'create', entityId: survey.id });
+
+    return survey;
+  }
+
+  /**
    * ADMIN: edit a survey's fields.
    *
    * For the admin verification workflow: a partially-completed (draft) survey the

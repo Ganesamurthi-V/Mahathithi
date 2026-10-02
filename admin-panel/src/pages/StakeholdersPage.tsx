@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage, updateSurvey, finalizeSurvey, uploadMedia } from '../api';
+import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage, updateSurvey, finalizeSurvey, uploadMedia, takeSurvey } from '../api';
 import type { District } from '../types';
 import { getDigiPin } from '../utils/digipin';
 import {
@@ -434,6 +434,18 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
     },
     onError: (err: any) => {
       alert(getErrorMessage(err, 'Failed to finalize survey'));
+    },
+  });
+
+  const takeSurveyMut = useMutation({
+    mutationFn: () => takeSurvey(stakeholder.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stakeholders'] });
+      queryClient.invalidateQueries({ queryKey: ['survey', stakeholder.id] });
+      setSurveyEditMode(true); // Auto-open editor on create
+    },
+    onError: (err: any) => {
+      alert(getErrorMessage(err, 'Failed to create survey draft'));
     },
   });
 
@@ -1021,6 +1033,23 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                 )}
                 </>
                 )}
+              </div>
+            )}
+
+            {!survey && effectiveStatus === 'OPEN' && (
+              <div className="gallery-section" style={{ textAlign: 'center', padding: '24px' }}>
+                <h4 style={{ margin: '0 0 8px 0', color: 'var(--text-primary)' }}>No Survey Data Yet</h4>
+                <p style={{ color: 'var(--text-secondary)', margin: '0 0 16px 0', fontSize: '13px' }}>
+                  This stakeholder is currently OPEN. You can start a new survey draft for them directly from here.
+                </p>
+                <LoadingButton
+                  variant="primary"
+                  loading={takeSurveyMut.isPending}
+                  loadingText="Creating..."
+                  onClick={() => takeSurveyMut.mutate()}
+                >
+                  📝 Take Survey
+                </LoadingButton>
               </div>
             )}
             

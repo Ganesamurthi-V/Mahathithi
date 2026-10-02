@@ -286,6 +286,7 @@ export const getSurveyByStakeholder = (stakeholderId: string) =>
  */
 export const updateSurvey = (id: string, data: any) => api.patch(`/admin/surveys/${id}`, data);
 export const finalizeSurvey = (id: string) => api.post(`/admin/surveys/${id}/finalize`);
+export const takeSurvey = (stakeholderId: string) => api.post(`/admin/stakeholders/${stakeholderId}/take-survey`);
 
 // Media
 export const getMediaBySurvey = (surveyId: string) => api.get(`/media/survey/${surveyId}`);
