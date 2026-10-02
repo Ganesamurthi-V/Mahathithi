@@ -588,6 +588,8 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
     ? (survey.isCompleted && hasIdentityNumber ? 'CLOSED' : 'PARTIAL_COMPLETED')
     : (stakeholder.status || 'OPEN');
 
+  console.log('DEBUG_TAKE_SURVEY', { surveyIsNull: !survey, status: stakeholder.status, effectiveStatus });
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="gallery-modal" onClick={(e) => e.stopPropagation()}>
