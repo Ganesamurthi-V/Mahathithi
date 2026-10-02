@@ -62,10 +62,10 @@ const WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satu
 // The Aadhaar rule matches the server's own regex (/^\d{12}$/); the rest are
 // enforced client-side for data quality and mirrored in adminEditSurvey.
 const SURVEY_FIELD_RULES: Record<string, { test: (v: string) => boolean; message: string }> = {
-  // 10-digit Indian mobile starting 6-9, optional +91 / leading 0.
+  // 10-digit Indian mobile or landline/telephone number (optionally with +91 or STD code 0XX).
   mobileNumber: {
-    test: (v) => /^(?:\+91[-\s]?|0)?[6-9]\d{9}$/.test(v.replace(/\s+/g, '')),
-    message: 'Enter a valid 10-digit mobile number (optionally with +91).',
+    test: (v) => /^(?:\+91[-\s]?|0[-\s]?)?[1-9]\d{6,11}$/.test(v.replace(/[\s-]+/g, '')),
+    message: 'Enter a valid mobile or telephone number.',
   },
   email: {
     test: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
@@ -563,6 +563,14 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
 
   const isLoading = isSurveyLoading || isMediaLoading;
 
+  const hasIdentityNumber = Boolean(
+    (survey?.aadharNumber && survey.aadharNumber.trim() !== '') ||
+    (survey?.udyamAadharRegNo && survey.udyamAadharRegNo.trim() !== '')
+  );
+  const effectiveStatus = survey
+    ? (survey.isCompleted && hasIdentityNumber ? 'CLOSED' : 'PARTIAL_COMPLETED')
+    : (stakeholder.status || 'OPEN');
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="gallery-modal" onClick={(e) => e.stopPropagation()}>
@@ -570,7 +578,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
           <div>
             <h3 style={{ margin: 0 }}>{stakeholder.companyNameStandardized || stakeholder.companyNameOriginal}</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
-              {stakeholder.district} • {stakeholder.pinCode} • <span className={`badge ${stakeholder.status === 'CLOSED' ? 'badge-active' : 'badge-pending'}`}>{(stakeholder.status || 'OPEN').replace('_', ' ')}</span>
+              {stakeholder.district} • {stakeholder.pinCode} • <span className={`badge ${getStatusBadge(effectiveStatus)}`}>{effectiveStatus.replace('_', ' ')}</span>
             </p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -754,7 +762,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                     </div>
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                       <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
-                        <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Mobile</label>
+                        <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Mobile / Telephone</label>
                         <input className="form-input" style={surveyErrors.mobileNumber ? { borderColor: 'var(--danger, #ef4444)' } : undefined} value={surveyEdit.mobileNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, mobileNumber: e.target.value })} />
                         {surveyErrors.mobileNumber && <div style={{ color: 'var(--danger, #ef4444)', fontSize: '11px', marginTop: '4px' }}>{surveyErrors.mobileNumber}</div>}
                       </div>
@@ -862,7 +870,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                 <>
                 <div className="gallery-info-grid">
                   {[
-                    { label: 'Mobile', value: survey.mobileNumber }, { label: 'Email', value: survey.email },
+                    { label: 'Mobile / Telephone', value: survey.mobileNumber }, { label: 'Email', value: survey.email },
                   ].filter(r => r.value).map((row, i) => (
                     <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
                   ))}

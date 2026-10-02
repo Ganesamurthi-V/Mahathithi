@@ -140,25 +140,46 @@ export class StakeholderService {
     // CLOSED means truly completed: the stakeholder is CLOSED *and* its survey
     // has isCompleted === true (set by complete() or adminFinalizeSurvey()).
     if (status === 'DRAFT') {
-      conditions.push({ status: 'OPEN', surveys: { some: { isDraft: true } } });
-    } else if (status === 'PARTIAL_COMPLETED') {
       conditions.push({
-        OR: [
-          // Normal: OPEN stakeholder with a submitted (non-draft) survey
-          { status: 'OPEN', surveys: { some: { isDraft: false } } },
-          // Edge case: CLOSED in DB but survey never finalized
+        AND: [
+          { surveys: { some: { isDraft: true } } },
+          { surveys: { none: { isCompleted: true } } },
+        ],
+      });
+    } else if (status === 'PARTIAL_COMPLETED') {
+      // Has survey data but not fully completed (missing Aadhar Number / Udyam Reg. No. or isCompleted !== true)
+      conditions.push({
+        AND: [
+          { surveys: { some: {} } },
           {
-            status: 'CLOSED',
-            AND: [
-              { surveys: { some: {} } },
-              { surveys: { none: { isCompleted: true } } },
-            ],
+            surveys: {
+              none: {
+                isCompleted: true,
+                OR: [
+                  { aadharNumber: { not: null }, AND: [{ aadharNumber: { not: '' } }] },
+                  { udyamAadharRegNo: { not: null }, AND: [{ udyamAadharRegNo: { not: '' } }] },
+                ],
+              },
+            },
           },
         ],
       });
     } else if (status === 'CLOSED') {
-      // Only truly completed: stakeholder CLOSED with a finalized survey
-      conditions.push({ status: 'CLOSED', surveys: { some: { isCompleted: true } } });
+      // ONLY fully completed surveys (isCompleted === true AND has Aadhar or Udyam Reg. No.) show in CLOSED status
+      conditions.push({
+        surveys: {
+          some: {
+            isCompleted: true,
+            OR: [
+              { aadharNumber: { not: null }, AND: [{ aadharNumber: { not: '' } }] },
+              { udyamAadharRegNo: { not: null }, AND: [{ udyamAadharRegNo: { not: '' } }] },
+            ],
+          },
+        },
+      });
+    } else if (status === 'OPEN') {
+      // Open / No survey
+      conditions.push({ surveys: { none: {} } });
     } else if (status) {
       conditions.push({ status: status as any });
     }
@@ -253,11 +274,19 @@ export class StakeholderService {
             select: {
               isDraft: true,
               isCompleted: true,
+              ownerName: true,
+              mobileNumber: true,
+              businessName: true,
+              aadharNumber: true,
+              udyamAadharRegNo: true,
               enumerator: {
                 select: {
                   name: true,
                   loginId: true,
                 }
+              },
+              _count: {
+                select: { media: true }
               }
             }
           },
@@ -281,27 +310,30 @@ export class StakeholderService {
 
     return {
       stakeholders: stakeholders.map(s => {
-        let computedStatus: string = s.status;
+        let computedStatus: string = 'OPEN';
         let draftEnumerator = null;
         
-        if (s.status === 'OPEN' && s.surveys && s.surveys.length > 0) {
-          const latestSurvey = s.surveys[0];
-          if (latestSurvey.isDraft) {
-            computedStatus = 'DRAFT';
-            draftEnumerator = latestSurvey.enumerator;
+        if (s.surveys && s.surveys.length > 0) {
+          const latestSurvey = s.surveys[0] as any;
+          const hasIdentityNumber = Boolean(
+            (latestSurvey.aadharNumber && latestSurvey.aadharNumber.trim() !== '') ||
+            (latestSurvey.udyamAadharRegNo && latestSurvey.udyamAadharRegNo.trim() !== '')
+          );
+
+          if (latestSurvey.isCompleted && hasIdentityNumber) {
+            computedStatus = 'CLOSED';
           } else {
+            // STRICT RULE: Only fully completed surveys with Aadhar or Udyam Reg No show as CLOSED.
+            // Incomplete survey records show as PARTIAL_COMPLETED.
             computedStatus = 'PARTIAL_COMPLETED';
+            if (latestSurvey.isDraft) {
+              draftEnumerator = latestSurvey.enumerator;
+            }
           }
-        } else if (s.status === 'OPEN' && s._count?.surveys > 0) {
+        } else if (s._count?.surveys > 0) {
           computedStatus = 'PARTIAL_COMPLETED';
-        } else if (s.status === 'CLOSED' && s.surveys && s.surveys.length > 0) {
-          // CLOSED in the DB but the survey was never finalized — show as
-          // PARTIAL_COMPLETED so it appears in the "Has Survey" filter, not
-          // in "Closed / Completed".
-          const latestSurvey = s.surveys[0];
-          if (!latestSurvey.isCompleted) {
-            computedStatus = 'PARTIAL_COMPLETED';
-          }
+        } else {
+          computedStatus = 'OPEN';
         }
 
         const { surveys, ...rest } = s;
