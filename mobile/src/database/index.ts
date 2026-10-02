@@ -105,12 +105,17 @@ async function runMigrations(database: SQLite.SQLiteDatabase): Promise<void> {
     await database.executeSql('ALTER TABLE media ADD COLUMN stakeholder_id TEXT;');
   } catch (e) { /* ignore if column already exists */ }
 
+  try {
+    await database.executeSql('ALTER TABLE surveys ADD COLUMN telephone_number TEXT;');
+  } catch (e) { /* ignore if column already exists */ }
+
   await database.executeSql(`
     CREATE TABLE IF NOT EXISTS surveys (
       id TEXT PRIMARY KEY,
       stakeholder_id TEXT NOT NULL,
       enumerator_id TEXT NOT NULL,
       mobile_number TEXT,
+      telephone_number TEXT,
       email TEXT,
       business_category TEXT,
       latitude REAL,
@@ -1015,7 +1020,7 @@ export const surveyDao = {
       // the Category and Docs steps were removed from the form. The columns remain on
       // the table so previously-saved surveys keep their values.
       `INSERT OR REPLACE INTO surveys (id, stakeholder_id, enumerator_id,
-        mobile_number, email,
+        mobile_number, telephone_number, email,
         latitude, longitude, gps_accuracy, nearest_police_station,
         nearest_healthcare_center, is_draft, is_completed, is_synced,
         business_name, owner_name, district, city, pin_code,
@@ -1023,9 +1028,9 @@ export const surveyDao = {
         description, accommodation_facilities, accommodation_policies, working_hours,
         rooms,
         agreed_to_terms, declared_info_correct, acknowledged_dot_liability, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [id, survey.stakeholderId, survey.enumeratorId,
-       survey.mobileNumber, survey.email,
+       survey.mobileNumber, survey.telephoneNumber, survey.email,
        survey.latitude, survey.longitude, survey.gpsAccuracy,
        survey.nearestPoliceStation, survey.nearestHealthcareCenter,
        survey.isDraft ? 1 : 0, survey.isCompleted ? 1 : 0, survey.isSynced ? 1 : 0,

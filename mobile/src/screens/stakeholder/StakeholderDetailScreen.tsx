@@ -273,6 +273,7 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
     if (!row) return null;
     return {
       mobileNumber: row.mobile_number ?? row.mobileNumber,
+      telephoneNumber: row.telephone_number ?? row.telephoneNumber,
       email: row.email,
       latitude: row.latitude,
       longitude: row.longitude,
@@ -393,6 +394,7 @@ export default function StakeholderDetailScreen({ route, navigation }: any) {
           <CollapsibleSection title="Survey Data" icon="clipboard-text-outline" index={3} defaultExpanded={true}>
             {renderInfoRows([
               { label: 'Mobile', value: survey.mobileNumber },
+              { label: 'Telephone', value: survey.telephoneNumber },
               { label: 'Email', value: survey.email },
               { label: 'GPS', value: survey.latitude ? `${survey.latitude.toFixed(6)}, ${survey.longitude.toFixed(6)}` : null },
             ])}

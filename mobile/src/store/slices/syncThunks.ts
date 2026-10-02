@@ -458,6 +458,7 @@ export const runAutoSync = createAsyncThunk(
             const surveyPayload = {
               stakeholderId: surveyLocal.stakeholder_id,
               mobileNumber: surveyLocal.mobile_number,
+              telephoneNumber: surveyLocal.telephone_number,
               email: surveyLocal.email,
               latitude: surveyLocal.latitude,
               longitude: surveyLocal.longitude,

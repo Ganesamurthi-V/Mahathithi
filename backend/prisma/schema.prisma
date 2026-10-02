@@ -262,6 +262,7 @@ model Survey {
 
   // Contact
   mobileNumber    String?  @map("mobile_number")
+  telephoneNumber String?  @map("telephone_number")
   email           String?  @map("email")
 
   // Category

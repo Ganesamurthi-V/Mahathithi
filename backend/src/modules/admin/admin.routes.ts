@@ -1441,6 +1441,7 @@ export function generateExportCSV(surveys: any[], mediaBySurvey: Map<string, any
     { header: 'sub_categories',            value: s => csvList(s.subCategories) },
 
     { header: 'mobile_number',             value: s => s.mobileNumber },
+    { header: 'telephone_number',          value: s => s.telephoneNumber },
     { header: 'email',                     value: s => s.email },
 
     { header: 'district',                  value: s => s.district },

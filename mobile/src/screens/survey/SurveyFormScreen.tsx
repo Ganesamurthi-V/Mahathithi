@@ -25,6 +25,7 @@ interface SurveyFormData {
   pinCode: string;
   businessAddress: string;
   mobileNumber: string;
+  telephoneNumber: string;
   email: string;
   aadharNumber: string;
   udyamAadharRegNo: string;
@@ -366,6 +367,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
       pinCode: existingSurvey?.pin_code || existingSurvey?.pinCode || '',
       businessAddress: existingSurvey?.business_address || existingSurvey?.businessAddress || '',
       mobileNumber: existingSurvey?.mobileNumber || existingSurvey?.mobile_number || '',
+      telephoneNumber: existingSurvey?.telephoneNumber || existingSurvey?.telephone_number || '',
       email: existingSurvey?.email || '',
       aadharNumber: '',
       udyamAadharRegNo: existingSurvey?.udyam_aadhar_reg_no || existingSurvey?.udyamAadharRegNo || '',
@@ -1104,6 +1106,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 
               <Text style={styles.sectionHeader}>Contact Details</Text>
               <AnimatedInput field={{ name: 'mobileNumber', label: 'Mobile Number', placeholder: '10-digit mobile number', keyboardType: 'phone-pad', maxLength: 10, prefix: '+91', pattern: { value: /^[0-9]{10}$/, message: 'Invalid number' } }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
+              <AnimatedInput field={{ name: 'telephoneNumber', label: 'Telephone Number', placeholder: 'Telephone number', keyboardType: 'phone-pad', maxLength: 15 }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
               <AnimatedInput field={{ name: 'email', label: 'Email Address', placeholder: 'email@example.com', keyboardType: 'email-address' }} control={control} errors={errors} onFocus={() => {}} onBlur={() => {}} />
 
               <Text style={styles.sectionHeader}>Government IDs</Text>

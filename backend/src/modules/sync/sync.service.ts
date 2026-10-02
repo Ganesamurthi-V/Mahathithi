@@ -100,6 +100,7 @@ export class SyncService {
           },
           update: {
             mobileNumber: surveyData.mobileNumber,
+            telephoneNumber: surveyData.telephoneNumber,
             email: surveyData.email,
             latitude: surveyData.latitude,
             longitude: surveyData.longitude,
@@ -139,6 +140,7 @@ export class SyncService {
             stakeholderId: surveyData.stakeholderId,
             enumeratorId,
             mobileNumber: surveyData.mobileNumber,
+            telephoneNumber: surveyData.telephoneNumber,
             email: surveyData.email,
             latitude: surveyData.latitude,
             longitude: surveyData.longitude,
@@ -366,11 +368,11 @@ export class SyncService {
       status: s.status === 'OPEN' && s._count?.surveys > 0 ? 'PARTIAL_COMPLETED' : s.status,
     }));
 
-    // Rows this device must drop: taken by someone else, or finished. Sent
+    // Rows this device must drop: taken by someone else, or finished by someone else. Sent
     // separately because removing them locally is a different operation from
     // upserting an edit, and the client protects unsynced work when it purges.
     const lockedByOthers = updatedStakeholders.filter(
-      s => s.status === 'CLOSED' || (s.lockedById && s.lockedById !== enumeratorId)
+      s => (s.status === 'CLOSED' && s.lockedById !== enumeratorId) || (s.lockedById && s.lockedById !== enumeratorId)
     );
 
     // Claims taken back from this device — a colleague's share was rebalanced, or a

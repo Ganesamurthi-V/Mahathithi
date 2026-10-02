@@ -58,6 +58,7 @@ interface CreateSurveyData {
   stakeholderId: string;
   enumeratorId: string;
   mobileNumber?: string;
+  telephoneNumber?: string;
   email?: string;
   nearestPoliceStation?: string;
   nearestHealthcareCenter?: string;
@@ -149,6 +150,7 @@ export class SurveyService {
       },
       update: {
         mobileNumber: data.mobileNumber,
+        telephoneNumber: data.telephoneNumber,
         email: data.email,
         nearestPoliceStation: data.nearestPoliceStation,
         nearestHealthcareCenter: data.nearestHealthcareCenter,
@@ -163,6 +165,7 @@ export class SurveyService {
         stakeholderId: data.stakeholderId,
         enumeratorId: data.enumeratorId,
         mobileNumber: data.mobileNumber,
+        telephoneNumber: data.telephoneNumber,
         email: data.email,
         nearestPoliceStation: data.nearestPoliceStation,
         nearestHealthcareCenter: data.nearestHealthcareCenter,
@@ -296,20 +299,28 @@ export class SurveyService {
     // the completeness rules were removed.
     const photos = survey.media.filter(m => m.type === 'PHOTO');
 
-    // Accepted → CLOSED + LOCK
+    const hasIdentityNumber = Boolean(
+      (survey.aadharNumber && survey.aadharNumber.trim() !== '') ||
+      (survey.udyamAadharRegNo && survey.udyamAadharRegNo.trim() !== '')
+    );
+
+    const newStakeholderStatus = hasIdentityNumber ? 'CLOSED' : 'OPEN';
+    const newIsCompleted = hasIdentityNumber;
+
+    // Accepted → CLOSED + LOCK (if fully complete)
     await prisma.$transaction([
       prisma.survey.update({
         where: { id: surveyId },
         data: {
           isDraft: false,
-          isCompleted: true,
+          isCompleted: newIsCompleted,
           completedAt: new Date(),
         },
       }),
       prisma.stakeholder.update({
         where: { id: survey.stakeholderId },
         data: {
-          status: 'CLOSED',
+          status: newStakeholderStatus as any,
           lockedById: enumeratorId,
           lockedAt: new Date(),
         },
@@ -349,8 +360,10 @@ export class SurveyService {
     );
 
     return {
-      status: 'CLOSED',
-      message: 'Survey completed successfully. Stakeholder has been closed and locked.',
+      status: newStakeholderStatus,
+      message: newStakeholderStatus === 'CLOSED'
+        ? 'Survey completed successfully. Stakeholder has been closed and locked.'
+        : 'Survey submitted successfully, but missing identity number. Marked as partially completed.',
     };
   }
 
@@ -399,7 +412,7 @@ export class SurveyService {
     // Whitelist the editable columns. Recompute digipin if coordinates change.
     const data: any = {};
     const allowed: (keyof CreateSurveyData)[] = [
-      'mobileNumber', 'email', 'nearestPoliceStation', 'nearestHealthcareCenter',
+      'mobileNumber', 'telephoneNumber', 'email', 'nearestPoliceStation', 'nearestHealthcareCenter',
       'latitude', 'longitude', 'gpsAccuracy',
       'businessName', 'ownerName', 'district', 'city', 'pinCode', 'businessAddress',
       'aadharNumber', 'udyamAadharRegNo', 'panNumber', 'gstNumber',
@@ -465,6 +478,15 @@ export class SurveyService {
       include: { stakeholder: true },
     });
     if (!survey) throw new NotFoundError('Survey');
+
+    const hasIdentityNumber = Boolean(
+      (survey.aadharNumber && survey.aadharNumber.trim() !== '') ||
+      (survey.udyamAadharRegNo && survey.udyamAadharRegNo.trim() !== '')
+    );
+
+    if (!hasIdentityNumber) {
+      throw new Error('Cannot finalize survey: Aadhar Number or Udyam Reg. No. is required.');
+    }
 
     if (survey.isCompleted) {
       // Idempotent: already finalized. Return the current state rather than

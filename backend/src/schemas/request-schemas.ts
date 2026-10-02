@@ -100,6 +100,7 @@ export const createSurveySchema = z.object({
   contactPerson: optText(200),
   designation: optText(200),
   mobileNumber: optText(20),
+  telephoneNumber: optText(20),
   email: optText(200),
   contactPerson2: optText(200),
   mobileNumber2: optText(20),
@@ -330,6 +331,7 @@ export const syncSurveyItemSchema = z.object({
   contactPerson: optText(200),
   designation: optText(200),
   mobileNumber: optText(20),
+  telephoneNumber: optText(20),
   email: optText(200),
   // B4 FIX: validate secondary contact fields explicitly so they carry the
   // same length limits as the online createSurveySchema and are persisted.

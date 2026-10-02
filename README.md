@@ -206,6 +206,10 @@ cd "c:\test file\Manasa project\mobile\android"
 
 npx prisma db execute
 
+npx prisma generate
+npx prisma db push
+
+
 npx tsx scripts/import-excel.ts
 npx tsx scripts/truncate.ts
 

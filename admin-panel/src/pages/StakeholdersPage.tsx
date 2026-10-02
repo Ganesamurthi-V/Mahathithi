@@ -67,6 +67,10 @@ const SURVEY_FIELD_RULES: Record<string, { test: (v: string) => boolean; message
     test: (v) => /^(?:\+91[-\s]?|0[-\s]?)?[1-9]\d{6,11}$/.test(v.replace(/[\s-]+/g, '')),
     message: 'Enter a valid mobile or telephone number.',
   },
+  telephoneNumber: {
+    test: (v) => /^(?:\+91[-\s]?|0[-\s]?)?[1-9]\d{6,11}$/.test(v.replace(/[\s-]+/g, '')),
+    message: 'Enter a valid mobile or telephone number.',
+  },
   email: {
     test: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
     message: 'Enter a valid email address.',
@@ -371,6 +375,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
         businessName: survey.businessName || '',
         ownerName: survey.ownerName || '',
         mobileNumber: survey.mobileNumber || '',
+        telephoneNumber: survey.telephoneNumber || '',
         email: survey.email || '',
         district: survey.district || '',
         city: survey.city || '',
@@ -766,6 +771,11 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                         <input className="form-input" style={surveyErrors.mobileNumber ? { borderColor: 'var(--danger, #ef4444)' } : undefined} value={surveyEdit.mobileNumber} onChange={(e) => setSurveyEdit({ ...surveyEdit, mobileNumber: e.target.value })} />
                         {surveyErrors.mobileNumber && <div style={{ color: 'var(--danger, #ef4444)', fontSize: '11px', marginTop: '4px' }}>{surveyErrors.mobileNumber}</div>}
                       </div>
+                      <div className="form-group">
+                        <label>Telephone Number</label>
+                        <input className="form-input" style={surveyErrors.telephoneNumber ? { borderColor: 'var(--danger, #ef4444)' } : undefined} value={surveyEdit.telephoneNumber || ''} onChange={(e) => setSurveyEdit({ ...surveyEdit, telephoneNumber: e.target.value })} />
+                        {surveyErrors.telephoneNumber && <div style={{ color: 'var(--danger, #ef4444)', fontSize: '11px', marginTop: '4px' }}>{surveyErrors.telephoneNumber}</div>}
+                      </div>
                       <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
                         <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>Email</label>
                         <input className="form-input" style={surveyErrors.email ? { borderColor: 'var(--danger, #ef4444)' } : undefined} value={surveyEdit.email} onChange={(e) => setSurveyEdit({ ...surveyEdit, email: e.target.value })} />
@@ -870,7 +880,7 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                 <>
                 <div className="gallery-info-grid">
                   {[
-                    { label: 'Mobile / Telephone', value: survey.mobileNumber }, { label: 'Email', value: survey.email },
+                    { label: 'Mobile / Telephone', value: [survey.mobileNumber, survey.telephoneNumber].filter(Boolean).join(' / ') }, { label: 'Email', value: survey.email },
                   ].filter(r => r.value).map((row, i) => (
                     <div key={i} className="gallery-info-item"><span className="gallery-info-label">{row.label}</span><span className="gallery-info-value">{row.value}</span></div>
                   ))}
