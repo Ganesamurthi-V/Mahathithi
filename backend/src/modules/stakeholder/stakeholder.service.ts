@@ -131,15 +131,34 @@ export class StakeholderService {
     }
 
     // Status filter.
-    // PARTIAL_COMPLETED is a VIRTUAL status (not a real enum value) — it means an
-    // OPEN stakeholder that already has at least one uploaded survey. Translate it
-    // to that predicate so the admin filter dropdown can select it. A plain OPEN
-    // filter still returns both OPEN-untouched and OPEN-with-surveys, matching the
-    // computed status the list projects.
+    // PARTIAL_COMPLETED is a VIRTUAL status (not a real enum value) — it means a
+    // stakeholder that has survey data but the survey was never fully finalized
+    // (isCompleted !== true). This includes:
+    //   • OPEN stakeholders with a submitted (non-draft) survey
+    //   • CLOSED stakeholders whose survey was never finalized (edge case)
+    //
+    // CLOSED means truly completed: the stakeholder is CLOSED *and* its survey
+    // has isCompleted === true (set by complete() or adminFinalizeSurvey()).
     if (status === 'DRAFT') {
       conditions.push({ status: 'OPEN', surveys: { some: { isDraft: true } } });
     } else if (status === 'PARTIAL_COMPLETED') {
-      conditions.push({ status: 'OPEN', surveys: { some: { isDraft: false } } });
+      conditions.push({
+        OR: [
+          // Normal: OPEN stakeholder with a submitted (non-draft) survey
+          { status: 'OPEN', surveys: { some: { isDraft: false } } },
+          // Edge case: CLOSED in DB but survey never finalized
+          {
+            status: 'CLOSED',
+            AND: [
+              { surveys: { some: {} } },
+              { surveys: { none: { isCompleted: true } } },
+            ],
+          },
+        ],
+      });
+    } else if (status === 'CLOSED') {
+      // Only truly completed: stakeholder CLOSED with a finalized survey
+      conditions.push({ status: 'CLOSED', surveys: { some: { isCompleted: true } } });
     } else if (status) {
       conditions.push({ status: status as any });
     }
@@ -233,6 +252,7 @@ export class StakeholderService {
             orderBy: { updatedAt: 'desc' },
             select: {
               isDraft: true,
+              isCompleted: true,
               enumerator: {
                 select: {
                   name: true,
@@ -274,6 +294,14 @@ export class StakeholderService {
           }
         } else if (s.status === 'OPEN' && s._count?.surveys > 0) {
           computedStatus = 'PARTIAL_COMPLETED';
+        } else if (s.status === 'CLOSED' && s.surveys && s.surveys.length > 0) {
+          // CLOSED in the DB but the survey was never finalized — show as
+          // PARTIAL_COMPLETED so it appears in the "Has Survey" filter, not
+          // in "Closed / Completed".
+          const latestSurvey = s.surveys[0];
+          if (!latestSurvey.isCompleted) {
+            computedStatus = 'PARTIAL_COMPLETED';
+          }
         }
 
         const { surveys, ...rest } = s;

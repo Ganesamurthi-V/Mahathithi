@@ -19,6 +19,7 @@ import StakeholderListScreen from '../screens/stakeholder/StakeholderListScreen'
 import StakeholderDetailScreen from '../screens/stakeholder/StakeholderDetailScreen';
 import SurveyFormScreen from '../screens/survey/SurveyFormScreen';
 import DraftsScreen from '../screens/survey/DraftsScreen';
+import CompletedSurveysScreen from '../screens/survey/CompletedSurveysScreen';
 import SyncStatusScreen from '../screens/sync/SyncStatusScreen';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
@@ -245,6 +246,8 @@ export function AppNavigator() {
             options={{ title: 'Survey Form' }} />
           <Stack.Screen name="Drafts" component={DraftsScreen}
             options={{ title: 'Draft Surveys' }} />
+          <Stack.Screen name="CompletedSurveys" component={CompletedSurveysScreen}
+            options={{ title: 'Completed Surveys' }} />
         </>
       )}
     </Stack.Navigator>

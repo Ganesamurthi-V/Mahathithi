@@ -483,7 +483,7 @@ export const stakeholderDao = {
     filters: Record<string, string>,
     page: number = 1,
     limit: number = 20,
-    options: { excludeDrafts?: boolean } = {}
+    options: { excludeDrafts?: boolean; excludeCompleted?: boolean } = {}
   ): Promise<any[]> {
     const database = await getDB();
     const conditions: string[] = [];
@@ -498,6 +498,13 @@ export const stakeholderDao = {
         SELECT 1 FROM surveys sv
         WHERE sv.stakeholder_id = stakeholders.id
           AND sv.is_draft = 1 AND sv.is_completed = 0
+      )`);
+    }
+    if (options.excludeCompleted) {
+      conditions.push(`NOT EXISTS (
+        SELECT 1 FROM surveys sv
+        WHERE sv.stakeholder_id = stakeholders.id
+          AND sv.is_completed = 1 AND sv.is_draft = 0
       )`);
     }
 
@@ -585,7 +592,7 @@ export const stakeholderDao = {
 
   async searchCount(
     filters: Record<string, string>,
-    options: { excludeDrafts?: boolean } = {}
+    options: { excludeDrafts?: boolean; excludeCompleted?: boolean } = {}
   ): Promise<number> {
     const database = await getDB();
     const conditions: string[] = [];
@@ -598,6 +605,13 @@ export const stakeholderDao = {
         SELECT 1 FROM surveys sv
         WHERE sv.stakeholder_id = stakeholders.id
           AND sv.is_draft = 1 AND sv.is_completed = 0
+      )`);
+    }
+    if (options.excludeCompleted) {
+      conditions.push(`NOT EXISTS (
+        SELECT 1 FROM surveys sv
+        WHERE sv.stakeholder_id = stakeholders.id
+          AND sv.is_completed = 1 AND sv.is_draft = 0
       )`);
     }
 
@@ -739,6 +753,7 @@ export const stakeholderDao = {
          AND (
            s.is_synced = 0
            OR EXISTS (SELECT 1 FROM media m WHERE m.survey_id = s.id AND m.is_synced = 0)
+           OR (s.is_completed = 1 AND s.is_draft = 0)
          )`,
       lockedIds
     );
@@ -1284,6 +1299,73 @@ export const surveyDao = {
     return rows;
   },
 
+  /**
+   * Count locally-saved COMPLETED surveys — fully submitted forms
+   * (is_completed = 1, is_draft = 0). Shown on the dashboard as a separate
+   * count from the server-backed "Completed" stat, because this count
+   * includes surveys that may not have synced yet.
+   */
+  async getCompletedCount(): Promise<number> {
+    const database = await getDB();
+    const [res] = await database.executeSql(
+      `SELECT COUNT(*) as count FROM surveys WHERE is_completed = 1 AND is_draft = 0`
+    );
+    return res.rows.item(0).count ?? 0;
+  },
+
+  /**
+   * List every locally-saved COMPLETED survey (is_completed = 1, is_draft = 0),
+   * newest first, each joined to its stakeholder so the Completed Surveys
+   * screen can show a business name / location and hand the survey form what
+   * it needs to reopen the survey for editing.
+   *
+   * Shape mirrors getDrafts() so the form screen can consume either identically.
+   */
+  async getCompletedSurveys(): Promise<Array<{ stakeholderId: string; stakeholder: any; survey: any }>> {
+    const database = await getDB();
+    const [res] = await database.executeSql(
+      `SELECT * FROM surveys WHERE is_completed = 1 AND is_draft = 0 ORDER BY updated_at DESC`
+    );
+    const out: Array<{ stakeholderId: string; stakeholder: any; survey: any }> = [];
+    for (let i = 0; i < res.rows.length; i++) {
+      const survey = res.rows.item(i);
+      const stakeholder = await stakeholderDao.getById(survey.stakeholder_id);
+      if (!stakeholder) continue;
+      out.push({ stakeholderId: survey.stakeholder_id, stakeholder, survey });
+    }
+    return out;
+  },
+
+  /**
+   * Revert a completed survey back to an editable draft.
+   *
+   * Called when an enumerator taps "Edit" on a completed survey. Sets
+   * is_draft = 1, is_completed = 0, is_synced = 0 so the re-edited version
+   * enters the sync pipeline on next submit. Also reopens the stakeholder
+   * (status = 'OPEN', locked_by_id = NULL, locked_at = NULL) so it reappears
+   * in the work queue.
+   *
+   * This does NOT touch the server. The edit flow is:
+   *   1. revertToEditableDraft() — local flags flip
+   *   2. SurveyFormScreen opens with the survey data pre-filled
+   *   3. Enumerator edits and re-submits (which re-closes the stakeholder)
+   *   4. Sync pipeline uploads the updated survey to the server
+   */
+  async revertToEditableDraft(surveyId: string, stakeholderId: string): Promise<void> {
+    const database = await getDB();
+    await database.executeSql(
+      `UPDATE surveys SET is_draft = 1, is_completed = 0, is_synced = 0,
+       retry_count = 0, next_retry_at = NULL, last_error = NULL,
+       updated_at = datetime('now') WHERE id = ?`,
+      [surveyId]
+    );
+    // Reopen the stakeholder so it goes back into the work queue
+    await database.executeSql(
+      `UPDATE stakeholders SET status = 'OPEN', locked_by_id = NULL, locked_at = NULL,
+       updated_at = datetime('now') WHERE id = ?`,
+      [stakeholderId]
+    );
+  },
 
 };
 

@@ -701,42 +701,48 @@ function VerificationGalleryModal({ stakeholder, onClose }: any) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                   <h4 className="gallery-section-title" style={{ margin: 0 }}>
                     📝 Survey Data
-                    {isSurveyDraft && (
+                    {isSurveyDraft ? (
                       <span
                         className={`badge ${survey?.isDraft ? 'badge-pending' : 'badge-admin'}`}
                         style={{ marginLeft: '8px', verticalAlign: 'middle' }}
                       >
                         {survey?.isDraft ? '📝 DRAFT' : 'PARTIAL COMPLETED'}
                       </span>
+                    ) : (
+                      <span
+                        className="badge badge-active"
+                        style={{ marginLeft: '8px', verticalAlign: 'middle' }}
+                      >
+                        ✅ COMPLETED
+                      </span>
                     )}
-                    {survey?.isDraft && survey?.enumerator && (
+                    {survey?.enumerator && (
                       <span style={{ fontSize: '13px', color: 'var(--text-muted)', marginLeft: '8px', fontWeight: 'normal' }}>
-                        (by {survey.enumerator.name})
+                        (by {survey.enumerator.name} 
+                        {survey.updatedAt ? ` on ${new Date(survey.updatedAt).toLocaleString()}` : ''})
                       </span>
                     )}
                   </h4>
-                  {/* Verification actions — only for a draft (partial) survey. Once
-                      finalized the survey is CLOSED and read-only here. */}
-                  {isSurveyDraft && (
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      {surveyEditMode ? (
-                        <>
-                          <button className="btn btn-secondary btn-sm" onClick={() => setSurveyEditMode(false)} disabled={surveyEditMut.isPending}>Cancel</button>
-                          <button
-                            className="btn btn-primary btn-sm"
-                            onClick={() => surveyEditMut.mutate(surveyEdit)}
-                            disabled={surveyEditMut.isPending || hasSurveyErrors}
-                            title={hasSurveyErrors ? 'Fix the highlighted fields before saving' : undefined}
-                          >{surveyEditMut.isPending ? 'Saving…' : 'Save Details'}</button>
-                        </>
-                      ) : (
-                        <>
-                          <button className="btn btn-secondary btn-sm" onClick={() => setSurveyEditMode(true)}>✏️ Edit Survey</button>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {surveyEditMode ? (
+                      <>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setSurveyEditMode(false)} disabled={surveyEditMut.isPending}>Cancel</button>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => surveyEditMut.mutate(surveyEdit)}
+                          disabled={surveyEditMut.isPending || hasSurveyErrors}
+                          title={hasSurveyErrors ? 'Fix the highlighted fields before saving' : undefined}
+                        >{surveyEditMut.isPending ? 'Saving…' : 'Save Details'}</button>
+                      </>
+                    ) : (
+                      <>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setSurveyEditMode(true)}>✏️ Edit Survey</button>
+                        {isSurveyDraft && (
                           <LoadingButton variant="primary" size="sm" loading={finalizeMut.isPending} loadingText="Finalizing…" onClick={confirmFinalize}>✅ Finalize &amp; Close</LoadingButton>
-                        </>
-                      )}
-                    </div>
-                  )}
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 {surveyEditMode ? (

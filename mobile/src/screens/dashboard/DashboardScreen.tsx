@@ -88,6 +88,7 @@ export default function DashboardScreen({ navigation }: any) {
   // SQLite rather than the server-backed dashboard stats. Kept out of the Redux
   // stats slice for the same reason — it has no server counterpart.
   const [draftCount, setDraftCount] = useState(0);
+  const [completedSurveyCount, setCompletedSurveyCount] = useState(0);
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -106,8 +107,10 @@ export default function DashboardScreen({ navigation }: any) {
     try {
       const drafts = await surveyDao.getDraftCount();
       setDraftCount(drafts);
+      const completed = await surveyDao.getCompletedCount();
+      setCompletedSurveyCount(completed);
     } catch (e) {
-      // Leave the last known draft count on screen if the read fails.
+      // Leave the last known counts on screen if the read fails.
     }
     try {
       const res = await dashboardService.getStats();
@@ -200,6 +203,19 @@ export default function DashboardScreen({ navigation }: any) {
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
           <Text style={styles.draftValue}>{draftCount.toLocaleString()}</Text>
+          <Icon name="chevron-right" size={moderateScale(20)} color={colors.textMuted} />
+        </View>
+      </TouchableOpacity>
+
+      {/* Completed Surveys — tapping opens the list of completed surveys
+          where the enumerator can review and edit already-submitted work. */}
+      <TouchableOpacity style={styles.completedRow} activeOpacity={0.8} onPress={() => navigation.navigate('CompletedSurveys')}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Icon name="check-circle-outline" size={moderateScale(20)} color={colors.success} style={{ marginRight: spacing.sm }} />
+          <Text style={styles.completedLabel}>COMPLETED SURVEYS</Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+          <Text style={styles.completedValue}>{completedSurveyCount.toLocaleString()}</Text>
           <Icon name="chevron-right" size={moderateScale(20)} color={colors.textMuted} />
         </View>
       </TouchableOpacity>
@@ -333,6 +349,15 @@ const styles = StyleSheet.create({
   },
   draftLabel: { ...typography.caption, color: colors.textMuted, letterSpacing: 1, fontWeight: '700', fontSize: moderateScale(11) },
   draftValue: { ...typography.h3, color: colors.primary, fontWeight: '700' },
+  completedRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: colors.bgCard, borderRadius: borderRadius.lg,
+    padding: spacing.lg, marginBottom: spacing.xxxl,
+    borderWidth: 1, borderColor: colors.border,
+    ...shadows.card,
+  },
+  completedLabel: { ...typography.caption, color: colors.textMuted, letterSpacing: 1, fontWeight: '700', fontSize: moderateScale(11) },
+  completedValue: { ...typography.h3, color: colors.success, fontWeight: '700' },
   syncCard: {
     backgroundColor: colors.bgCard, borderRadius: borderRadius.xl,
     padding: spacing.xl, borderWidth: 1, borderColor: colors.border,
