@@ -994,6 +994,7 @@ router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Respon
       where: { isCompleted: true, isDraft: false },
       select: {
         id: true,
+        stakeholderId: true,
         businessName: true,
         businessCategory: true,
         district: true,

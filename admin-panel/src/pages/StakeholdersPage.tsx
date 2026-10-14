@@ -326,7 +326,7 @@ export default function StakeholdersPage() {
   );
 }
 
-function VerificationGalleryModal({ stakeholder, onClose }: any) {
+export function VerificationGalleryModal({ stakeholder, onClose }: any) {
   const queryClient = useQueryClient();
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);

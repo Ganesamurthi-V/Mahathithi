@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getCompletedSurveys, exportSurveys, type ExportFormat } from '../api';
+import { getCompletedSurveys, exportSurveys, getStakeholderById, type ExportFormat } from '../api';
 import {
   LoadingButton,
   TableSkeletonWithHeader,
   RefetchOverlay,
   InlineLoader,
+  PageLoader,
 } from '../components/Loading';
+import { VerificationGalleryModal } from './StakeholdersPage';
 
 export default function ExportPage() {
   const queryClient = useQueryClient();
@@ -25,6 +27,9 @@ export default function ExportPage() {
   // Progress/result text so the operator knows the size of the job and when it
   // finished, instead of just watching a spinner.
   const [exportNote, setExportNote] = useState('');
+  // The stakeholder whose photos/survey the operator is inspecting. Export rows
+  // carry only the stakeholderId, so the details modal is loaded on demand.
+  const [viewStakeholderId, setViewStakeholderId] = useState<string | null>(null);
 
   // Auto-select only new (not exported) surveys when data loads
   useEffect(() => {
@@ -119,7 +124,7 @@ export default function ExportPage() {
   const newCount = surveys.filter((s: any) => !s.isExported).length;
   const oldCount = surveys.length - newCount;
 
-  const TABLE_HEADERS = ['', 'Business Name', 'Category', 'District', 'City', 'Date', 'Status'];
+  const TABLE_HEADERS = ['', 'Business Name', 'Category', 'District', 'City', 'Date', 'Status', 'Details'];
   const isRefreshing = isFetching && !isLoading;
 
   if (isLoading) {
@@ -134,7 +139,7 @@ export default function ExportPage() {
         <TableSkeletonWithHeader
           headers={TABLE_HEADERS}
           rows={6}
-          widths={['20px', '70%', '55%', '50%', '45%', '50%', '55%']}
+          widths={['20px', '70%', '55%', '50%', '45%', '50%', '55%', '60%']}
         />
       </>
     );
@@ -213,11 +218,12 @@ export default function ExportPage() {
               <th>City</th>
               <th>Date</th>
               <th>Status</th>
+              <th>Details</th>
             </tr>
           </thead>
           <tbody>
             {surveys.length === 0 && (
-              <tr><td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No completed surveys found.</td></tr>
+              <tr><td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No completed surveys found.</td></tr>
             )}
             {surveys.map((s: any) => (
               <tr key={s.id} style={{ opacity: s.isExported ? 0.6 : 1 }}>
@@ -240,11 +246,65 @@ export default function ExportPage() {
                     : <span className="badge badge-active">New</span>
                   }
                 </td>
+                <td>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setViewStakeholderId(s.stakeholderId)}
+                    disabled={!s.stakeholderId}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    📸 Photos &amp; Survey
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </RefetchOverlay>
+
+      {viewStakeholderId && (
+        <SurveyDetailsModal
+          stakeholderId={viewStakeholderId}
+          onClose={() => setViewStakeholderId(null)}
+        />
+      )}
     </>
   );
+}
+
+/**
+ * Loads the full stakeholder for an export row (which carries only the id), then
+ * renders the same gallery modal the Stakeholders page uses so photos and survey
+ * details look and behave identically in both places.
+ */
+function SurveyDetailsModal({ stakeholderId, onClose }: { stakeholderId: string; onClose: () => void }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['stakeholder', stakeholderId],
+    queryFn: () => getStakeholderById(stakeholderId),
+  });
+
+  const stakeholder = data?.data?.data;
+
+  if (isLoading || (!stakeholder && !isError)) {
+    return (
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="gallery-modal" onClick={(e) => e.stopPropagation()}>
+          <PageLoader label="Loading stakeholder…" />
+        </div>
+      </div>
+    );
+  }
+
+  if (isError || !stakeholder) {
+    return (
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="gallery-modal" onClick={(e) => e.stopPropagation()} style={{ padding: '32px', textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-muted)' }}>Could not load this stakeholder's details.</p>
+          <button className="btn btn-secondary btn-sm" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    );
+  }
+
+  return <VerificationGalleryModal stakeholder={stakeholder} onClose={onClose} />;
 }
