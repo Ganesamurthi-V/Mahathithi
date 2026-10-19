@@ -9,7 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { login, clearError } from '../../store/slices/authSlice';
-import { colors, spacing, borderRadius, typography, animations, shadows } from '../../theme';
+import { colors, spacing, borderRadius, typography, animations, shadows, layout } from '../../theme';
 
 export default function LoginScreen() {
   const dispatch = useDispatch<AppDispatch>();
@@ -195,6 +195,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: spacing.xxxl,
+    ...layout.dialogColumn,
   },
   logoSection: {
     alignItems: 'center',

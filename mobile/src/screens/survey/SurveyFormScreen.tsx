@@ -11,7 +11,7 @@ import { RootState, AppDispatch } from '../../store';
 import { surveyDao, mediaDao, facilityDao, stakeholderDao } from '../../database';
 import { refreshSyncCountsThunk, runAutoSync } from '../../store/slices/syncThunks';
 import { announceLocalDataChange } from '../../services/realtime';
-import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, layout } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 import { requestLocationPermission, requestCameraPermission } from '../../utils/permissions';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
@@ -1322,7 +1322,7 @@ export default function SurveyFormScreen({ route, navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bgPrimary },
+  container: { flex: 1, backgroundColor: colors.bgPrimary, ...layout.screenColumn },
   content: { padding: spacing.lg, paddingBottom: moderateScale(100) },
   progressContainer: { height: 4, backgroundColor: colors.bgCard, width: '100%' },
   progressBar: { height: 4, backgroundColor: colors.primary },

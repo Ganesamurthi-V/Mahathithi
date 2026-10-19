@@ -4,7 +4,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { surveyDao } from '../../database';
-import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, layout } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 
 // One draft row. Tapping it reopens the survey form with the SAME params the
@@ -109,7 +109,7 @@ export default function DraftsScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bgPrimary },
+  container: { flex: 1, backgroundColor: colors.bgPrimary, ...layout.screenColumn },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   list: { padding: spacing.xl },
   emptyContent: { flexGrow: 1, justifyContent: 'center' },

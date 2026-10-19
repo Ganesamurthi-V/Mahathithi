@@ -3,7 +3,7 @@ import { Modal, View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } fr
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { runInitialSync } from '../../store/slices/syncThunks';
-import { colors, typography, shadows, spacing } from '../../theme';
+import { colors, typography, shadows, spacing, layout } from '../../theme';
 import { moderateScale, verticalScale } from '../../theme/responsive';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgCard,
     borderRadius: moderateScale(16),
     padding: spacing.xl,
-    width: '100%',
+    ...layout.dialogColumn,
     alignItems: 'center',
     ...shadows.elevated,
   },

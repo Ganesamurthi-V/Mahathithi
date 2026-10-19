@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { surveyDao } from '../../database';
 import { announceLocalDataChange } from '../../services/realtime';
-import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, layout } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 
 // One completed survey row. Tapping the edit button reverts the survey to a
@@ -113,7 +113,7 @@ export default function CompletedSurveysScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bgPrimary },
+  container: { flex: 1, backgroundColor: colors.bgPrimary, ...layout.screenColumn },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   list: { padding: spacing.xl },
   emptyContent: { flexGrow: 1, justifyContent: 'center' },

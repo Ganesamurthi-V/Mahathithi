@@ -12,7 +12,7 @@ import { setSearchResults, appendSearchResults, setSearching } from '../../store
 import { stakeholderService } from '../../services/api';
 import { stakeholderDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
-import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, layout } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -544,7 +544,7 @@ export default function SearchScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bgPrimary },
+  container: { flex: 1, backgroundColor: colors.bgPrimary, ...layout.screenColumn },
   cascadeSection: { padding: spacing.lg },
   cascadeButton: {
     backgroundColor: colors.bgInput, borderRadius: borderRadius.md,
@@ -577,6 +577,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgPrimary, maxHeight: '75%',
     borderTopLeftRadius: borderRadius.lg, borderTopRightRadius: borderRadius.lg,
     paddingTop: spacing.lg, paddingBottom: spacing.xl,
+    ...layout.screenColumn,
   },
   pickerHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

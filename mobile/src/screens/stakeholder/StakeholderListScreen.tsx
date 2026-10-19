@@ -8,7 +8,7 @@ import { stakeholderService } from '../../services/api';
 import { stakeholderDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
 import { useLiveData } from '../../hooks/useLiveData';
-import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, layout } from '../../theme';
 
 const STATUS_COLORS: Record<string, string> = {
   OPEN: colors.statusPending,
@@ -252,7 +252,7 @@ export default function StakeholderListScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bgPrimary },
+  container: { flex: 1, backgroundColor: colors.bgPrimary, ...layout.screenColumn },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.xl },
   headerRight: { flexDirection: 'row', alignItems: 'center' },
   addBtn: {
@@ -555,6 +555,7 @@ const addStyles = StyleSheet.create({
     borderTopRightRadius: borderRadius.lg,
     maxHeight: '92%',
     paddingBottom: spacing.xl,
+    ...layout.screenColumn,
   },
   sheetHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',

@@ -2,13 +2,14 @@ import React, { useEffect } from 'react';
 import { LogBox } from 'react-native';
 import { Provider } from 'react-redux';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { store } from './store';
 import { RootNavigator } from './navigation/AppNavigator';
 import { initDatabase } from './database';
 import { isApiConfigured } from './services/api';
 import ConfigErrorScreen from './screens/ConfigErrorScreen';
+import { colors } from './theme';
 
 // Suppress known deprecation warnings from react-native core that only fire
 // because the framework still defines these modules internally. They are not
@@ -18,6 +19,10 @@ LogBox.ignoreLogs([
   'Clipboard has been extracted',
   'PushNotificationIOS has been extracted',
 ]);
+
+// The default light-grey background shows beside the centred content column on
+// tablets (and flashes during transitions), so match the app's dark background.
+const navTheme = { ...DefaultTheme, colors: { ...DefaultTheme.colors, background: colors.bgPrimary } };
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,7 +50,7 @@ export default function App() {
     <Provider store={store}>
       <QueryClientProvider client={queryClient}>
         <SafeAreaProvider>
-          <NavigationContainer>
+          <NavigationContainer theme={navTheme}>
             <RootNavigator />
           </NavigationContainer>
         </SafeAreaProvider>

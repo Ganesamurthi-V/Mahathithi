@@ -7,7 +7,7 @@ import { setStats, setLoading } from '../../store/slices/dashboardSlice';
 import { logout } from '../../store/slices/authSlice';
 import { dashboardService } from '../../services/api';
 import { surveyDao } from '../../database';
-import { colors, spacing, borderRadius, typography, shadows, iconSizes } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, iconSizes, layout } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 import { useLiveData } from '../../hooks/useLiveData';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -280,7 +280,7 @@ export default function DashboardScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bgPrimary },
+  container: { flex: 1, backgroundColor: colors.bgPrimary, ...layout.screenColumn },
   content: { padding: spacing.xl, paddingBottom: moderateScale(40) },
   header: {
     flexDirection: 'row', alignItems: 'center',

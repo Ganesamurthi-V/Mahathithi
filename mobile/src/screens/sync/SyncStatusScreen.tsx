@@ -10,7 +10,7 @@ import {
 import { runAutoSync, retryFailedSyncNow, resetDeadLettersAndRetry, refreshSyncCountsThunk } from '../../store/slices/syncThunks';
 import { syncQueueDao, surveyDao, stakeholderDao } from '../../database';
 import NetInfo from '@react-native-community/netinfo';
-import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, layout } from '../../theme';
 
 export default function SyncStatusScreen({ navigation }: any) {
   const dispatch = useDispatch<AppDispatch>();
@@ -316,7 +316,7 @@ export default function SyncStatusScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bgPrimary },
+  container: { flex: 1, backgroundColor: colors.bgPrimary, ...layout.screenColumn },
   content: { padding: spacing.xl, paddingBottom: 100 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.xxl },
   title: { ...typography.h2, color: colors.textPrimary },

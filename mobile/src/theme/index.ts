@@ -91,6 +91,13 @@ export const typography = {
   stat: { fontSize: moderateScale(32), fontWeight: '800' as const },
 };
 
+// Phones in portrait are narrower than these, so they only take effect on tablets
+// and in landscape, where full-width forms and lists become hard to read.
+export const layout = {
+  screenColumn: { width: '100%', maxWidth: 840, alignSelf: 'center' } as const,
+  dialogColumn: { width: '100%', maxWidth: 480, alignSelf: 'center' } as const,
+};
+
 export const shadows = {
   card: {
     shadowColor: '#000',

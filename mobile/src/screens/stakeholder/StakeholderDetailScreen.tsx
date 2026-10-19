@@ -6,7 +6,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { useDispatch, useSelector } from 'react-redux';
 import { runAutoSync } from '../../store/slices/syncThunks';
 import { AppDispatch, RootState } from '../../store';
-import { colors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { colors, spacing, borderRadius, typography, shadows, layout } from '../../theme';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { moderateScale } from '../../theme/responsive';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -520,7 +520,7 @@ function getStatusColor(status: string) {
 }
 
 const styles = StyleSheet.create({
-  mainContainer: { flex: 1, backgroundColor: colors.bgPrimary },
+  mainContainer: { flex: 1, backgroundColor: colors.bgPrimary, ...layout.screenColumn },
   container: { flex: 1 },
   content: { padding: spacing.xl, paddingBottom: moderateScale(140) }, // Extra padding for bottom bar
   
@@ -588,10 +588,10 @@ const styles = StyleSheet.create({
   actionSecondaryText: { ...typography.label, color: colors.primary, fontSize: moderateScale(14) },
   
   modalContainer: { flex: 1, backgroundColor: colors.bgPrimary },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.xl, borderBottomWidth: 1, borderBottomColor: colors.border },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.xl, borderBottomWidth: 1, borderBottomColor: colors.border, ...layout.screenColumn },
   modalTitle: { ...typography.h2, color: colors.textPrimary },
   modalCloseButton: { padding: spacing.sm },
-  modalBody: { flex: 1, padding: spacing.xl },
+  modalBody: { flex: 1, padding: spacing.xl, ...layout.screenColumn },
   formGroup: { marginBottom: spacing.lg },
   rowGroup: { flexDirection: 'row', gap: spacing.md },
   inputLabel: { ...typography.label, color: colors.textMuted, marginBottom: spacing.xs },
@@ -599,7 +599,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgInput, borderWidth: 1, borderColor: colors.border,
     borderRadius: borderRadius.lg, padding: spacing.md, ...typography.body, color: colors.textPrimary 
   },
-  modalFooter: { padding: spacing.xl, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.bgPrimary },
+  modalFooter: { padding: spacing.xl, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.bgPrimary, ...layout.screenColumn },
   saveButton: { backgroundColor: colors.primary, borderRadius: borderRadius.full, padding: spacing.lg, alignItems: 'center', ...shadows.elevated },
   saveButtonText: { ...typography.button, color: '#FFF' },
 });
