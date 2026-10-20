@@ -76,7 +76,7 @@ export const runInitialSync = createAsyncThunk(
         );
         for (const s of c.shares ?? []) {
           console.log(
-            `   ${s.district}: share ${s.share} = min(${c.quota}, ceil(${s.openTotal} open / ${s.enumerators} enum)), holding ${s.held}`
+            `   ${s.district}: share ${s.share} (equal split of ${c.quota}, district cap ceil(${s.openTotal} open / ${s.enumerators} enum) = ${s.fairShare}), holding ${s.held}`
           );
         }
       } catch (err: any) {

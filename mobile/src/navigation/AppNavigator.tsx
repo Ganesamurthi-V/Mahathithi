@@ -4,7 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../store';
-import { checkSession, logout } from '../store/slices/authSlice';
+import { checkSession, logout, enforceOfflineLimit } from '../store/slices/authSlice';
 import { runAutoSync } from '../store/slices/syncThunks';
 import { ensureFreshToken } from '../services/api';
 import NetInfo from '@react-native-community/netinfo';
@@ -114,8 +114,8 @@ export function AppNavigator() {
 
   // Global listener for forced logouts from interceptors
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('force_logout', () => {
-      dispatch(logout() as any);
+    const sub = DeviceEventEmitter.addListener('force_logout', (event?: { discardLocalData?: boolean }) => {
+      dispatch(logout(event?.discardLocalData === true) as any);
     });
     return () => sub.remove();
   }, [dispatch]);
@@ -146,7 +146,9 @@ export function AppNavigator() {
 
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        ensureFreshToken();
+        // Enforced AFTER the renewal settles: a phone that is back online restarts its
+        // offline clock there, and must not be signed out for time already made up.
+        ensureFreshToken().then(() => dispatch(enforceOfflineLimit() as any));
         // Android suspends sockets for backgrounded apps, so the realtime
         // connection is usually dead after time in the pocket even though the
         // handle looks valid. This reconnects only when genuinely disconnected.

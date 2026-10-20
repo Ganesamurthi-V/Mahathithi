@@ -175,6 +175,9 @@ async function refreshAccessToken(): Promise<string | null> {
       }
 
       await EncryptedStorage.setItem('access_token', tokens.accessToken);
+      // The server just confirmed this account is still valid. The offline limit (see
+      // authSlice) counts from here.
+      await EncryptedStorage.setItem('last_online_auth_at', String(Date.now()));
       // The server may or may not issue a new refresh token. It currently keeps
       // the same one (sliding expiry, no rotation); only overwrite when a new
       // value actually comes back so we never clobber a working token with
@@ -268,8 +271,11 @@ api.interceptors.response.use(
           refreshError.response?.status === 401 || refreshError.response?.status === 403;
 
         if (isConfirmedAuthFailure) {
+          // A deactivated account (someone who left, or a phone that was lost) is wiped
+          // completely. An ordinary expired or revoked session keeps unsynced surveys.
+          const deactivated = refreshError.response?.data?.error?.code === 'ACCOUNT_DEACTIVATED';
           import('react-native').then(({ DeviceEventEmitter }) => {
-            DeviceEventEmitter.emit('force_logout');
+            DeviceEventEmitter.emit('force_logout', { discardLocalData: deactivated });
           });
         }
         // else: leave tokens and local data untouched. Reject below and let
@@ -321,12 +327,12 @@ api.interceptors.response.use(undefined, async (error) => {
 // ============================================================================
 
 export const authService = {
-  login: (loginId: string, password: string) => {
+  login: (loginId: string, password: string, takeover: boolean = false) => {
     console.log('--- LOGIN REQUEST STARTED ---');
     console.log(`URL: ${api.defaults.baseURL}/auth/login`);
     console.log(`Method: POST`);
     console.log(`Payload:`, { loginId, password: '***' }); // hiding password in logs for security
-    return api.post('/auth/login', { loginId, password })
+    return api.post('/auth/login', takeover ? { loginId, password, takeover: true } : { loginId, password })
       .then(res => {
         console.log('--- LOGIN SUCCESS ---');
         console.log('Response Status:', res.status);

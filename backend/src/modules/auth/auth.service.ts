@@ -4,7 +4,8 @@ import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../../config/database';
 import { config } from '../../config';
-import { UnauthorizedError, NotFoundError, AppError } from '../../utils/errors';
+import { UnauthorizedError, NotFoundError, AppError, SessionActiveElsewhereError, AccountDeactivatedError } from '../../utils/errors';
+import { idleCutoff } from '../../utils/stakeholder-assignment';
 import { logger } from '../../utils/logger';
 
 function hashToken(token: string): string {
@@ -78,7 +79,8 @@ export class AuthService {
     loginId: string,
     password: string,
     deviceInfo?: string,
-    ipAddress?: string
+    ipAddress?: string,
+    takeover: boolean = false
   ): Promise<{ tokens: TokenPair; enumerator: any }> {
     // H7 FIX: check account lockout before even querying the DB
     await checkLocked(loginId);
@@ -97,7 +99,7 @@ export class AuthService {
     }
 
     if (!enumerator.isActive) {
-      throw new UnauthorizedError('Account has been deactivated');
+      throw new AccountDeactivatedError();
     }
 
     const passwordValid = await bcrypt.compare(password, enumerator.passwordHash);
@@ -120,6 +122,49 @@ export class AuthService {
 
     // H7 FIX: clear failure counter on successful login
     await clearFailures(loginId);
+
+    // ONE ACTIVE PHONE PER ENUMERATOR. Two phones holding the same claimed records
+    // can each produce a survey for the same business, and nothing reconciles them.
+    // So signing in elsewhere ends the earlier session: its next token renewal is
+    // refused and it is signed out (its unsynced work is kept on the device).
+    //
+    // That is destructive for whoever is on the other phone, so a session that was
+    // used recently is not ended silently. The first attempt is refused with a
+    // confirmation, and the app retries with `takeover` once the user agrees.
+    // Admins are exempt: they sign in from several browsers by design.
+    if (!enumerator.isAdmin) {
+      const now = new Date();
+      const others = await prisma.session.findMany({
+        where: { enumeratorId: enumerator.id, isValid: true, expiresAt: { gt: now } },
+        select: { updatedAt: true },
+        orderBy: { updatedAt: 'desc' },
+      });
+
+      if (others.length > 0) {
+        const recent = others[0].updatedAt > idleCutoff(now);
+        if (recent && !takeover) {
+          throw new SessionActiveElsewhereError(others[0].updatedAt);
+        }
+
+        await prisma.session.updateMany({
+          where: { enumeratorId: enumerator.id, isValid: true },
+          data: { isValid: false },
+        });
+
+        if (recent) {
+          await prisma.auditLog.create({
+            data: {
+              action: 'session_replaced',
+              entityType: 'enumerator',
+              entityId: enumerator.id,
+              enumeratorId: enumerator.id,
+              ipAddress,
+              details: { endedSessions: others.length, lastActiveAt: others[0].updatedAt.toISOString() },
+            },
+          });
+        }
+      }
+    }
 
     // Generate tokens
     const tokens = await this.generateTokens(enumerator.id, enumerator.loginId, enumerator.name, enumerator.isAdmin);
@@ -225,7 +270,7 @@ export class AuthService {
     }
 
     if (!session.enumerator.isActive) {
-      throw new UnauthorizedError('Account has been deactivated');
+      throw new AccountDeactivatedError();
     }
 
     // Slide the expiry window forward. Keeps an active device signed in

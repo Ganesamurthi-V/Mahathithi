@@ -26,6 +26,16 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+/**
+ * The account was deactivated by an admin. Its own code, so the phone can tell it
+ * apart from an ordinary expired session and wipe the cached data.
+ */
+export class AccountDeactivatedError extends AppError {
+  constructor() {
+    super('Account has been deactivated', 401, 'ACCOUNT_DEACTIVATED');
+  }
+}
+
 export class ForbiddenError extends AppError {
   constructor(message: string = 'Access denied') {
     super(message, 403, 'FORBIDDEN');
@@ -38,6 +48,24 @@ export class ValidationError extends AppError {
   constructor(message: string = 'Validation failed', errors: any[] = []) {
     super(message, 400, 'VALIDATION_ERROR');
     this.errors = errors;
+  }
+}
+
+/**
+ * Raised when a field enumerator signs in while another phone still has a live
+ * session. The client turns it into a confirmation; retrying with `takeover` signs
+ * the other phone out.
+ */
+export class SessionActiveElsewhereError extends AppError {
+  public errors: any[];
+
+  constructor(lastActiveAt: Date) {
+    super(
+      'You are already signed in on another phone. Continuing will sign that phone out.',
+      409,
+      'SESSION_ACTIVE_ELSEWHERE'
+    );
+    this.errors = [{ lastActiveAt: lastActiveAt.toISOString() }];
   }
 }
 

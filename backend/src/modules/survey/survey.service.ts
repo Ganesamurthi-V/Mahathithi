@@ -1,6 +1,8 @@
 import { prisma } from '../../config/database';
 import { NotFoundError, ConflictError, ValidationError } from '../../utils/errors';
-import { assertStakeholderAccess } from '../../utils/access-control';
+import { assertAccessOrOwnWork } from '../../utils/access-control';
+import { flagForReview } from '../../utils/survey-review';
+import { gpsMismatchReason } from '../../utils/gps-check';
 import { logger } from '../../utils/logger';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { broadcastChange } from '../../realtime/events';
@@ -101,12 +103,25 @@ export class SurveyService {
       throw new NotFoundError('Stakeholder');
     }
 
-    // C2 FIX: enforce district-based access before any write
-    assertStakeholderAccess(stakeholder, enumeratorDistricts, isAdmin);
+    // C2 FIX: enforce district-based access before any write. An enumerator's own
+    // earlier work on the record still passes after they are moved out of its district.
+    await assertAccessOrOwnWork(stakeholder, enumeratorDistricts, isAdmin, data.enumeratorId);
 
-    // Check if locked by another enumerator
-    if (stakeholder.lockedById && stakeholder.lockedById !== data.enumeratorId) {
-      throw new ConflictError('This stakeholder has been completed by another enumerator');
+    // A record already completed by someone else is no longer refused: this survey
+    // may be field work the enumerator did offline before the record was closed, and
+    // throwing it away loses the evidence. It is saved as a draft and raised for an
+    // admin to review instead. It cannot complete the record (see completeSurvey).
+    const lockedByOther = !!(stakeholder.lockedById && stakeholder.lockedById !== data.enumeratorId);
+
+    // Once an admin has edited this survey, the phone must not overwrite it, or the
+    // admin's corrections would be silently undone by the enumerator's next upload.
+    const existingForEnumerator = await prisma.survey.findUnique({
+      where: { stakeholderId_enumeratorId: { stakeholderId: data.stakeholderId, enumeratorId: data.enumeratorId } },
+      select: { id: true, adminEditedAt: true },
+    });
+    if (existingForEnumerator?.adminEditedAt) {
+      logger.info('[survey] upload ignored for ' + existingForEnumerator.id + ': edited by an admin since');
+      return prisma.survey.findUniqueOrThrow({ where: { id: existingForEnumerator.id } });
     }
 
     let digipin = null;
@@ -179,6 +194,10 @@ export class SurveyService {
       },
     });
 
+    if (lockedByOther) {
+      await flagForReview(survey.id, 'Record was already completed by another enumerator or an admin before this survey arrived; kept as extra field evidence', data.enumeratorId);
+    }
+
     // Audit log
     await prisma.auditLog.create({
       data: {
@@ -208,7 +227,7 @@ export class SurveyService {
     // Load the stakeholder first so we can check district access
     const stakeholder = await prisma.stakeholder.findUnique({ where: { id: stakeholderId } });
     if (!stakeholder) throw new NotFoundError('Stakeholder');
-    assertStakeholderAccess(stakeholder, enumeratorDistricts, isAdmin);
+    await assertAccessOrOwnWork(stakeholder, enumeratorDistricts, isAdmin, enumeratorId);
 
     const survey = await prisma.survey.findFirst({
       where: {
@@ -285,10 +304,23 @@ export class SurveyService {
     }
 
     // B1 FIX: district check must come before the ownership check.
-    assertStakeholderAccess(survey.stakeholder, enumeratorDistricts, isAdmin);
+    await assertAccessOrOwnWork(survey.stakeholder, enumeratorDistricts, isAdmin, enumeratorId);
 
     if (survey.enumeratorId !== enumeratorId) {
       throw new ConflictError('You can only complete your own surveys');
+    }
+
+    // The record was completed by someone else (an admin finishing it from the panel,
+    // or a colleague who synced first). This survey must not take the lock from them.
+    // It is kept as evidence and sent to an admin. A 200 is returned on purpose: the
+    // phone treats that as done and stops retrying, and the record then drops from its
+    // list on the next delta because it is locked by someone else.
+    if (survey.stakeholder.lockedById && survey.stakeholder.lockedById !== enumeratorId) {
+      await flagForReview(surveyId, 'Record was already completed by another enumerator or an admin before this survey arrived; kept as extra field evidence', enumeratorId);
+      return {
+        status: 'UNDER_REVIEW',
+        message: 'This record was already completed by someone else. Your survey was saved and sent to an admin for review.',
+      };
     }
 
     // === NO COMPLETENESS VALIDATION ===
@@ -307,8 +339,21 @@ export class SurveyService {
     const newStakeholderStatus = hasIdentityNumber ? 'CLOSED' : 'OPEN';
     const newIsCompleted = hasIdentityNumber;
 
+    // Whoever completes the record owns it. Normally that is the current holder and
+    // nothing changes. When the record had been released (a district change, a
+    // rebalance) the completer is not the holder, so it is re-assigned to them, and
+    // anyone who held it meanwhile is told to drop it: the delta feed finds a device's
+    // work by assigned_to_id, so without a revocation that device would never hear.
+    const previousHolder = survey.stakeholder.assignedToId;
+    const reassigned = previousHolder !== enumeratorId;
+
     // Accepted → CLOSED + LOCK (if fully complete)
     await prisma.$transaction([
+      ...(reassigned && previousHolder
+        ? [prisma.stakeholderRevocation.create({
+            data: { stakeholderId: survey.stakeholderId, enumeratorId: previousHolder, reason: 'completed by another enumerator' },
+          })]
+        : []),
       prisma.survey.update({
         where: { id: surveyId },
         data: {
@@ -323,6 +368,7 @@ export class SurveyService {
           status: newStakeholderStatus as any,
           lockedById: enumeratorId,
           lockedAt: new Date(),
+          ...(reassigned ? { assignedToId: enumeratorId, assignedAt: new Date() } : {}),
         },
       }),
       prisma.auditLog.create({
@@ -338,6 +384,15 @@ export class SurveyService {
         },
       }),
     ]);
+
+    // Accepted either way; a survey taken far from the business is only flagged. A
+    // failure here must not undo a completion that is already committed.
+    try {
+      const gps = gpsMismatchReason(survey, survey.stakeholder);
+      if (gps) await flagForReview(surveyId, gps, enumeratorId);
+    } catch (err) {
+      logger.error('[review] GPS check failed:', err);
+    }
 
     logger.info(`Survey completed: ${surveyId}, stakeholder locked by ${enumeratorId}`);
 
@@ -485,7 +540,7 @@ export class SurveyService {
       } catch (e) { /* leave digipin untouched if computation fails */ }
     }
 
-    const survey = await prisma.survey.update({ where: { id: surveyId }, data });
+    const survey = await prisma.survey.update({ where: { id: surveyId }, data: { ...data, adminEditedAt: new Date() } });
 
     await prisma.auditLog.create({
       data: {

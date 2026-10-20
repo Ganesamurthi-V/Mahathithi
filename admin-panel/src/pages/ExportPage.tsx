@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getCompletedSurveys, exportSurveys, getStakeholderById, type ExportFormat } from '../api';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getCompletedSurveys, exportSurveys, getStakeholderById, getExportSyncStatus, getSurveysForReview, resolveSurveyReview, type ExportFormat } from '../api';
 import {
   LoadingButton,
   TableSkeletonWithHeader,
@@ -18,6 +18,25 @@ export default function ExportPage() {
   });
 
   const surveys: any[] = data?.data?.data || [];
+
+  // Enumerators who have not been online lately. Their newest surveys may still be
+  // sitting on their phones, so the operator is warned before a file goes out.
+  const { data: syncData } = useQuery({ queryKey: ['export-sync-status'], queryFn: getExportSyncStatus });
+  const staleEnumerators: any[] = syncData?.data?.data?.enumerators || [];
+  const staleHours: number = syncData?.data?.data?.staleHours ?? 24;
+  const [showStale, setShowStale] = useState(false);
+
+  // Surveys that need a human look: far-away GPS, or field work that arrived after
+  // the record was already completed by someone else.
+  const { data: reviewData } = useQuery({ queryKey: ['survey-review'], queryFn: getSurveysForReview });
+  const reviewItems: any[] = reviewData?.data?.data || [];
+  const resolveReview = useMutation({
+    mutationFn: (id: string) => resolveSurveyReview(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['survey-review'] });
+      queryClient.invalidateQueries({ queryKey: ['export-surveys-list'] });
+    },
+  });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Which format is currently downloading, or null. Tracked as the format rather
   // than a boolean so only the button that was clicked shows a spinner, while both
@@ -51,6 +70,7 @@ export default function ExportPage() {
   const selectAll = () => setSelected(new Set(surveys.map((s: any) => s.id)));
   const deselectAll = () => setSelected(new Set());
   const selectNew = () => setSelected(new Set(surveys.filter((s: any) => !s.isExported).map((s: any) => s.id)));
+  const selectChanged = () => setSelected(new Set(surveys.filter((s: any) => s.changedAfterExport).map((s: any) => s.id)));
 
   /**
    * Generate and download an export in the requested format.
@@ -67,6 +87,18 @@ export default function ExportPage() {
    */
   const handleExport = (format: ExportFormat) => {
     if (selected.size === 0) { alert('Select at least one survey to export.'); return; }
+
+    if (staleEnumerators.length > 0) {
+      const shown = staleEnumerators.slice(0, 5)
+        .map((e: any) => '• ' + e.name + ' (' + (e.districts.join(', ') || 'no district') + ')')
+        .join('\n');
+      const more = staleEnumerators.length > 5 ? '\n…and ' + (staleEnumerators.length - 5) + ' more' : '';
+      const ok = window.confirm(
+        staleEnumerators.length + ' enumerator(s) have not been online for over ' + staleHours + ' hours, ' +
+        'so their latest surveys may not be in this export:\n\n' + shown + more + '\n\nExport anyway?'
+      );
+      if (!ok) return;
+    }
 
     const count = selected.size;
     const label = format.toUpperCase();
@@ -123,6 +155,7 @@ export default function ExportPage() {
 
   const newCount = surveys.filter((s: any) => !s.isExported).length;
   const oldCount = surveys.length - newCount;
+  const changedCount = surveys.filter((s: any) => s.changedAfterExport).length;
 
   const TABLE_HEADERS = ['', 'Business Name', 'Category', 'District', 'City', 'Date', 'Status', 'Details'];
   const isRefreshing = isFetching && !isLoading;
@@ -180,11 +213,67 @@ export default function ExportPage() {
         </div>
       </div>
 
+      {staleEnumerators.length > 0 && (
+        <div style={{ border: '1px solid var(--warning, #f59e0b)', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 600 }}>
+              ⚠ {staleEnumerators.length} enumerator{staleEnumerators.length === 1 ? '' : 's'} not online for over {staleHours}h — their latest surveys may not be in an export yet.
+            </span>
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowStale(v => !v)}>
+              {showStale ? 'Hide' : 'Show who'}
+            </button>
+          </div>
+          {showStale && (
+            <div style={{ marginTop: '8px', fontSize: '13px' }}>
+              {staleEnumerators.map((e: any) => (
+                <div key={e.id} style={{ padding: '4px 0', color: 'var(--text-secondary)' }}>
+                  <strong>{e.name}</strong> ({e.loginId}) · {e.districts.join(', ') || 'no district'} · {e.openRecords} open record{e.openRecords === 1 ? '' : 's'} · last online {e.lastSeenAt ? new Date(e.lastSeenAt).toLocaleString() : 'never'}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {reviewItems.length > 0 && (
+        <div style={{ border: '1px solid var(--warning, #f59e0b)', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px' }}>
+          <div style={{ fontWeight: 700, marginBottom: '4px' }}>
+            ⚠ {reviewItems.length} survey{reviewItems.length === 1 ? '' : 's'} need{reviewItems.length === 1 ? 's' : ''} review
+          </div>
+          {reviewItems.map((r: any) => (
+            <div key={r.id} style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontWeight: 600 }}>
+                  {r.businessName || r.stakeholder?.companyNameStandardized || r.stakeholder?.companyNameOriginal || '—'}
+                  <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '12px' }}> · {r.enumerator?.name || '—'} · {r.district || '—'}</span>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{r.reviewReason}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="btn btn-secondary btn-sm" onClick={() => setViewStakeholderId(r.stakeholderId)} style={{ whiteSpace: 'nowrap' }}>
+                  📸 Photos &amp; Survey
+                </button>
+                <LoadingButton
+                  variant="primary"
+                  size="sm"
+                  loading={resolveReview.isPending && resolveReview.variables === r.id}
+                  loadingText="Saving…"
+                  onClick={() => resolveReview.mutate(r.id)}
+                >
+                  Mark reviewed
+                </LoadingButton>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
         {/* Selection helpers are pure local state, so they need no spinner — but
             they must not be clickable mid-export, or the selection would change
             out from under the request that is already running. */}
         <button className="btn btn-secondary btn-sm" onClick={selectNew} disabled={exporting}>Select New Only ({newCount})</button>
+        <button className="btn btn-secondary btn-sm" onClick={selectChanged} disabled={exporting || changedCount === 0} title="Exported surveys that were edited afterwards, so the copy already sent is out of date">Select Changed Only ({changedCount})</button>
         <button className="btn btn-secondary btn-sm" onClick={selectAll} disabled={exporting}>Select All ({surveys.length})</button>
         <button className="btn btn-secondary btn-sm" onClick={deselectAll} disabled={exporting}>Deselect All</button>
         <span style={{ fontSize: '13px', color: 'var(--text-muted)', alignSelf: 'center' }}>
@@ -226,7 +315,7 @@ export default function ExportPage() {
               <tr><td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No completed surveys found.</td></tr>
             )}
             {surveys.map((s: any) => (
-              <tr key={s.id} style={{ opacity: s.isExported ? 0.6 : 1 }}>
+              <tr key={s.id} style={{ opacity: s.isExported && !s.changedAfterExport ? 0.6 : 1 }}>
                 <td>
                   <input
                     type="checkbox"
@@ -245,6 +334,12 @@ export default function ExportPage() {
                     ? <span className="badge badge-pending">Exported</span>
                     : <span className="badge badge-active">New</span>
                   }
+                  {s.changedAfterExport && (
+                    <span className="badge badge-admin" style={{ marginLeft: '6px' }} title="Edited after it was exported; export it again to send the latest version">Changed</span>
+                  )}
+                  {s.needsReview && (
+                    <span className="badge badge-pending" style={{ marginLeft: '6px' }} title={s.reviewReason || 'Needs review'}>⚠ Review</span>
+                  )}
                 </td>
                 <td>
                   <button

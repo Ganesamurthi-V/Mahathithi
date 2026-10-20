@@ -1,7 +1,8 @@
 import { prisma } from '../../config/database';
 import { uploadToS3, getPresignedUrl, deleteFromS3, generateS3Key } from '../../config/storage';
-import { NotFoundError, ForbiddenError, ConflictError } from '../../utils/errors';
-import { assertStakeholderAccess } from '../../utils/access-control';
+import { NotFoundError, ForbiddenError } from '../../utils/errors';
+import { assertAccessOrOwnWork } from '../../utils/access-control';
+import { flagForReview } from '../../utils/survey-review';
 import { logger } from '../../utils/logger';
 import { broadcastChange } from '../../realtime/events';
 import { v4 as uuidv4 } from 'uuid';
@@ -47,10 +48,7 @@ export class MediaService {
           // stakeholder is not already locked by someone else.
           const stakeholder = await prisma.stakeholder.findUnique({ where: { id: stakeholderId } });
           if (!stakeholder) throw new NotFoundError('Stakeholder');
-          assertStakeholderAccess(stakeholder, callerDistricts, isAdmin);
-          if (stakeholder.lockedById && stakeholder.lockedById !== data.enumeratorId) {
-            throw new ConflictError('This stakeholder has been completed by another enumerator');
-          }
+          await assertAccessOrOwnWork(stakeholder, callerDistricts, isAdmin, data.enumeratorId);
           const newSurvey = await prisma.survey.create({
             data: {
               stakeholderId,
@@ -60,6 +58,11 @@ export class MediaService {
             },
           });
           resolvedSurveyId = newSurvey.id;
+          // Photos taken before the record was completed elsewhere are kept as evidence
+          // for an admin rather than refused.
+          if (stakeholder.lockedById && stakeholder.lockedById !== data.enumeratorId) {
+            await flagForReview(newSurvey.id, 'Record was already completed by another enumerator or an admin before this survey arrived; kept as extra field evidence', data.enumeratorId);
+          }
         }
       } else {
         throw new NotFoundError('Survey');

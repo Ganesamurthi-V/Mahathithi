@@ -313,6 +313,13 @@ model Survey {
   localId         String?  @map("local_id")
   completedAt     DateTime? @map("completed_at")
   syncedAt        DateTime? @map("synced_at")
+  // Set when an admin edits the survey. From then on a phone upload can no longer
+  // overwrite its fields, or the admin's corrections would be silently undone.
+  adminEditedAt   DateTime? @map("admin_edited_at")
+  // Raised for an admin to look at: GPS far from the business, or field work that
+  // arrived after the record was already completed by someone else.
+  needsReview     Boolean  @default(false) @map("needs_review")
+  reviewReason    String?  @map("review_reason")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -326,6 +333,7 @@ model Survey {
   @@index([enumeratorId])
   @@index([isCompleted])
   @@index([isSynced])
+  @@index([needsReview])
   @@map("surveys")
 }
 

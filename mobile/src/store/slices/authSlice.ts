@@ -14,6 +14,9 @@ interface AuthState {
     districts: { id: string; name: string; state: string }[];
   } | null;
   error: string | null;
+  // Set when the account is already signed in on another phone. The login screen asks
+  // the user to confirm, then retries with takeover.
+  sessionConflict: { lastActiveAt: string | null } | null;
 }
 
 const initialState: AuthState = {
@@ -21,7 +24,32 @@ const initialState: AuthState = {
   isLoading: true,
   user: null,
   error: null,
+  sessionConflict: null,
 };
+
+// ============================================================================
+// OFFLINE LIMIT
+// ============================================================================
+// The app lets an enumerator sign in and work with no connection, from a cached
+// password. That has to end somewhere: a lost phone, or one belonging to someone who
+// has since left, would otherwise stay usable indefinitely. So the phone must reach
+// the server at least once every 30 days. The moment it does (a login, or a token
+// renewal) the clock restarts; past 30 days it is signed out and has to sign in online.
+const OFFLINE_LIMIT_MS = 30 * 24 * 60 * 60 * 1000;
+export const OFFLINE_LIMIT_MESSAGE =
+  'This phone has not been online for over 30 days. Connect to the internet and sign in again.';
+
+async function offlineLimitExceeded(): Promise<boolean> {
+  const raw = await EncryptedStorage.getItem('last_online_auth_at');
+  const last = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(last)) {
+    // Signed in before this rule existed: start the clock now rather than lock
+    // everyone out on the day it ships.
+    await EncryptedStorage.setItem('last_online_auth_at', String(Date.now()));
+    return false;
+  }
+  return Date.now() - last > OFFLINE_LIMIT_MS;
+}
 
 /**
  * Restore the session on app launch.
@@ -41,24 +69,49 @@ const initialState: AuthState = {
  * failure is ignored: offline or server-down must not prevent restoring the
  * session.
  */
-export const checkSession = createAsyncThunk('auth/checkSession', async () => {
-  const token = await EncryptedStorage.getItem('access_token');
-  const userData = await EncryptedStorage.getItem('user_data');
+export const checkSession = createAsyncThunk<any, void, { rejectValue: string }>(
+  'auth/checkSession',
+  async (_, { dispatch, rejectWithValue }) => {
+    const token = await EncryptedStorage.getItem('access_token');
+    const userData = await EncryptedStorage.getItem('user_data');
 
-  if (token && userData) {
-    // Best-effort; ensureFreshToken never throws and never signs anyone out.
-    await ensureFreshToken();
-    return JSON.parse(userData);
+    if (token && userData) {
+      // Best-effort; ensureFreshToken never throws and never signs anyone out. When
+      // there is a connection this also restarts the offline clock.
+      await ensureFreshToken();
+
+      if (await offlineLimitExceeded()) {
+        await dispatch(logout(false));
+        return rejectWithValue(OFFLINE_LIMIT_MESSAGE);
+      }
+      return JSON.parse(userData);
+    }
+    throw new Error('No session');
   }
-  throw new Error('No session');
-});
+);
+
+/**
+ * Sign out a phone that has been offline past the limit. Called when the app returns
+ * to the foreground, after the token renewal has had its chance to restart the clock,
+ * so a phone that is back online is not signed out for time it has already made up.
+ */
+export const enforceOfflineLimit = createAsyncThunk<boolean, void>(
+  'auth/enforceOfflineLimit',
+  async (_, { dispatch }) => {
+    const token = await EncryptedStorage.getItem('access_token');
+    if (!token) return false;
+    if (!(await offlineLimitExceeded())) return false;
+    await dispatch(logout(false));
+    return true;
+  }
+);
 
 // Login
 export const login = createAsyncThunk(
   'auth/login',
-  async ({ loginId, password }: { loginId: string; password: string }, { rejectWithValue }) => {
+  async ({ loginId, password, takeover }: { loginId: string; password: string; takeover?: boolean }, { rejectWithValue }) => {
     try {
-      const response = await authService.login(loginId, password);
+      const response = await authService.login(loginId, password, takeover === true);
       const { tokens, enumerator } = response.data.data;
 
       // Store tokens securely
@@ -68,9 +121,16 @@ export const login = createAsyncThunk(
       // Cache credentials for offline login
       await EncryptedStorage.setItem('cached_login_id', loginId);
       await EncryptedStorage.setItem('cached_password', password);
+      await EncryptedStorage.setItem('last_online_auth_at', String(Date.now()));
 
       return enumerator;
     } catch (err: any) {
+      // Signed in on another phone: not a failure, a question for the user.
+      const apiError = err?.response?.data?.error;
+      if (err?.response?.status === 409 && apiError?.code === 'SESSION_ACTIVE_ELSEWHERE') {
+        return rejectWithValue({ code: 'SESSION_ACTIVE_ELSEWHERE', lastActiveAt: apiError.details?.[0]?.lastActiveAt ?? null });
+      }
+
       // If offline — try cached credentials
       if (err.message === 'Network Error' || err.code === 'ECONNABORTED') {
         try {
@@ -79,6 +139,9 @@ export const login = createAsyncThunk(
           const userData = await EncryptedStorage.getItem('user_data');
 
           if (cachedLoginId === loginId && cachedPassword === password && userData) {
+            if (await offlineLimitExceeded()) {
+              return rejectWithValue(OFFLINE_LIMIT_MESSAGE);
+            }
             // Credentials match cached — allow offline login
             return JSON.parse(userData);
           }
@@ -124,6 +187,7 @@ export const logout = createAsyncThunk<void, boolean | undefined>('auth/logout',
   await EncryptedStorage.removeItem('user_data');
   await EncryptedStorage.removeItem('cached_login_id');
   await EncryptedStorage.removeItem('cached_password');
+  await EncryptedStorage.removeItem('last_online_auth_at');
 
   await clearAllData(discardLocalData === true);
 });
@@ -134,6 +198,9 @@ const authSlice = createSlice({
   reducers: {
     clearError: (state) => {
       state.error = null;
+    },
+    clearSessionConflict: (state) => {
+      state.sessionConflict = null;
     },
   },
   extraReducers: (builder) => {
@@ -146,13 +213,18 @@ const authSlice = createSlice({
         state.user = action.payload;
         state.isLoading = false;
       })
-      .addCase(checkSession.rejected, (state) => {
+      .addCase(checkSession.rejected, (state, action) => {
         state.isAuthenticated = false;
         state.isLoading = false;
+        if (typeof action.payload === 'string') state.error = action.payload;
+      })
+      .addCase(enforceOfflineLimit.fulfilled, (state, action) => {
+        if (action.payload) state.error = OFFLINE_LIMIT_MESSAGE;
       })
       .addCase(login.pending, (state) => {
         state.isLoading = true;
         state.error = null;
+        state.sessionConflict = null;
       })
       .addCase(login.fulfilled, (state, action) => {
         state.isAuthenticated = true;
@@ -162,8 +234,14 @@ const authSlice = createSlice({
       })
       .addCase(login.rejected, (state, action) => {
         state.isLoading = false;
+        const payload = action.payload as any;
+        if (payload && typeof payload === 'object' && payload.code === 'SESSION_ACTIVE_ELSEWHERE') {
+          state.sessionConflict = { lastActiveAt: payload.lastActiveAt ?? null };
+          state.error = null;
+          return;
+        }
         // Use the custom message from rejectWithValue if available
-        state.error = (action.payload as string) || action.error.message || 'Login failed. Please try again.';
+        state.error = (payload as string) || action.error.message || 'Login failed. Please try again.';
       })
       .addCase(logout.fulfilled, (state) => {
         state.isAuthenticated = false;
@@ -172,5 +250,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { clearError } = authSlice.actions;
+export const { clearError, clearSessionConflict } = authSlice.actions;
 export default authSlice.reducer;

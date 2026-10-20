@@ -46,11 +46,11 @@ const RESOURCE_QUERY_KEYS: Record<DataResource, string[][]> = {
   stakeholders: [['stakeholders'], ['survey']],
   enumerators:  [['enumerators']],
   districts:    [['districts']],
-  surveys:      [['stakeholders'], ['survey'], ['export-surveys-list']],
+  surveys:      [['stakeholders'], ['survey'], ['export-surveys-list'], ['survey-review']],
   media:        [['media']],
   analytics:    [['analytics']],
   auditLogs:    [['auditLogs']],
-  exports:      [['export-surveys-list']],
+  exports:      [['export-surveys-list'], ['export-sync-status']],
 };
 
 /**

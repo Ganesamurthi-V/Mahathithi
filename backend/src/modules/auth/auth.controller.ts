@@ -61,7 +61,7 @@ function setSessionCookies(res: Response, accessToken: string, refreshToken?: st
 export class AuthController {
   async login(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { loginId, password } = req.body;
+      const { loginId, password, takeover } = req.body;
 
       if (!loginId || !password) {
         throw new ValidationError('Login ID and password are required');
@@ -71,7 +71,8 @@ export class AuthController {
         loginId,
         password,
         req.headers['user-agent'],
-        req.ip
+        req.ip,
+        takeover === true
       );
 
       setSessionCookies(res, result.tokens.accessToken, result.tokens.refreshToken);

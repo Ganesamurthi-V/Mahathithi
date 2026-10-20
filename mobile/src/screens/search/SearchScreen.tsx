@@ -9,9 +9,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
 import { setSearchResults, appendSearchResults, setSearching } from '../../store/slices/stakeholderSlice';
-import { stakeholderService } from '../../services/api';
 import { stakeholderDao } from '../../database';
-import NetInfo from '@react-native-community/netinfo';
 import { colors, spacing, borderRadius, typography, shadows, layout } from '../../theme';
 import { moderateScale } from '../../theme/responsive';
 
@@ -160,57 +158,12 @@ export default function SearchScreen({ navigation }: any) {
         stakeholderDao.searchCount(activeFilters).catch(() => 0),
       ]);
 
-      let finalResults = localResults;
-      let pageInfo = { page, total: totalCount, hasMore: localResults.length === 20 };
-
-      // 2. Only fall back to the network when SQLite came up empty for this
-      //    page — either nothing has been synced for this area yet, or
-      //    we've paged past what's cached locally.
-      if (localResults.length === 0) {
-        const netState = await NetInfo.fetch();
-        if (netState.isConnected) {
-          try {
-            const res = await stakeholderService.search({ ...activeFilters, page, limit: 20 });
-            const remote = res.data?.data;
-
-            if (remote?.stakeholders?.length) {
-              // Cache server results locally so this search (and any repeat
-              // of it) is answered from SQLite next time, online or offline.
-              await stakeholderDao.upsertMany(remote.stakeholders);
-
-              finalResults = remote.stakeholders;
-              const remotePage = remote.pagination?.page || page;
-              const remoteLimit = remote.pagination?.limit || 20;
-              // The server no longer returns an exact total on a FILTERED search —
-              // the COUNT(*) cost ~7x the page query itself, so it was dropped.
-              // `total` is therefore null here, and deriving hasMore from it would
-              // be wrong: falling back to stakeholders.length gives 20, and
-              // `1 * 20 < 20` is false, so "load more" would stop after page 1 even
-              // though more rows exist.
-              //
-              // The server sends an authoritative hasMore instead, computed by
-              // fetching one row beyond the page. Prefer it, and only fall back to
-              // arithmetic when talking to an older backend that does not send it.
-              const remoteTotal = remote.pagination?.total ?? null;
-              pageInfo = {
-                page: remotePage,
-                // Only used for the "N results found" label.
-                total: remoteTotal ?? remote.stakeholders.length,
-                hasMore:
-                  typeof remote.pagination?.hasMore === 'boolean'
-                    ? remote.pagination.hasMore
-                    : remoteTotal !== null
-                      ? remotePage * remoteLimit < remoteTotal
-                      : remote.stakeholders.length === remoteLimit,
-              };
-            }
-          } catch (e) {
-            // No connectivity, server error, etc. — fall back to whatever
-            // SQLite gave us (i.e. an empty result), never throw to the UI.
-            console.warn('Online search fallback failed:', e);
-          }
-        }
-      }
+      // Local only, on purpose. SQLite holds exactly the records this enumerator has
+      // claimed (their work queue), and that is the whole search scope: falling back
+      // to the server would surface — and cache — records from the main stakeholder
+      // table that belong to nobody on this device.
+      const pageInfo = { page, total: totalCount, hasMore: localResults.length === 20 };
+      const finalResults = localResults;
 
       if (page === 1) {
         dispatch(setSearchResults({ stakeholders: finalResults, pagination: pageInfo }));

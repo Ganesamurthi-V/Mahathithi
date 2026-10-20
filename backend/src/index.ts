@@ -10,6 +10,7 @@ import { generalLimiter } from './middleware/rate-limiter';
 import { logger } from './utils/logger';
 import { createServer } from 'http';
 import { initRealtime } from './realtime/socket';
+import { startIdleClaimsJob } from './jobs/idle-claims';
 
 // Route imports
 import authRoutes from './modules/auth/auth.routes';
@@ -168,6 +169,8 @@ async function startServer() {
 ╚══════════════════════════════════════════════════╝
       `);
     });
+
+    startIdleClaimsJob();
 
     // Graceful shutdown
     const shutdown = async (signal: string) => {

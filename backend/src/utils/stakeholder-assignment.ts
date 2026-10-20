@@ -2,9 +2,16 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { canonicalizeDistricts } from './district-scope';
 import { logger } from './logger';
+import { allocateEqualSplit } from './work-split';
 
 /**
  * Work assignment: each enumerator holds a bounded, exclusive, FAIR share.
+ *
+ * ACROSS DISTRICTS the quota is split EQUALLY (see work-split.ts): an enumerator
+ * with two districts holds 50% / 50%, with three 33% / 33% / 34%, and so on. The
+ * per-district formula below is the CAP on each of those portions — the most one
+ * enumerator may take from a district without crowding out colleagues there. A
+ * district that cannot fill its equal portion hands the unused part to the others.
  *
  * Two things have to be true at once, and a single flat cap cannot give both:
  *
@@ -45,6 +52,39 @@ import { logger } from './logger';
  */
 export const WORK_QUOTA = 5000;
 
+/**
+ * Days without any sign of life before an enumerator's untouched records go back to
+ * the pool. "Sign of life" is a session being created or renewed: the app renews its
+ * token whenever it is opened with a connection, so a phone nobody has used stops
+ * renewing. An account that has never logged in counts from the day it was created.
+ */
+export const IDLE_RELEASE_DAYS = 14;
+
+export function idleCutoff(now: Date = new Date(), days: number = IDLE_RELEASE_DAYS): Date {
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
+function recentlyActive(cutoff: Date): Prisma.EnumeratorWhereInput {
+  return {
+    OR: [
+      { createdAt: { gte: cutoff } },
+      { sessions: { some: { updatedAt: { gte: cutoff } } } },
+    ],
+  };
+}
+
+/**
+ * Who counts as sharing a district: active, non-admin, and not idle.
+ *
+ * Idle enumerators are left out on purpose. A share is ceil(open / sharers), so an
+ * enumerator who has stopped working but still counts keeps everyone else's share
+ * small, and the records released from them would sit in the pool where nobody is
+ * allowed to take them. They are counted again the moment they log back in.
+ */
+function sharerFilter(): Prisma.EnumeratorWhereInput {
+  return { isActive: true, isAdmin: false, ...recentlyActive(idleCutoff()) };
+}
+
 /** The fair share for one district, and the inputs it was derived from. */
 export interface DistrictShare {
   district: string;
@@ -52,7 +92,9 @@ export interface DistrictShare {
   openTotal: number;
   /** Active, non-admin enumerators assigned to it. */
   enumerators: number;
-  /** min(WORK_QUOTA, ceil(openTotal / enumerators)) — the batch size. */
+  /** ceil(openTotal / enumerators) — the most this district can give one enumerator. */
+  fairShare: number;
+  /** This enumerator's target here: their equal portion of the quota, held at fairShare. */
   share: number;
   /** OPEN records this enumerator already holds here. */
   held: number;
@@ -107,8 +149,8 @@ export interface ClaimResult {
 }
 
 /** OPEN stakeholders currently claimed by this enumerator. */
-export async function countHeld(enumeratorId: string): Promise<number> {
-  return prisma.stakeholder.count({
+export async function countHeld(enumeratorId: string, db: Db = prisma): Promise<number> {
+  return db.stakeholder.count({
     where: { assignedToId: enumeratorId, status: 'OPEN' },
   });
 }
@@ -139,6 +181,7 @@ export async function getDistrictShares(
   enumeratorId: string,
   districts: string[],
   db: Db = prisma,
+  quota: number = WORK_QUOTA,
 ): Promise<DistrictShare[]> {
   const canonical = await canonicalizeDistricts(districts);
   if (canonical.length === 0) return [];
@@ -148,14 +191,14 @@ export async function getDistrictShares(
   // them in series made that 12 sequential round trips for a three-district
   // enumerator. Inside a transaction Prisma queues them on the single connection
   // anyway, so this is never worse there and materially better everywhere else.
-  return Promise.all(
+  const counted = await Promise.all(
     canonical.map(async (district) => {
       const [openTotal, enumerators, held, pool] = await Promise.all([
         db.stakeholder.count({ where: { district, status: 'OPEN' } }),
         db.enumeratorDistrict.count({
           where: {
             district: { name: district },
-            enumerator: { isActive: true, isAdmin: false },
+            enumerator: sharerFilter(),
           },
         }),
         db.stakeholder.count({
@@ -167,11 +210,17 @@ export async function getDistrictShares(
       ]);
 
       const divisor = Math.max(1, enumerators);
-      const share = Math.min(WORK_QUOTA, Math.ceil(openTotal / divisor));
+      const fairShare = Math.ceil(openTotal / divisor);
 
-      return { district, openTotal, enumerators: divisor, share, held, pool };
+      return { district, openTotal, enumerators: divisor, fairShare, held, pool };
     })
   );
+
+  const split = allocateEqualSplit(
+    counted.map((c) => ({ district: c.district, cap: c.fairShare })),
+    quota,
+  );
+  return counted.map((c) => ({ ...c, share: split.get(c.district) ?? 0 }));
 }
 
 /**
@@ -208,57 +257,69 @@ export async function releaseOverShare(
   db: Db = prisma,
   quota: number = WORK_QUOTA,
 ): Promise<number> {
-  const rows = await db.$queryRaw<{ id: string; assigned_to_id: string }[]>(Prisma.sql`
-    WITH sharers AS (
-      SELECT GREATEST(1, COUNT(*))::int AS n
-      FROM enumerator_districts ed
-      JOIN districts d ON d.id = ed.district_id
-      JOIN enumerators e ON e.id = ed.enumerator_id
-      WHERE d.name = ${district}
-        AND e.is_active = true
-        AND e.is_admin = false
-    ),
-    totals AS (
-      SELECT COUNT(*)::int AS open_total
+  // Each holder is measured against THEIR OWN target here, not one number for the
+  // district: an enumerator with two districts is entitled to half the quota in each,
+  // a colleague with three to a third, so the same district asks different things of
+  // different people.
+  const roster = await db.enumeratorDistrict.findMany({
+    where: { district: { name: district }, enumerator: sharerFilter() },
+    select: { enumeratorId: true },
+  });
+
+  let total = 0;
+  for (const { enumeratorId } of roster) {
+    const shares = await getDistrictShares(enumeratorId, await holderDistrictNames(enumeratorId, db), db, quota);
+    const here = shares.find((s) => s.district === district);
+    if (!here || here.held <= here.share) continue;
+    total += await releaseOverTarget(enumeratorId, district, here.share, db);
+  }
+  return total;
+}
+
+async function holderDistrictNames(enumeratorId: string, db: Db): Promise<string[]> {
+  const rows = await db.enumeratorDistrict.findMany({
+    where: { enumeratorId },
+    select: { district: { select: { name: true } } },
+  });
+  return rows.map((r) => r.district?.name).filter(Boolean) as string[];
+}
+
+/**
+ * Release one enumerator's rows in one district beyond `target`.
+ *
+ * Same rules as the claw-back above: only OPEN rows with no survey attached move
+ * (everything held still counts toward the overage), lowest priority_weight first.
+ */
+export async function releaseOverTarget(
+  enumeratorId: string,
+  district: string,
+  target: number,
+  db: Db = prisma,
+): Promise<number> {
+  const rows = await db.$queryRaw<{ id: string }[]>(Prisma.sql`
+    WITH held AS (
+      SELECT COUNT(*)::int AS n
       FROM stakeholders
       WHERE district = ${district}
         AND status = 'OPEN'::"StakeholderStatus"
+        AND assigned_to_id = ${enumeratorId}
     ),
-    share AS (
-      SELECT LEAST(${quota}::int, CEIL(t.open_total::numeric / s.n)::int) AS share
-      FROM totals t CROSS JOIN sharers s
-    ),
-    -- Counts EVERY open row a holder has, including ones pinned by a survey, so
-    -- the overage is measured against what they really hold.
-    held_counts AS (
-      SELECT assigned_to_id, COUNT(*)::int AS held
-      FROM stakeholders
-      WHERE district = ${district}
-        AND status = 'OPEN'::"StakeholderStatus"
-        AND assigned_to_id IS NOT NULL
-      GROUP BY assigned_to_id
-    ),
-    -- ...but only untouched rows may actually be moved.
     releasable AS (
       SELECT st.id,
-             st.assigned_to_id,
              ROW_NUMBER() OVER (
-               PARTITION BY st.assigned_to_id
                ORDER BY st.priority_weight ASC NULLS FIRST, st.primary_key_id DESC
              ) AS rn
       FROM stakeholders st
       WHERE st.district = ${district}
         AND st.status = 'OPEN'::"StakeholderStatus"
-        AND st.assigned_to_id IS NOT NULL
+        AND st.assigned_to_id = ${enumeratorId}
         AND NOT EXISTS (SELECT 1 FROM surveys sv WHERE sv.stakeholder_id = st.id)
     ),
     excess AS (
-      SELECT r.id, r.assigned_to_id
-      FROM releasable r
-      JOIN held_counts h ON h.assigned_to_id = r.assigned_to_id
-      CROSS JOIN share s
-      WHERE h.held > s.share
-        AND r.rn <= h.held - s.share
+      SELECT r.id
+      FROM releasable r CROSS JOIN held h
+      WHERE h.n > ${target}::int
+        AND r.rn <= h.n - ${target}::int
     )
     UPDATE stakeholders st
     SET assigned_to_id = NULL,
@@ -266,23 +327,18 @@ export async function releaseOverShare(
         updated_at = NOW()
     FROM excess
     WHERE st.id = excess.id
-    RETURNING st.id, excess.assigned_to_id
+    RETURNING st.id
   `);
 
   if (rows.length === 0) return 0;
 
   await recordRevocations(
-    rows.map(r => ({ stakeholderId: r.id, enumeratorId: r.assigned_to_id })),
+    rows.map((r) => ({ stakeholderId: r.id, enumeratorId })),
     `over fair share in ${district}`,
     db,
   );
 
-  const perHolder = new Map<string, number>();
-  for (const r of rows) perHolder.set(r.assigned_to_id, (perHolder.get(r.assigned_to_id) ?? 0) + 1);
-  for (const [holder, n] of perHolder) {
-    logger.info(`[assignment] reclaimed ${n} over-share row(s) in ${district} from ${holder}`);
-  }
-
+  logger.info(`[assignment] reclaimed ${rows.length} over-share row(s) in ${district} from ${enumeratorId}`);
   return rows.length;
 }
 
@@ -456,17 +512,35 @@ async function claimWithin(
   // Running it unconditionally would churn assignments across the district on every
   // routine top-up for no gain.
   let reclaimed = 0;
-  const before = await getDistrictShares(enumeratorId, canonical, tx);
+  let before = await getDistrictShares(enumeratorId, canonical, tx, quota);
+
+  // The caller's own overage comes first. Under an equal split, gaining a district
+  // lowers the portion held in every other one — someone sitting on 5000 in district
+  // A who is then given B is now owed 2500 in each. Without trimming A the global
+  // ceiling reads as full and B would never be claimed.
+  let trimmedOwn = 0;
+  for (const s of before) {
+    if (s.held > s.share) {
+      trimmedOwn += await releaseOverTarget(enumeratorId, s.district, s.share, tx);
+    }
+  }
+  if (trimmedOwn > 0) {
+    reclaimed += trimmedOwn;
+    before = await getDistrictShares(enumeratorId, canonical, tx, quota);
+  }
+
   for (const s of before) {
     if (s.pool < s.share - s.held) {
       reclaimed += await releaseOverShare(s.district, tx, quota);
     }
   }
 
-  const shares = reclaimed > 0
-    ? await getDistrictShares(enumeratorId, canonical, tx)
+  const shares = reclaimed > trimmedOwn
+    ? await getDistrictShares(enumeratorId, canonical, tx, quota)
     : before;
-  const heldBefore = shares.reduce((n, s) => n + s.held, 0);
+  // Everything held counts against the ceiling, not just the current districts:
+  // records kept after a district was removed still sit on the phone.
+  const heldBefore = await countHeld(enumeratorId, tx);
 
   // The per-district shares are the fair allocation; WORK_QUOTA is still a hard
   // ceiling on top, so an enumerator covering several districts cannot end up
@@ -508,7 +582,7 @@ async function claimWithin(
 
   // Re-read rather than adding up: a concurrent claimer may have taken rows this
   // call was aiming for, and SKIP LOCKED means that is expected rather than an error.
-  const after = await getDistrictShares(enumeratorId, canonical, tx);
+  const after = await getDistrictShares(enumeratorId, canonical, tx, quota);
   const held = after.reduce((n, s) => n + s.held, 0);
   const poolRemaining = after.reduce((n, s) => n + s.pool, 0);
 
@@ -650,9 +724,14 @@ export async function releaseClaimsOutsideDistricts(
 ): Promise<number> {
   const canonical = await canonicalizeDistricts(keepDistricts);
 
+  // Records where this enumerator has already started a survey stay with them. They
+  // are mid-way through that work, and handing the record back to the pool would let
+  // a colleague claim it while the draft is still on its way to the server. They finish
+  // it from the district they have been moved out of (see assertAccessOrOwnWork).
   const where: Prisma.StakeholderWhereInput = {
     assignedToId: enumeratorId,
     status: 'OPEN',
+    surveys: { none: { enumeratorId } },
     ...(canonical.length > 0 ? { district: { notIn: canonical } } : {}),
   };
 
@@ -773,7 +852,17 @@ export async function rebalanceDistricts(districts: string[]): Promise<Rebalance
             Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_DISTRICT}::int, hashtext(${d}))`
           );
         }
-        return trimToGlobalQuota(member, tx);
+        let released = await trimToGlobalQuota(member, tx);
+
+        // Then each district down to this member's equal portion. Done here, before
+        // any district is levelled, so the order districts happen to be processed in
+        // cannot matter: otherwise someone over target in A but handled in B first
+        // would find no room under the ceiling and be left empty in B.
+        const shares = await getDistrictShares(member, memberDistricts, tx);
+        for (const s of shares) {
+          if (s.held > s.share) released += await releaseOverTarget(member, s.district, s.share, tx);
+        }
+        return released;
       },
       { timeout: 120_000, maxWait: 30_000 },
     );
@@ -804,7 +893,7 @@ async function levelDistrictWithin(tx: Db, district: string): Promise<RebalanceR
   // Recomputed after the claw-back, so openTotal and the roster reflect it.
   const openTotal = await tx.stakeholder.count({ where: { district, status: 'OPEN' } });
   const roster = await tx.enumeratorDistrict.findMany({
-    where: { district: { name: district }, enumerator: { isActive: true, isAdmin: false } },
+    where: { district: { name: district }, enumerator: sharerFilter() },
     select: { enumeratorId: true },
   });
 
@@ -812,20 +901,20 @@ async function levelDistrictWithin(tx: Db, district: string): Promise<RebalanceR
     return { released, redistributed: 0, assignments: [] };
   }
 
-  const share = Math.min(WORK_QUOTA, Math.ceil(openTotal / roster.length));
-
   // Two numbers per enumerator, and they are not the same thing:
-  //   heldHere   what they hold in THIS district, measured against the share
+  //   heldHere   what they hold in THIS district, measured against their share here
   //   heldTotal  what they hold everywhere, measured against WORK_QUOTA
-  // Ignoring the second would let someone covering three districts be topped up to
-  // a full share in each and end up with 15 000 records on one phone.
-  const holders: Array<{ enumeratorId: string; heldHere: number; heldTotal: number }> = [];
+  // The share is per enumerator, not per district: it is their equal portion of the
+  // quota, so someone with two districts is owed half here and someone with three a
+  // third. heldTotal is the backstop that keeps a phone under the ceiling regardless.
+  const holders: Array<{ enumeratorId: string; share: number; heldHere: number; heldTotal: number }> = [];
   for (const r of roster) {
+    const shares = await getDistrictShares(r.enumeratorId, await holderDistrictNames(r.enumeratorId, tx), tx);
+    const here = shares.find((s) => s.district === district);
     holders.push({
       enumeratorId: r.enumeratorId,
-      heldHere: await tx.stakeholder.count({
-        where: { district, assignedToId: r.enumeratorId, status: 'OPEN' },
-      }),
+      share: here?.share ?? 0,
+      heldHere: here?.held ?? 0,
       heldTotal: await tx.stakeholder.count({
         where: { assignedToId: r.enumeratorId, status: 'OPEN' },
       }),
@@ -838,14 +927,14 @@ async function levelDistrictWithin(tx: Db, district: string): Promise<RebalanceR
   const assignments: RebalanceResult['assignments'] = [];
 
   for (const h of holders) {
-    const want = Math.min(share - h.heldHere, WORK_QUOTA - h.heldTotal);
+    const want = Math.min(h.share - h.heldHere, WORK_QUOTA - h.heldTotal);
     const got = want > 0 ? await claimFromPool(tx, h.enumeratorId, district, want) : 0;
 
     redistributed += got;
     assignments.push({
       district,
       enumeratorId: h.enumeratorId,
-      share,
+      share: h.share,
       before: h.heldHere,
       after: h.heldHere + got,
     });
@@ -853,17 +942,130 @@ async function levelDistrictWithin(tx: Db, district: string): Promise<RebalanceR
     if (got > 0) {
       logger.info(
         `[assignment] rebalance gave ${got} row(s) in ${district} to ${h.enumeratorId} ` +
-        `(held ${h.heldHere} -> ${h.heldHere + got} of share ${share})`
+        `(held ${h.heldHere} -> ${h.heldHere + got} of share ${h.share})`
       );
     }
   }
 
   if (released > 0 || redistributed > 0) {
     logger.info(
-      `[assignment] rebalanced ${district}: reclaimed ${released}, handed out ${redistributed}, ` +
-      `share ${share} across ${roster.length} enumerator(s) of ${openTotal} open`
+      `[assignment] rebalanced ${district}: reclaimed ${released}, handed out ${redistributed} ` +
+      `across ${roster.length} enumerator(s) of ${openTotal} open`
     );
   }
 
   return { released, redistributed, assignments };
+}
+
+export interface IdleReleaseSummary {
+  enumeratorId: string;
+  name: string;
+  loginId: string;
+  /** Untouched records returned to the pool. */
+  released: number;
+  /** Records kept because a survey is already started on them. */
+  kept: number;
+  /** Released records per district. */
+  districts: Record<string, number>;
+  lastActiveAt: Date | null;
+}
+
+/**
+ * Return the untouched records of every idle enumerator to the pool.
+ *
+ * Records with a survey started on them stay with their enumerator, for the same
+ * reason they survive a district removal: someone is mid-way through them. Each
+ * release writes a revocation, so if the phone ever comes back online it is told to
+ * drop the records, and its safe purge keeps anything with unsynced work.
+ *
+ * Re-checks the enumerator is still idle once their lock is held, so a phone that
+ * logs in and tops up while this runs is not stripped of the records it just claimed.
+ * Safe to run from more than one server at once: the UPDATE only matches rows still
+ * assigned, so a second run finds nothing.
+ */
+export async function releaseIdleClaims(
+  now: Date = new Date(),
+  days: number = IDLE_RELEASE_DAYS,
+): Promise<IdleReleaseSummary[]> {
+  const cutoff = idleCutoff(now, days);
+
+  const idle = await prisma.enumerator.findMany({
+    where: {
+      isActive: true,
+      isAdmin: false,
+      NOT: recentlyActive(cutoff),
+      assignedStakeholders: { some: { status: 'OPEN' } },
+    },
+    select: {
+      id: true,
+      name: true,
+      loginId: true,
+      sessions: { select: { updatedAt: true }, orderBy: { updatedAt: 'desc' }, take: 1 },
+    },
+  });
+
+  const summaries: IdleReleaseSummary[] = [];
+
+  for (const e of idle) {
+    const summary = await prisma.$transaction(
+      async (tx): Promise<IdleReleaseSummary | null> => {
+        await tx.$queryRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_ENUMERATOR}::int, hashtext(${e.id}))`
+        );
+
+        const stillIdle = await tx.enumerator.count({
+          where: { id: e.id, isActive: true, NOT: recentlyActive(cutoff) },
+        });
+        if (stillIdle === 0) return null;
+
+        const rows = await tx.$queryRaw<{ id: string; district: string | null }[]>(Prisma.sql`
+          UPDATE stakeholders st
+          SET assigned_to_id = NULL,
+              assigned_at = NULL,
+              updated_at = NOW()
+          WHERE st.assigned_to_id = ${e.id}
+            AND st.status = 'OPEN'::"StakeholderStatus"
+            AND NOT EXISTS (SELECT 1 FROM surveys sv WHERE sv.stakeholder_id = st.id)
+          RETURNING st.id, st.district
+        `);
+
+        if (rows.length === 0) return null;
+
+        await recordRevocations(
+          rows.map((r) => ({ stakeholderId: r.id, enumeratorId: e.id })),
+          `idle for ${days} days`,
+          tx,
+        );
+
+        const districts: Record<string, number> = {};
+        for (const r of rows) {
+          const d = r.district ?? 'Unknown';
+          districts[d] = (districts[d] ?? 0) + 1;
+        }
+
+        const kept = await tx.stakeholder.count({ where: { assignedToId: e.id, status: 'OPEN' } });
+
+        return {
+          enumeratorId: e.id,
+          name: e.name,
+          loginId: e.loginId,
+          released: rows.length,
+          kept,
+          districts,
+          lastActiveAt: e.sessions[0]?.updatedAt ?? null,
+        };
+      },
+      { timeout: 120_000, maxWait: 30_000 },
+    );
+
+    if (summary) {
+      logger.warn(
+        `[assignment] released ${summary.released} record(s) from idle enumerator ${e.loginId} ` +
+        `(no activity for ${days}+ days); ${summary.kept} with a started survey kept`
+      );
+      summaries.push(summary);
+    }
+  }
+
+  return summaries;
 }

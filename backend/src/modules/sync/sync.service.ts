@@ -4,6 +4,8 @@ import { logger } from '../../utils/logger';
 import { ValidationError } from '../../utils/errors';
 import { getDigiPin } from '../../utils/digipin';
 import { districtScopeFilter } from '../../utils/district-scope';
+import { ownWorkStakeholderIds } from '../../utils/access-control';
+import { flagForReview } from '../../utils/survey-review';
 import { broadcastChange } from '../../realtime/events';
 
 const MAX_BATCH_ITEMS = 200;
@@ -53,6 +55,22 @@ export class SyncService {
       : [];
     const stakeholderById = new Map(stakeholderRows.map((s) => [s.id, s]));
 
+    // Records where this enumerator already has work of their own. Work they started
+    // (or held a claim on) stays theirs to upload after an admin moves them out of the
+    // district, so a finished offline survey is not thrown away by the district check.
+    const ownWork = isAdmin ? new Set<string>() : await ownWorkStakeholderIds(enumeratorId, referencedStakeholderIds);
+
+    // Surveys an admin has edited since. A phone upload must not overwrite those, or the
+    // admin's corrections would be silently undone.
+    const adminEditedIds = new Set(
+      referencedStakeholderIds.length === 0
+        ? []
+        : (await prisma.survey.findMany({
+            where: { enumeratorId, stakeholderId: { in: referencedStakeholderIds }, adminEditedAt: { not: null } },
+            select: { stakeholderId: true },
+          })).map((s) => s.stakeholderId)
+    );
+
     // Process surveys
     for (const surveyData of (payload.surveys || [])) {
       try {
@@ -65,7 +83,7 @@ export class SyncService {
         }
 
         // H1 FIX: enforce district scope — same rule as every other endpoint
-        if (!isAdmin) {
+        if (!isAdmin && !ownWork.has(stakeholder.id)) {
           const inDistrict = districts.some(
             (d) => d.toUpperCase() === stakeholder.district?.toUpperCase()
           );
@@ -76,11 +94,15 @@ export class SyncService {
           }
         }
 
-        if (stakeholder.lockedById && stakeholder.lockedById !== enumeratorId) {
-          results.surveys.failed++;
-          results.surveys.errors.push(
-            `Stakeholder ${surveyData.stakeholderId}: already completed by another enumerator`
-          );
+        // Completed by someone else already: no longer refused. The enumerator may have
+        // done this offline before the record was closed, so it is accepted as a draft
+        // and flagged for an admin. It cannot take the lock (see completeSurvey).
+        const lockedByOther = !!(stakeholder.lockedById && stakeholder.lockedById !== enumeratorId);
+
+        if (adminEditedIds.has(surveyData.stakeholderId)) {
+          // Counted as handled so the phone stops retrying; the admin's version stands.
+          results.surveys.success++;
+          logger.info(`[sync] upload for ${surveyData.stakeholderId} ignored: survey edited by an admin since`);
           continue;
         }
 
@@ -91,7 +113,7 @@ export class SyncService {
           } catch (e) {}
         }
 
-        await prisma.survey.upsert({
+        const saved = await prisma.survey.upsert({
           where: {
             stakeholderId_enumeratorId: {
               stakeholderId: surveyData.stakeholderId,
@@ -176,6 +198,10 @@ export class SyncService {
           },
         });
 
+        if (lockedByOther) {
+          await flagForReview(saved.id, 'Record was already completed by another enumerator or an admin before this survey arrived; kept as extra field evidence', enumeratorId);
+        }
+
         results.surveys.success++;
       } catch (error: any) {
         results.surveys.failed++;
@@ -200,7 +226,7 @@ export class SyncService {
           continue;
         }
 
-        if (!isAdmin) {
+        if (!isAdmin && !ownWork.has(stakeholder.id)) {
           const inDistrict = districts.some(
             (d) => d.toUpperCase() === stakeholder.district?.toUpperCase()
           );

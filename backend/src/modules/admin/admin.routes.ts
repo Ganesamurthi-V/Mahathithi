@@ -1000,6 +1000,9 @@ router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Respon
         district: true,
         city: true,
         createdAt: true,
+        updatedAt: true,
+        needsReview: true,
+        reviewReason: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -1010,19 +1013,126 @@ router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Respon
     });
     const exportedMap = new Map(exports.map(e => [e.surveyId, e.exportedAt]));
 
-    const result = surveys.map(s => ({
-      ...s,
-      isExported: exportedMap.has(s.id),
-      exportedAt: exportedMap.get(s.id) || null,
-    }));
+    const result = surveys.map(s => {
+      const exportedAt = exportedMap.get(s.id) || null;
+      return {
+        ...s,
+        isExported: exportedAt !== null,
+        exportedAt,
+        // Edited (by an admin, or by a late phone upload) after it was exported, so
+        // the copy the client received is out of date and needs exporting again.
+        changedAfterExport: exportedAt !== null && s.updatedAt > exportedAt,
+      };
+    });
 
-    // Sort: new (not exported) on top, then by date desc
+    // Sort: anything that still needs exporting (new, or changed since) on top,
+    // then by date desc
+    const needsExport = (r: { isExported: boolean; changedAfterExport: boolean }) =>
+      !r.isExported || r.changedAfterExport;
     result.sort((a, b) => {
-      if (a.isExported !== b.isExported) return a.isExported ? 1 : -1;
+      if (needsExport(a) !== needsExport(b)) return needsExport(a) ? -1 : 1;
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
     res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Enumerators whose latest work may not be in an export yet.
+ *
+ * The server cannot see what is waiting on a phone, only when the phone was last
+ * online: the app renews its login whenever it is opened with a connection. An
+ * enumerator who still holds open records and has not been online for a day may be
+ * sitting on finished surveys that have not uploaded, so the export page warns before
+ * a file goes out without them.
+ */
+const EXPORT_STALE_HOURS = 24;
+
+router.get('/export/sync-status', async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const cutoff = new Date(Date.now() - EXPORT_STALE_HOURS * 60 * 60 * 1000);
+
+    const holders = await prisma.enumerator.findMany({
+      where: { isActive: true, isAdmin: false, assignedStakeholders: { some: { status: 'OPEN' } } },
+      select: {
+        id: true,
+        name: true,
+        loginId: true,
+        districts: { select: { district: { select: { name: true } } } },
+        sessions: { select: { updatedAt: true }, orderBy: { updatedAt: 'desc' }, take: 1 },
+        _count: { select: { assignedStakeholders: { where: { status: 'OPEN' } } } },
+      },
+    });
+
+    const stale = holders
+      .map((h) => ({
+        id: h.id,
+        name: h.name,
+        loginId: h.loginId,
+        districts: h.districts.map((d) => d.district?.name).filter(Boolean) as string[],
+        openRecords: h._count.assignedStakeholders,
+        lastSeenAt: h.sessions[0]?.updatedAt ?? null,
+      }))
+      .filter((h) => !h.lastSeenAt || h.lastSeenAt < cutoff)
+      .sort((a, b) => (a.lastSeenAt?.getTime() ?? 0) - (b.lastSeenAt?.getTime() ?? 0));
+
+    res.json({ success: true, data: { staleHours: EXPORT_STALE_HOURS, enumerators: stale } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Surveys waiting for an admin to look at: GPS far from the business, or field work
+ * that arrived after the record was already completed by someone else.
+ */
+router.get('/surveys/review', async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const surveys = await prisma.survey.findMany({
+      where: { needsReview: true },
+      select: {
+        id: true,
+        stakeholderId: true,
+        businessName: true,
+        district: true,
+        reviewReason: true,
+        isCompleted: true,
+        updatedAt: true,
+        enumerator: { select: { name: true, loginId: true } },
+        stakeholder: { select: { companyNameStandardized: true, companyNameOriginal: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 200,
+    });
+
+    res.json({ success: true, data: surveys });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/surveys/:id/review/resolve', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const surveyId = req.params.id as string;
+    const survey = await prisma.survey.findUnique({ where: { id: surveyId }, select: { id: true, stakeholderId: true } });
+    if (!survey) throw new NotFoundError('Survey');
+
+    await prisma.survey.update({ where: { id: surveyId }, data: { needsReview: false } });
+    await prisma.auditLog.create({
+      data: {
+        action: 'survey_review_resolved',
+        entityType: 'survey',
+        entityId: surveyId,
+        enumeratorId: req.enumerator!.id,
+        details: { stakeholderId: survey.stakeholderId },
+      },
+    });
+
+    broadcastChange(['surveys', 'auditLogs'], { action: 'update', entityId: surveyId });
+    res.json({ success: true, data: { id: surveyId, needsReview: false } });
   } catch (error) {
     next(error);
   }

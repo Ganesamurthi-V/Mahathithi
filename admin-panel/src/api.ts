@@ -319,6 +319,11 @@ export const uploadMedia = (
 
 // Export
 export const getCompletedSurveys = () => api.get('/admin/export/surveys/list');
+// Enumerators who have not been online recently and may hold surveys not yet uploaded.
+export const getExportSyncStatus = () => api.get('/admin/export/sync-status');
+// Surveys an admin should look at (GPS far from the business, or arrived after completion).
+export const getSurveysForReview = () => api.get('/admin/surveys/review');
+export const resolveSurveyReview = (id: string) => api.post(`/admin/surveys/${id}/review/resolve`);
 export type ExportFormat = 'sql' | 'csv';
 
 /**
