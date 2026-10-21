@@ -190,35 +190,53 @@ export async function getDistrictShares(
   const canonical = await canonicalizeDistricts(districts);
   if (canonical.length === 0) return [];
 
-  // Parallel on purpose. These are four counts per district over a 295K-row table,
-  // and the dashboard calls this on every load, outside any transaction — running
-  // them in series made that 12 sequential round trips for a three-district
-  // enumerator. Inside a transaction Prisma queues them on the single connection
-  // anyway, so this is never worse there and materially better everywhere else.
-  const counted = await Promise.all(
-    canonical.map(async (district) => {
-      const [openTotal, enumerators, held, pool] = await Promise.all([
-        db.stakeholder.count({ where: { district, status: 'OPEN' } }),
-        db.enumeratorDistrict.count({
-          where: {
-            district: { name: district },
-            enumerator: sharerFilter(),
-          },
-        }),
-        db.stakeholder.count({
-          where: { district, assignedToId: enumeratorId, status: 'OPEN' },
-        }),
-        db.stakeholder.count({
-          where: { district, assignedToId: null, status: 'OPEN' },
-        }),
-      ]);
+  // Two queries for every district at once, instead of four per district. This runs on
+  // every dashboard load and up to four times inside a claim, and each query is a full
+  // round trip to the database, so a three-district enumerator used to wait on twelve
+  // counts queued behind a connection pool of ten. The figures are identical: the same
+  // three counts and the same sharer rule, grouped by district in a single pass.
+  const cutoff = idleCutoff();
+  const [stakeholderRows, sharerRows] = await Promise.all([
+    db.$queryRaw<Array<{ district: string; open_total: number; held: number; pool: number }>>(Prisma.sql`
+      SELECT district,
+             COUNT(*)::int AS open_total,
+             COUNT(*) FILTER (WHERE assigned_to_id = ${enumeratorId})::int AS held,
+             COUNT(*) FILTER (WHERE assigned_to_id IS NULL)::int AS pool
+      FROM stakeholders
+      WHERE status = 'OPEN'::"StakeholderStatus"
+        AND district IN (${Prisma.join(canonical)})
+      GROUP BY district
+    `),
+    db.$queryRaw<Array<{ district: string; sharers: number }>>(Prisma.sql`
+      SELECT d.name AS district, COUNT(*)::int AS sharers
+      FROM enumerator_districts ed
+      JOIN districts d ON d.id = ed.district_id
+      JOIN enumerators e ON e.id = ed.enumerator_id
+      WHERE d.name IN (${Prisma.join(canonical)})
+        AND e.is_active = true
+        AND e.is_admin = false
+        AND (e.created_at >= ${cutoff}
+             OR EXISTS (SELECT 1 FROM sessions s WHERE s.enumerator_id = e.id AND s.updated_at >= ${cutoff}))
+      GROUP BY d.name
+    `),
+  ]);
 
-      const divisor = Math.max(1, enumerators);
-      const fairShare = Math.ceil(openTotal / divisor);
+  const stakeholderByDistrict = new Map(stakeholderRows.map((r) => [r.district, r]));
+  const sharersByDistrict = new Map(sharerRows.map((r) => [r.district, r.sharers]));
 
-      return { district, openTotal, enumerators: divisor, fairShare, held, pool };
-    })
-  );
+  const counted = canonical.map((district) => {
+    const counts = stakeholderByDistrict.get(district);
+    const openTotal = counts?.open_total ?? 0;
+    const divisor = Math.max(1, sharersByDistrict.get(district) ?? 0);
+    return {
+      district,
+      openTotal,
+      enumerators: divisor,
+      fairShare: Math.ceil(openTotal / divisor),
+      held: counts?.held ?? 0,
+      pool: counts?.pool ?? 0,
+    };
+  });
 
   const split = allocateEqualSplit(
     counted.map((c) => ({ district: c.district, cap: c.fairShare })),

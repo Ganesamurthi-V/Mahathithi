@@ -10,6 +10,13 @@ import { broadcastChange } from '../../realtime/events';
 
 const MAX_BATCH_ITEMS = 200;
 
+interface RevocationRow {
+  stakeholderId: string;
+  revokedAt: Date;
+  /** The enumerator holds this stakeholder again right now, so the revocation is inert. */
+  stillHeld: boolean;
+}
+
 interface SyncPayload {
   surveys: any[];
   phoneValidations: any[];
@@ -378,12 +385,35 @@ export class SyncService {
     // Ordered by (updated_at, id) to match the keyset above. Ordering by updated_at
     // alone leaves rows sharing a timestamp in an arbitrary order, so a truncated
     // page could cut the block at a different point each time and skip rows.
-    const rows = await prisma.stakeholder.findMany({
-      where,
-      include: { _count: { select: { surveys: true } } },
-      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
-      take: LIMIT,
-    });
+    // Claims taken back from this device are read in the same breath as the page of
+    // stakeholders: neither needs the other, and each is a full round trip to the
+    // database. Whether a revoked row is held again is decided inside the same query
+    // (EXISTS on the primary key) instead of by sending thousands of ids back in a
+    // second one. Admins hold no claims, so they have no revocations to receive.
+    const revokedQuery: Promise<RevocationRow[]> = isAdmin
+      ? Promise.resolve([])
+      : prisma.$queryRaw<RevocationRow[]>(Prisma.sql`
+          SELECT r.stakeholder_id AS "stakeholderId",
+                 r.revoked_at AS "revokedAt",
+                 EXISTS (
+                   SELECT 1 FROM stakeholders s
+                   WHERE s.id = r.stakeholder_id AND s.assigned_to_id = ${enumeratorId}
+                 ) AS "stillHeld"
+          FROM stakeholder_revocations r
+          WHERE r.enumerator_id = ${enumeratorId} AND r.revoked_at > ${sinceDate}
+          ORDER BY r.revoked_at ASC
+          LIMIT ${REVOCATION_LIMIT}
+        `);
+
+    const [rows, revoked] = await Promise.all([
+      prisma.stakeholder.findMany({
+        where,
+        include: { _count: { select: { surveys: true } } },
+        orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+        take: LIMIT,
+      }),
+      revokedQuery,
+    ]);
 
     // Same status derivation the download feeds use. Without it the delta would
     // hand back a plain 'OPEN' for a stakeholder that already has a survey against
@@ -402,20 +432,10 @@ export class SyncService {
     );
 
     // Claims taken back from this device — a colleague's share was rebalanced, or a
-    // district was reassigned. These CANNOT be found in the query above: it locates
-    // work by `assigned_to_id = me`, and a released row no longer matches, so it
-    // drops out of the feed the instant it is released and would otherwise stay on
-    // the device forever, offered as work someone else now owns.
-    //
-    // Admins hold no claims, so they have no revocations to receive.
-    const revoked = isAdmin
-      ? []
-      : await prisma.stakeholderRevocation.findMany({
-          where: { enumeratorId, revokedAt: { gt: sinceDate } },
-          select: { stakeholderId: true, revokedAt: true },
-          orderBy: { revokedAt: 'asc' },
-          take: REVOCATION_LIMIT,
-        });
+    // district was reassigned — were read above, alongside the stakeholder page. They
+    // CANNOT be found in that page's query: it locates work by `assigned_to_id = me`,
+    // and a released row no longer matches, so it drops out of the feed the instant it
+    // is released and would otherwise stay on the device forever.
 
     // A revocation says "you no longer hold this". It does NOT say "delete this",
     // and the difference matters because a released row is very often claimed again
@@ -434,14 +454,7 @@ export class SyncService {
     // Checking current ownership instead of trying to keep the revocation log
     // perfectly pruned means a stale or replayed revocation is simply inert.
     const revokedIds = revoked.map(r => r.stakeholderId);
-    let stillHeld = new Set<string>();
-    if (revokedIds.length > 0) {
-      const held = await prisma.stakeholder.findMany({
-        where: { id: { in: revokedIds }, assignedToId: enumeratorId },
-        select: { id: true },
-      });
-      stillHeld = new Set(held.map(h => h.id));
-    }
+    const stillHeld = new Set(revoked.filter(r => r.stillHeld).map(r => r.stakeholderId));
 
     // One list, because the client applies the same safe purge to all of it:
     // anything still holding unsynced survey or media rows is skipped and retried

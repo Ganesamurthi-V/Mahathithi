@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authMiddleware, adminOnly } from '../../middleware/auth';
+import { authMiddleware, adminOnly, invalidateAuthCache } from '../../middleware/auth';
 import { prisma } from '../../config/database';
 import { config } from '../../config';
 import bcrypt from 'bcryptjs';
@@ -28,6 +28,16 @@ function validatePassword(password: string) {
 
 const router = Router();
 router.use(authMiddleware, adminOnly);
+
+// Any change to an account (details, active flag, districts, deletion) must show up on
+// that person's very next request, not after the auth lookup cache expires. Cleared once
+// the response is sent, which is after the change has been written.
+router.use('/enumerators/:id', (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (req.method !== 'GET') {
+    res.on('finish', () => invalidateAuthCache(req.params.id as string));
+  }
+  next();
+});
 
 // ============================================================================
 // DASHBOARD ANALYTICS
