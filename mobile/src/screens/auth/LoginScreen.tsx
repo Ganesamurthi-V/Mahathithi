@@ -2,18 +2,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ActivityIndicator,
-  Animated, Easing, Image, Alert
+  Animated, Easing, Image
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState, AppDispatch } from '../../store';
-import { login, clearError, clearSessionConflict } from '../../store/slices/authSlice';
+import { login, clearError } from '../../store/slices/authSlice';
 import { colors, spacing, borderRadius, typography, animations, shadows, layout } from '../../theme';
 
 export default function LoginScreen() {
   const dispatch = useDispatch<AppDispatch>();
-  const { isLoading, error, sessionConflict } = useSelector((state: RootState) => state.auth);
+  const { isLoading, error } = useSelector((state: RootState) => state.auth);
   const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -64,34 +64,6 @@ export default function LoginScreen() {
     dispatch(clearError());
     dispatch(login({ loginId: loginId.trim(), password }));
   };
-
-  // The account is already signed in on another phone. Continuing signs that phone
-  // out, so it is only done on an explicit yes. Unsynced work on the other phone is
-  // kept there, but it can only be uploaded once that phone signs in again.
-  useEffect(() => {
-    if (!sessionConflict) return;
-    const lastSeen = sessionConflict.lastActiveAt
-      ? ` It was last active ${new Date(sessionConflict.lastActiveAt).toLocaleString()}.`
-      : '';
-    Alert.alert(
-      'Signed in on another phone',
-      `This account is already signed in on another phone.${lastSeen}
-
-Continuing will sign that phone out. Make sure it has finished syncing first, or its unsynced surveys will wait until it is signed in again.`,
-      [
-        { text: 'Cancel', style: 'cancel', onPress: () => dispatch(clearSessionConflict()) },
-        {
-          text: 'Sign out other phone',
-          style: 'destructive',
-          onPress: () => {
-            dispatch(clearSessionConflict());
-            dispatch(login({ loginId: loginId.trim(), password, takeover: true }));
-          },
-        },
-      ],
-      { cancelable: false },
-    );
-  }, [sessionConflict]);
 
   const handlePressIn = () => {
     Animated.spring(buttonScale, {

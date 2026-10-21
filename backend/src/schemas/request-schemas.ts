@@ -435,7 +435,6 @@ export const syncUploadSchema = z.object({
 export const loginSchema = z.object({
   loginId: text(100),
   password: text(200),
-  takeover: z.boolean().optional(),
 }).strict();
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -327,12 +327,12 @@ api.interceptors.response.use(undefined, async (error) => {
 // ============================================================================
 
 export const authService = {
-  login: (loginId: string, password: string, takeover: boolean = false) => {
+  login: (loginId: string, password: string) => {
     console.log('--- LOGIN REQUEST STARTED ---');
     console.log(`URL: ${api.defaults.baseURL}/auth/login`);
     console.log(`Method: POST`);
     console.log(`Payload:`, { loginId, password: '***' }); // hiding password in logs for security
-    return api.post('/auth/login', takeover ? { loginId, password, takeover: true } : { loginId, password })
+    return api.post('/auth/login', { loginId, password })
       .then(res => {
         console.log('--- LOGIN SUCCESS ---');
         console.log('Response Status:', res.status);

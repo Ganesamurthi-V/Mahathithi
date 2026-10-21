@@ -14,9 +14,6 @@ interface AuthState {
     districts: { id: string; name: string; state: string }[];
   } | null;
   error: string | null;
-  // Set when the account is already signed in on another phone. The login screen asks
-  // the user to confirm, then retries with takeover.
-  sessionConflict: { lastActiveAt: string | null } | null;
 }
 
 const initialState: AuthState = {
@@ -24,7 +21,6 @@ const initialState: AuthState = {
   isLoading: true,
   user: null,
   error: null,
-  sessionConflict: null,
 };
 
 // ============================================================================
@@ -109,9 +105,9 @@ export const enforceOfflineLimit = createAsyncThunk<boolean, void>(
 // Login
 export const login = createAsyncThunk(
   'auth/login',
-  async ({ loginId, password, takeover }: { loginId: string; password: string; takeover?: boolean }, { rejectWithValue }) => {
+  async ({ loginId, password }: { loginId: string; password: string }, { rejectWithValue }) => {
     try {
-      const response = await authService.login(loginId, password, takeover === true);
+      const response = await authService.login(loginId, password);
       const { tokens, enumerator } = response.data.data;
 
       // Store tokens securely
@@ -125,12 +121,6 @@ export const login = createAsyncThunk(
 
       return enumerator;
     } catch (err: any) {
-      // Signed in on another phone: not a failure, a question for the user.
-      const apiError = err?.response?.data?.error;
-      if (err?.response?.status === 409 && apiError?.code === 'SESSION_ACTIVE_ELSEWHERE') {
-        return rejectWithValue({ code: 'SESSION_ACTIVE_ELSEWHERE', lastActiveAt: apiError.details?.[0]?.lastActiveAt ?? null });
-      }
-
       // If offline — try cached credentials
       if (err.message === 'Network Error' || err.code === 'ECONNABORTED') {
         try {
@@ -199,9 +189,6 @@ const authSlice = createSlice({
     clearError: (state) => {
       state.error = null;
     },
-    clearSessionConflict: (state) => {
-      state.sessionConflict = null;
-    },
   },
   extraReducers: (builder) => {
     builder
@@ -224,7 +211,6 @@ const authSlice = createSlice({
       .addCase(login.pending, (state) => {
         state.isLoading = true;
         state.error = null;
-        state.sessionConflict = null;
       })
       .addCase(login.fulfilled, (state, action) => {
         state.isAuthenticated = true;
@@ -234,14 +220,8 @@ const authSlice = createSlice({
       })
       .addCase(login.rejected, (state, action) => {
         state.isLoading = false;
-        const payload = action.payload as any;
-        if (payload && typeof payload === 'object' && payload.code === 'SESSION_ACTIVE_ELSEWHERE') {
-          state.sessionConflict = { lastActiveAt: payload.lastActiveAt ?? null };
-          state.error = null;
-          return;
-        }
         // Use the custom message from rejectWithValue if available
-        state.error = (payload as string) || action.error.message || 'Login failed. Please try again.';
+        state.error = (action.payload as string) || action.error.message || 'Login failed. Please try again.';
       })
       .addCase(logout.fulfilled, (state) => {
         state.isAuthenticated = false;
@@ -250,5 +230,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { clearError, clearSessionConflict } = authSlice.actions;
+export const { clearError } = authSlice.actions;
 export default authSlice.reducer;

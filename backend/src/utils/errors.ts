@@ -51,24 +51,6 @@ export class ValidationError extends AppError {
   }
 }
 
-/**
- * Raised when a field enumerator signs in while another phone still has a live
- * session. The client turns it into a confirmation; retrying with `takeover` signs
- * the other phone out.
- */
-export class SessionActiveElsewhereError extends AppError {
-  public errors: any[];
-
-  constructor(lastActiveAt: Date) {
-    super(
-      'You are already signed in on another phone. Continuing will sign that phone out.',
-      409,
-      'SESSION_ACTIVE_ELSEWHERE'
-    );
-    this.errors = [{ lastActiveAt: lastActiveAt.toISOString() }];
-  }
-}
-
 export class ConflictError extends AppError {
   constructor(message: string = 'Resource conflict') {
     super(message, 409, 'CONFLICT');

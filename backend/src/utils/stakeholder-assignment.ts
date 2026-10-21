@@ -117,6 +117,9 @@ type Db = Prisma.TransactionClient;
  * an enumerator id that happens to hash to the same int as a district name from
  * being treated as the same lock.
  */
+// The lock statements use $executeRaw, not $queryRaw: pg_advisory_xact_lock returns
+// void, and $queryRaw cannot deserialize a void column (PostgreSQL 17 / Prisma 6), which
+// made every claim, rebalance and idle release fail with P2010.
 const LOCK_NS_ENUMERATOR = 1;
 const LOCK_NS_DISTRICT = 2;
 
@@ -499,11 +502,11 @@ async function claimWithin(
   canonical: string[],
   quota: number,
 ): Promise<ClaimResult> {
-  await tx.$queryRaw(
+  await tx.$executeRaw(
     Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_ENUMERATOR}::int, hashtext(${enumeratorId}))`
   );
   for (const district of [...canonical].sort()) {
-    await tx.$queryRaw(
+    await tx.$executeRaw(
       Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_DISTRICT}::int, hashtext(${district}))`
     );
   }
@@ -844,11 +847,11 @@ export async function rebalanceDistricts(districts: string[]): Promise<Rebalance
         // so a trim and a device syncing can never hold what the other needs.
         // The trim reaches across ALL of this enumerator's districts, not just the
         // ones being rebalanced, so every one of them is locked.
-        await tx.$queryRaw(
+        await tx.$executeRaw(
           Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_ENUMERATOR}::int, hashtext(${member}))`
         );
         for (const d of memberDistricts) {
-          await tx.$queryRaw(
+          await tx.$executeRaw(
             Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_DISTRICT}::int, hashtext(${d}))`
           );
         }
@@ -884,7 +887,7 @@ export async function rebalanceDistricts(districts: string[]): Promise<Rebalance
 }
 
 async function levelDistrictWithin(tx: Db, district: string): Promise<RebalanceResult> {
-  await tx.$queryRaw(
+  await tx.$executeRaw(
     Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_DISTRICT}::int, hashtext(${district}))`
   );
 
@@ -1009,7 +1012,7 @@ export async function releaseIdleClaims(
   for (const e of idle) {
     const summary = await prisma.$transaction(
       async (tx): Promise<IdleReleaseSummary | null> => {
-        await tx.$queryRaw(
+        await tx.$executeRaw(
           Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NS_ENUMERATOR}::int, hashtext(${e.id}))`
         );
 
