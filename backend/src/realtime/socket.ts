@@ -25,9 +25,7 @@ interface DecodedToken {
 export function initRealtime(httpServer: HTTPServer): SocketIOServer {
   io = new SocketIOServer(httpServer, {
     cors: {
-      origin: config.env === 'production'
-        ? ['https://mahaatithi.gov.in', 'https://mahathithi.vercel.app', 'http://localhost:5173']
-        : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'https://mahathithi.vercel.app'],
+      origin: config.cors.origins,
       credentials: true,
     },
     maxHttpBufferSize: 1e4, // 10KB

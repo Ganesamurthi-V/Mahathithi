@@ -3,6 +3,7 @@ import { prisma } from '../config/database';
 import { canonicalizeDistricts } from './district-scope';
 import { logger } from './logger';
 import { allocateEqualSplit } from './work-split';
+import { intEnv } from './env';
 
 /**
  * Work assignment: each enumerator holds a bounded, exclusive, FAIR share.
@@ -50,7 +51,7 @@ import { allocateEqualSplit } from './work-split';
  * A ceiling rather than "the whole district" because a device has to hold these
  * offline, and a work queue nobody can finish is not a work queue.
  */
-export const WORK_QUOTA = 5000;
+export const WORK_QUOTA = intEnv('WORK_QUOTA', 5000);
 
 /**
  * Days without any sign of life before an enumerator's untouched records go back to
@@ -58,7 +59,7 @@ export const WORK_QUOTA = 5000;
  * token whenever it is opened with a connection, so a phone nobody has used stops
  * renewing. An account that has never logged in counts from the day it was created.
  */
-export const IDLE_RELEASE_DAYS = 14;
+export const IDLE_RELEASE_DAYS = intEnv('IDLE_RELEASE_DAYS', 14);
 
 export function idleCutoff(now: Date = new Date(), days: number = IDLE_RELEASE_DAYS): Date {
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);

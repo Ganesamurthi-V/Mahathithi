@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 dotenv.config();
+import { listEnv } from '../utils/env';
 
 /**
  * C1 FIX: Fail fast at boot if a required environment variable is missing or
@@ -16,6 +17,14 @@ function requireEnv(name: string, minLength = 1): string {
   }
   return value;
 }
+
+// Websites allowed to call the API from a browser (the admin panel). Override with
+// CORS_ORIGINS, a comma-separated list, when the panel moves to a new address. The
+// mobile app is not a browser and is not subject to this.
+const DEFAULT_CORS_ORIGINS =
+  process.env.NODE_ENV === 'production'
+    ? ['https://mahaatithi.gov.in', 'https://mahathithi.vercel.app', 'http://localhost:5173']
+    : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'https://mahathithi.vercel.app'];
 
 export const config = {
   env: process.env.NODE_ENV || 'development',
@@ -91,6 +100,10 @@ export const config = {
     // Upstash Redis REST — required for brute-force lockout across instances.
     url: requireEnv('UPSTASH_REDIS_REST_URL'),
     token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
+  },
+
+  cors: {
+    origins: listEnv('CORS_ORIGINS') ?? DEFAULT_CORS_ORIGINS,
   },
 
   rateLimit: {

@@ -2,6 +2,7 @@ import { prisma } from '../config/database';
 import { logger } from '../utils/logger';
 import { broadcastChange } from '../realtime/events';
 import { releaseIdleClaims, IDLE_RELEASE_DAYS } from '../utils/stakeholder-assignment';
+import { boolEnv } from '../utils/env';
 
 const SWEEP_EVERY_MS = 6 * 60 * 60 * 1000;
 const FIRST_SWEEP_DELAY_MS = 2 * 60 * 1000;
@@ -46,6 +47,11 @@ export async function runIdleClaimsSweep(): Promise<number> {
  * second run finds nothing to do and writes no alert.
  */
 export function startIdleClaimsJob(): void {
+  if (!boolEnv('IDLE_RELEASE_ENABLED', true)) {
+    logger.warn('[idle-claims] disabled by IDLE_RELEASE_ENABLED=false; idle enumerators keep their records');
+    return;
+  }
+
   const run = () => {
     runIdleClaimsSweep()
       .then((n) => {

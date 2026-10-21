@@ -9,6 +9,7 @@ import { AppError, ValidationError, NotFoundError, ConflictError } from '../../u
 import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/request-schemas';
 import { SurveyService } from '../survey/survey.service';
 import { releaseClaims, releaseClaimsOutsideDistricts, rebalanceDistricts } from '../../utils/stakeholder-assignment';
+import { intEnv } from '../../utils/env';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { broadcastChange, notifyEnumerator } from '../../realtime/events';
 import { logger } from '../../utils/logger';
@@ -1049,7 +1050,7 @@ router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Respon
  * sitting on finished surveys that have not uploaded, so the export page warns before
  * a file goes out without them.
  */
-const EXPORT_STALE_HOURS = 24;
+const EXPORT_STALE_HOURS = intEnv('EXPORT_STALE_HOURS', 24);
 
 router.get('/export/sync-status', async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
