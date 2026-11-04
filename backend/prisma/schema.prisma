@@ -23,6 +23,9 @@ model Enumerator {
   email         String?
   isActive      Boolean  @default(true) @map("is_active")
   isAdmin       Boolean  @default(false) @map("is_admin")
+  // A restricted admin-panel user: sees and edits only inside their assigned districts and
+  // cannot delete enumerators or stakeholders. Never set together with isAdmin.
+  isDistrictAdmin Boolean @default(false) @map("is_district_admin")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 

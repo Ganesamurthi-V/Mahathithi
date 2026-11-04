@@ -32,7 +32,8 @@ export class SurveyController {
         req.params.stakeholderId as string,
         req.enumerator!.id,
         req.enumerator!.districts,
-        req.enumerator!.isAdmin
+        req.enumerator!.isAdmin,
+        req.enumerator!.isDistrictAdmin
       );
       res.json({ success: true, data: survey });
     } catch (error) {

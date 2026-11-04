@@ -83,7 +83,7 @@ function recentlyActive(cutoff: Date): Prisma.EnumeratorWhereInput {
  * allowed to take them. They are counted again the moment they log back in.
  */
 function sharerFilter(): Prisma.EnumeratorWhereInput {
-  return { isActive: true, isAdmin: false, ...recentlyActive(idleCutoff()) };
+  return { isActive: true, isAdmin: false, isDistrictAdmin: false, ...recentlyActive(idleCutoff()) };
 }
 
 /** The fair share for one district, and the inputs it was derived from. */
@@ -215,6 +215,7 @@ export async function getDistrictShares(
       WHERE d.name IN (${Prisma.join(canonical)})
         AND e.is_active = true
         AND e.is_admin = false
+        AND e.is_district_admin = false
         AND (e.created_at >= ${cutoff}
              OR EXISTS (SELECT 1 FROM sessions s WHERE s.enumerator_id = e.id AND s.updated_at >= ${cutoff}))
       GROUP BY d.name
@@ -845,7 +846,7 @@ export async function rebalanceDistricts(districts: string[]): Promise<Rebalance
   const roster = await prisma.enumeratorDistrict.findMany({
     where: {
       district: { name: { in: canonical } },
-      enumerator: { isActive: true, isAdmin: false },
+      enumerator: { isActive: true, isAdmin: false, isDistrictAdmin: false },
     },
     select: { enumeratorId: true, enumerator: { select: { districts: { select: { district: { select: { name: true } } } } } } },
   });
@@ -1015,6 +1016,7 @@ export async function releaseIdleClaims(
     where: {
       isActive: true,
       isAdmin: false,
+      isDistrictAdmin: false,
       NOT: recentlyActive(cutoff),
       assignedStakeholders: { some: { status: 'OPEN' } },
     },

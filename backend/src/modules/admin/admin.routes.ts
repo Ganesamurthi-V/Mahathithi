@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { authMiddleware, adminOnly, invalidateAuthCache } from '../../middleware/auth';
+import { authMiddleware, staffOnly, invalidateAuthCache } from '../../middleware/auth';
+import { districtAdminGate } from '../../middleware/district-admin-gate';
 import { prisma } from '../../config/database';
 import { config } from '../../config';
 import bcrypt from 'bcryptjs';
@@ -10,6 +11,10 @@ import { createEnumeratorSchema, updateEnumeratorSchema } from '../../schemas/re
 import { SurveyService } from '../survey/survey.service';
 import { releaseClaims, releaseClaimsOutsideDistricts, rebalanceDistricts } from '../../utils/stakeholder-assignment';
 import { intEnv } from '../../utils/env';
+import { Prisma } from '@prisma/client';
+import { districtScopeFilter } from '../../utils/district-scope';
+import { assertStakeholderAccess } from '../../utils/access-control';
+import { isScopedStaff } from '../../utils/roles';
 import { emitToDistrictAndAdmins } from '../../realtime/socket';
 import { broadcastChange, notifyEnumerator } from '../../realtime/events';
 import { logger } from '../../utils/logger';
@@ -27,7 +32,9 @@ function validatePassword(password: string) {
 }
 
 const router = Router();
-router.use(authMiddleware, adminOnly);
+// Every /admin route needs an admin-panel account. A district admin then reaches only the
+// routes on the allowlist in district-admin-gate.ts (default deny); a full admin reaches all.
+router.use(authMiddleware, staffOnly, districtAdminGate);
 
 // Any change to an account (details, active flag, districts, deletion) must show up on
 // that person's very next request, not after the auth lookup cache expires. Cleared once
@@ -38,6 +45,45 @@ router.use('/enumerators/:id', (req: AuthenticatedRequest, res: Response, next: 
   }
   next();
 });
+
+// ============================================================================
+// DISTRICT ADMIN SCOPE
+// ============================================================================
+// A full admin is unrestricted (scope is undefined). A district admin reaches only the
+// routes allowed by district-admin-gate.ts, and each of those narrows its data with this.
+interface Scope {
+  /** The caller's districts as assigned (names). */
+  districts: string[];
+  /** The same districts in the canonical spelling stored on stakeholders. */
+  canonical: string[];
+  /** Prisma filter for a stakeholders.district column. */
+  filter: { district: { in: string[] } };
+}
+
+async function scopeOf(req: AuthenticatedRequest): Promise<Scope | undefined> {
+  if (!isScopedStaff(req.enumerator)) return undefined;
+  const filter = await districtScopeFilter(req.enumerator!.districts);
+  return { districts: req.enumerator!.districts, canonical: filter.district.in, filter };
+}
+
+function adminSurveyOptions(req: AuthenticatedRequest) {
+  return {
+    actorId: req.enumerator!.id,
+    ...(isScopedStaff(req.enumerator) ? { scope: { districts: req.enumerator!.districts } } : {}),
+  };
+}
+
+async function countExportedIn(districts: string[]): Promise<number> {
+  if (districts.length === 0) return 0;
+  const rows = await prisma.$queryRaw<{ n: number }[]>(Prisma.sql`
+    SELECT COUNT(*)::int AS n
+    FROM survey_exports se
+    JOIN surveys sv ON sv.id = se.survey_id
+    JOIN stakeholders st ON st.id = sv.stakeholder_id
+    WHERE st.district IN (${Prisma.join(districts)})
+  `);
+  return rows[0]?.n ?? 0;
+}
 
 // ============================================================================
 // DASHBOARD ANALYTICS
@@ -223,25 +269,44 @@ async function getCompletedSurveysByDistrict(): Promise<Map<string, number>> {
 
 router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
+    const scope = await scopeOf(req);
+
     const [agg, completedSurveys, exportedSurveys, totalEnumerators, completedByDistrict] =
       await Promise.all([
         getStakeholderAggregates(),
-        prisma.survey.count({ where: { isCompleted: true } }),
-        prisma.surveyExport.count(),
-        prisma.enumerator.count(),
+        prisma.survey.count({
+          where: { isCompleted: true, ...(scope ? { stakeholder: scope.filter } : {}) },
+        }),
+        scope ? countExportedIn(scope.canonical) : prisma.surveyExport.count(),
+        scope
+          ? prisma.enumerator.count({
+              where: {
+                isAdmin: false,
+                isDistrictAdmin: false,
+                districts: { some: { district: { name: { in: scope.canonical } } } },
+              },
+            })
+          : prisma.enumerator.count(),
         getCompletedSurveysByDistrict(),
       ]);
+
+    // The district totals come from a shared cache, so a district admin's view is built by
+    // filtering a copy of the rows, never by changing the cached object.
+    const inScope = scope ? new Set(scope.canonical.map(n => n.toUpperCase())) : null;
+    const districtRows = inScope
+      ? agg.districts.filter(d => inScope.has((d.district || '').toUpperCase()))
+      : agg.districts;
+    const totalStakeholders = inScope
+      ? districtRows.reduce((n, d) => n + d.count, 0)
+      : agg.totalStakeholders;
 
     // The cached district totals are merged with the live completion counts here
     // rather than inside getStakeholderAggregates, so the completed figures stay
     // fresh even while the 5-minute stakeholder cache is still being served.
     //
-    // Ordering is by survey activity first, stakeholder volume second. Ranking
-    // purely by volume put ten districts with zero completions on the dashboard
-    // while hiding the only district with any, which is the opposite of what a
-    // progress table is for. Districts with no activity still appear once the
-    // active ones run out, so large untouched districts remain visible.
-    const topDistricts = agg.districts
+    // Ordering is by survey activity first, stakeholder volume second, so districts with
+    // real progress are not hidden behind large untouched ones.
+    const topDistricts = districtRows
       .map(d => {
         const completed = completedByDistrict.get((d.district || '').toUpperCase()) || 0;
         return {
@@ -259,7 +324,7 @@ router.get('/analytics', async (req: AuthenticatedRequest, res: Response, next: 
     res.json({
       success: true,
       data: {
-        totalStakeholders: agg.totalStakeholders,
+        totalStakeholders,
         completedSurveys,
         exportedSurveys,
         totalEnumerators,
@@ -292,6 +357,7 @@ router.get('/enumerators', async (req: AuthenticatedRequest, res: Response, next
         email: e.email,
         isActive: e.isActive,
         isAdmin: e.isAdmin,
+        isDistrictAdmin: e.isDistrictAdmin,
         districts: e.districts.map(d => ({ id: d.district.id, name: d.district.name })),
         surveysCount: e._count.surveys,
         createdAt: e.createdAt,
@@ -306,7 +372,7 @@ router.get('/enumerators', async (req: AuthenticatedRequest, res: Response, next
 router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     // M5 FIX: validate + enforce length limits via Zod
-    const { loginId, password, name, phone, email, isAdmin, districtIds } = createEnumeratorSchema.parse(req.body);
+    const { loginId, password, name, phone, email, isAdmin, isDistrictAdmin, districtIds } = createEnumeratorSchema.parse(req.body);
 
     // L1 FIX: enforce password strength before hashing
     validatePassword(password);
@@ -321,6 +387,7 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
         phone,
         email,
         isAdmin: isAdmin || false,
+        isDistrictAdmin: isDistrictAdmin || false,
       },
     });
 
@@ -341,8 +408,9 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
       // district usually means that district needs covering now.
       //
       // Skipped for admins: they see whole districts and hold no work queue, so
-      // counting them as a sharer would reserve a share nobody collects.
-      if (!isAdmin) {
+      // counting them as a sharer would reserve a share nobody collects. The same
+      // goes for a district admin.
+      if (!isAdmin && !isDistrictAdmin) {
         const districtRows = await prisma.district.findMany({
           where: { id: { in: districtIds } },
           select: { name: true },
@@ -375,6 +443,7 @@ router.post('/enumerators', async (req: AuthenticatedRequest, res: Response, nex
         details: {
           loginId,
           name,
+          role: isAdmin ? 'admin' : isDistrictAdmin ? 'district_admin' : 'enumerator',
           districtIds,
           rebalancedClaims: rebalance.released,
           redistributedClaims: rebalance.redistributed,
@@ -429,7 +498,7 @@ router.patch('/enumerators/:id', async (req: AuthenticatedRequest, res: Response
     // log in, so anything it still holds is work nobody can do — and the claw-back
     // alone would not free it, since that only trims holders above the share and a
     // deactivated holder may be sitting exactly on it.
-    if (isActive !== undefined && !enumerator.isAdmin) {
+    if (isActive !== undefined && !enumerator.isAdmin && !enumerator.isDistrictAdmin) {
       const districtRows = await prisma.enumeratorDistrict.findMany({
         where: { enumeratorId: enumerator.id },
         select: { district: { select: { name: true } } },
@@ -600,6 +669,7 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
           phone: enumerator.phone,
           email: enumerator.email,
           isAdmin: enumerator.isAdmin,
+          isDistrictAdmin: enumerator.isDistrictAdmin,
           wasActive: enumerator.isActive,
           unlockedStakeholders: unlockedStakeholders.length,
         },
@@ -628,7 +698,7 @@ router.delete('/enumerators/:id', async (req: AuthenticatedRequest, res: Respons
     // divisor in each of their districts has dropped, which entitles everyone
     // remaining to more. Re-level so the freed work is actually redistributed
     // instead of sitting unassigned until some device asks for it.
-    if (!enumerator.isAdmin && assignedDistrictNames.length > 0) {
+    if (!enumerator.isAdmin && !enumerator.isDistrictAdmin && assignedDistrictNames.length > 0) {
       const rebalance = await rebalanceDistricts(assignedDistrictNames);
       if (rebalance.redistributed > 0) {
         logger.info(
@@ -673,6 +743,16 @@ router.put('/enumerators/:id/districts', async (req: AuthenticatedRequest, res: 
 
     if (!districtIds || !Array.isArray(districtIds)) {
       throw new ValidationError('districtIds array is required');
+    }
+
+    // A district admin's whole reach is their districts. Emptying the list would leave an
+    // account that can sign in but sees nothing, so it is refused rather than allowed.
+    const target = await prisma.enumerator.findUnique({
+      where: { id: req.params.id as string },
+      select: { isDistrictAdmin: true },
+    });
+    if (target?.isDistrictAdmin && districtIds.length === 0) {
+      throw new ValidationError('A district admin must keep at least one district');
     }
 
     // Capture the districts this touches BEFORE and AFTER, because reassignment
@@ -875,7 +955,9 @@ router.post('/stakeholders/rebalance', async (req: AuthenticatedRequest, res: Re
 
 router.get('/districts', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
+    const scope = await scopeOf(req);
     const districts = await prisma.district.findMany({
+      where: scope ? { name: { in: scope.canonical } } : undefined,
       include: {
         _count: { select: { enumerators: true } },
       },
@@ -966,7 +1048,7 @@ const surveyService = new SurveyService();
 // Create a survey draft for an OPEN stakeholder directly from the admin panel
 router.post('/stakeholders/:id/take-survey', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const survey = await surveyService.adminCreateSurvey(req.params.id as string, req.enumerator!.id);
+    const survey = await surveyService.adminCreateSurvey(req.params.id as string, req.enumerator!.id, adminSurveyOptions(req));
     res.json({ success: true, data: survey });
   } catch (error) {
     next(error);
@@ -976,7 +1058,7 @@ router.post('/stakeholders/:id/take-survey', async (req: AuthenticatedRequest, r
 // Edit a survey's fields (verification). Does NOT complete or lock anything.
 router.patch('/surveys/:id', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const survey = await surveyService.adminEditSurvey(req.params.id as string, req.body || {});
+    const survey = await surveyService.adminEditSurvey(req.params.id as string, req.body || {}, adminSurveyOptions(req));
     res.json({ success: true, data: survey });
   } catch (error) {
     next(error);
@@ -987,7 +1069,7 @@ router.patch('/surveys/:id', async (req: AuthenticatedRequest, res: Response, ne
 // it appears in the export set and drops out of PARTIAL_COMPLETED.
 router.post('/surveys/:id/finalize', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const result = await surveyService.adminFinalizeSurvey(req.params.id as string);
+    const result = await surveyService.adminFinalizeSurvey(req.params.id as string, adminSurveyOptions(req));
     res.json({ success: true, data: result });
   } catch (error) {
     next(error);
@@ -1001,8 +1083,9 @@ router.post('/surveys/:id/finalize', async (req: AuthenticatedRequest, res: Resp
 // List completed surveys for export selection (includes export status from DB)
 router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
+    const scope = await scopeOf(req);
     const surveys = await prisma.survey.findMany({
-      where: { isCompleted: true, isDraft: false },
+      where: { isCompleted: true, isDraft: false, ...(scope ? { stakeholder: scope.filter } : {}) },
       select: {
         id: true,
         stakeholderId: true,
@@ -1062,12 +1145,20 @@ router.get('/export/surveys/list', async (req: AuthenticatedRequest, res: Respon
  */
 const EXPORT_STALE_HOURS = intEnv('EXPORT_STALE_HOURS', 24);
 
-router.get('/export/sync-status', async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+router.get('/export/sync-status', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const cutoff = new Date(Date.now() - EXPORT_STALE_HOURS * 60 * 60 * 1000);
+    const scope = await scopeOf(req);
 
     const holders = await prisma.enumerator.findMany({
-      where: { isActive: true, isAdmin: false, assignedStakeholders: { some: { status: 'OPEN' } } },
+      where: {
+        isActive: true,
+        isAdmin: false,
+        isDistrictAdmin: false,
+        assignedStakeholders: { some: { status: 'OPEN' } },
+        // A district admin only hears about enumerators working their districts.
+        ...(scope ? { districts: { some: { district: { name: { in: scope.canonical } } } } } : {}),
+      },
       select: {
         id: true,
         name: true,
@@ -1100,10 +1191,11 @@ router.get('/export/sync-status', async (_req: AuthenticatedRequest, res: Respon
  * Surveys waiting for an admin to look at: GPS far from the business, or field work
  * that arrived after the record was already completed by someone else.
  */
-router.get('/surveys/review', async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+router.get('/surveys/review', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
+    const scope = await scopeOf(req);
     const surveys = await prisma.survey.findMany({
-      where: { needsReview: true },
+      where: { needsReview: true, ...(scope ? { stakeholder: scope.filter } : {}) },
       select: {
         id: true,
         stakeholderId: true,
@@ -1128,8 +1220,15 @@ router.get('/surveys/review', async (_req: AuthenticatedRequest, res: Response, 
 router.post('/surveys/:id/review/resolve', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const surveyId = req.params.id as string;
-    const survey = await prisma.survey.findUnique({ where: { id: surveyId }, select: { id: true, stakeholderId: true } });
+    const survey = await prisma.survey.findUnique({
+      where: { id: surveyId },
+      select: { id: true, stakeholderId: true, stakeholder: { select: { district: true } } },
+    });
     if (!survey) throw new NotFoundError('Survey');
+
+    if (isScopedStaff(req.enumerator)) {
+      assertStakeholderAccess(survey.stakeholder, req.enumerator!.districts, false);
+    }
 
     await prisma.survey.update({ where: { id: surveyId }, data: { needsReview: false } });
     await prisma.auditLog.create({
@@ -1215,6 +1314,10 @@ async function handleSurveyExport(
   try {
     const where: any = { isCompleted: true, isDraft: false };
     if (ids && ids.length > 0) where.id = { in: ids };
+    // A district admin's export, whether of chosen ids or of everything, is confined to
+    // their districts. Requested ids outside them simply match nothing.
+    const scope = await scopeOf(req);
+    if (scope) where.stakeholder = scope.filter;
 
     const surveys = await prisma.survey.findMany({ where, orderBy: { createdAt: 'desc' } });
 

@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import api, { getProfile, startSessionKeepAlive, SESSION_EXPIRED_EVENT } from './api';
 import { User } from './types';
+import { UserProvider, useUser, isDistrictAdminUser } from './UserContext';
 import { PageLoader } from './components/Loading';
 import { connectAdminRealtime, disconnectAdminRealtime } from './realtime';
 
@@ -55,21 +56,30 @@ function RouteFallback() {
   return <PageLoader label="Loading page…" />;
 }
 
+// Pages a district admin must not reach, even by typing the address. The server refuses
+// the data anyway; this just sends them somewhere useful instead of an empty error page.
+function FullAdminOnly({ children }: { children: React.ReactElement }) {
+  const user = useUser();
+  return isDistrictAdminUser(user) ? <Navigate to="/" replace /> : children;
+}
+
 function AppRoutes({ user, onLogout }: { user: User; onLogout: () => void }) {
   return (
+    <UserProvider value={user}>
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Layout user={user} onLogout={onLogout} />}>
           <Route index element={<Suspense fallback={<RouteFallback />}><DashboardPage /></Suspense>} />
           <Route path="stakeholders" element={<Suspense fallback={<RouteFallback />}><StakeholdersPage /></Suspense>} />
-          <Route path="enumerators" element={<Suspense fallback={<RouteFallback />}><EnumeratorsPage /></Suspense>} />
+          <Route path="enumerators" element={<FullAdminOnly><Suspense fallback={<RouteFallback />}><EnumeratorsPage /></Suspense></FullAdminOnly>} />
           <Route path="districts" element={<Suspense fallback={<RouteFallback />}><DistrictsPage /></Suspense>} />
-          <Route path="audit" element={<Suspense fallback={<RouteFallback />}><AuditLogsPage /></Suspense>} />
+          <Route path="audit" element={<FullAdminOnly><Suspense fallback={<RouteFallback />}><AuditLogsPage /></Suspense></FullAdminOnly>} />
           <Route path="export" element={<Suspense fallback={<RouteFallback />}><ExportPage /></Suspense>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>
+    </UserProvider>
   );
 }
 
@@ -80,7 +90,7 @@ export default function App() {
   useEffect(() => {
     getProfile()
       .then((res) => {
-        if (res.data.data.isAdmin) {
+        if (res.data.data.isAdmin || res.data.data.isDistrictAdmin) {
           setUser(res.data.data);
         }
       })

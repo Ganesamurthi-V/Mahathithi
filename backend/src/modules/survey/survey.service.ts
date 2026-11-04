@@ -1,6 +1,6 @@
 import { prisma } from '../../config/database';
 import { NotFoundError, ConflictError, ValidationError } from '../../utils/errors';
-import { assertAccessOrOwnWork } from '../../utils/access-control';
+import { assertAccessOrOwnWork, assertStakeholderAccess } from '../../utils/access-control';
 import { flagForReview } from '../../utils/survey-review';
 import { gpsMismatchReason } from '../../utils/gps-check';
 import { logger } from '../../utils/logger';
@@ -86,6 +86,20 @@ interface CreateSurveyData {
   agreedToTerms?: boolean;
   declaredInfoCorrect?: boolean;
   acknowledgedDotLiability?: boolean;
+}
+
+/**
+ * Options for the admin-panel survey operations.
+ *
+ *   scope    present for a district admin: the stakeholder must be in one of these districts.
+ *            Absent for a full admin, who is not restricted.
+ *   actorId  who performed the action, recorded in the audit log. The audit row's own
+ *            enumeratorId is the survey's owner, so without this the person who did it
+ *            would not be recorded at all.
+ */
+export interface AdminSurveyOptions {
+  scope?: { districts: string[] };
+  actorId?: string;
 }
 
 export class SurveyService {
@@ -222,7 +236,8 @@ export class SurveyService {
     stakeholderId: string,
     enumeratorId: string,
     enumeratorDistricts: string[],
-    isAdmin: boolean
+    isAdmin: boolean,
+    isDistrictAdmin: boolean = false
   ) {
     // Load the stakeholder first so we can check district access
     const stakeholder = await prisma.stakeholder.findUnique({ where: { id: stakeholderId } });
@@ -233,7 +248,7 @@ export class SurveyService {
       where: {
         stakeholderId,
         // B2 FIX: only return the caller's own survey for this stakeholder, unless admin
-        ...(isAdmin ? {} : { enumeratorId }),
+        ...(isAdmin || isDistrictAdmin ? {} : { enumeratorId }),
       },
       include: {
         // NEW-1 FIX: don't surface tombstoned media in survey detail
@@ -451,12 +466,16 @@ export class SurveyService {
    * ADMIN: Take survey for an OPEN stakeholder directly from the admin panel.
    * Creates a new draft survey initialized with some basic data from the stakeholder.
    */
-  async adminCreateSurvey(stakeholderId: string, adminId: string) {
+  async adminCreateSurvey(stakeholderId: string, adminId: string, opts: AdminSurveyOptions = {}) {
     const stakeholder = await prisma.stakeholder.findUnique({
       where: { id: stakeholderId },
       include: { surveys: true }
     });
     if (!stakeholder) throw new NotFoundError('Stakeholder');
+
+    // Before the status and duplicate checks, so the 409 messages cannot be used to learn
+    // the state of a stakeholder in a district the caller has no access to.
+    if (opts.scope) assertStakeholderAccess(stakeholder, opts.scope.districts, false);
 
     if (stakeholder.status !== 'OPEN') {
       throw new ConflictError('Can only take a survey for OPEN stakeholders.');
@@ -489,7 +508,11 @@ export class SurveyService {
       }
     });
 
-    broadcastChange(['surveys', 'stakeholders'], { action: 'create', entityId: survey.id });
+    broadcastChange(['surveys', 'stakeholders'], {
+      action: 'create',
+      entityId: survey.id,
+      district: stakeholder.district ?? undefined,
+    });
 
     return survey;
   }
@@ -507,9 +530,14 @@ export class SurveyService {
    * Only known survey columns are written; any other keys are ignored so a stray
    * field from the client can never reach Prisma.
    */
-  async adminEditSurvey(surveyId: string, fields: Partial<CreateSurveyData>) {
-    const existing = await prisma.survey.findUnique({ where: { id: surveyId } });
+  async adminEditSurvey(surveyId: string, fields: Partial<CreateSurveyData>, opts: AdminSurveyOptions = {}) {
+    const existing = await prisma.survey.findUnique({
+      where: { id: surveyId },
+      include: { stakeholder: { select: { district: true } } },
+    });
     if (!existing) throw new NotFoundError('Survey');
+
+    if (opts.scope) assertStakeholderAccess(existing.stakeholder, opts.scope.districts, false);
 
     // Whitelist the editable columns. Recompute digipin if coordinates change.
     const data: any = {};
@@ -534,6 +562,13 @@ export class SurveyService {
       throw new ValidationError('Some fields are not in the correct format', formatErrors);
     }
 
+    // The access check above uses the stakeholder's district, but the export reads this
+    // free-text field. A district admin must not be able to relabel a survey into another
+    // district, so it is pinned to the stakeholder's.
+    if (opts.scope && data.district !== undefined) {
+      data.district = existing.stakeholder.district ?? existing.district;
+    }
+
     if (data.latitude != null && data.longitude != null) {
       try {
         data.digipin = getDigiPin(data.latitude, data.longitude);
@@ -548,12 +583,16 @@ export class SurveyService {
         entityType: 'survey',
         entityId: surveyId,
         enumeratorId: existing.enumeratorId,
-        details: { stakeholderId: existing.stakeholderId, editedFields: Object.keys(data) },
+        details: { stakeholderId: existing.stakeholderId, editedFields: Object.keys(data), actorId: opts.actorId },
       },
     });
 
     // Admins watching the detail view / list see the edit land live.
-    broadcastChange(['surveys', 'stakeholders'], { action: 'update', entityId: surveyId });
+    broadcastChange(['surveys', 'stakeholders'], {
+      action: 'update',
+      entityId: surveyId,
+      district: existing.stakeholder.district ?? undefined,
+    });
 
     return survey;
   }
@@ -574,12 +613,14 @@ export class SurveyService {
    * Only a CLOSED (completed) survey is ever exported, so finalizing here is what
    * moves a verified draft into the export set.
    */
-  async adminFinalizeSurvey(surveyId: string) {
+  async adminFinalizeSurvey(surveyId: string, opts: AdminSurveyOptions = {}) {
     const survey = await prisma.survey.findUnique({
       where: { id: surveyId },
       include: { stakeholder: true },
     });
     if (!survey) throw new NotFoundError('Survey');
+
+    if (opts.scope) assertStakeholderAccess(survey.stakeholder, opts.scope.districts, false);
 
     const hasIdentityNumber = Boolean(
       (survey.aadharNumber && survey.aadharNumber.trim() !== '') ||
@@ -587,7 +628,9 @@ export class SurveyService {
     );
 
     if (!hasIdentityNumber) {
-      throw new Error('Cannot finalize survey: Aadhar Number or Udyam Reg. No. is required.');
+      // A ValidationError, not a bare Error: that surfaced as a 500 "unexpected error" for what
+      // is a normal, fixable condition.
+      throw new ValidationError('Cannot finalize survey: Aadhar Number or Udyam Reg. No. is required.');
     }
 
     if (survey.isCompleted) {
@@ -617,7 +660,7 @@ export class SurveyService {
           entityType: 'survey',
           entityId: surveyId,
           enumeratorId: survey.enumeratorId,
-          details: { stakeholderId: survey.stakeholderId },
+          details: { stakeholderId: survey.stakeholderId, actorId: opts.actorId },
         },
       }),
     ]);

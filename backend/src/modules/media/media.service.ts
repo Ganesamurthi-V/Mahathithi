@@ -1,7 +1,7 @@
 import { prisma } from '../../config/database';
 import { uploadToS3, getPresignedUrl, deleteFromS3, generateS3Key } from '../../config/storage';
 import { NotFoundError, ForbiddenError } from '../../utils/errors';
-import { assertAccessOrOwnWork } from '../../utils/access-control';
+import { assertAccessOrOwnWork, assertStakeholderAccess } from '../../utils/access-control';
 import { flagForReview } from '../../utils/survey-review';
 import { logger } from '../../utils/logger';
 import { broadcastChange } from '../../realtime/events';
@@ -25,7 +25,7 @@ interface UploadMediaData {
 
 export class MediaService {
   // C3 FIX: accept districts and isAdmin so we can enforce ownership/district access
-  async upload(data: UploadMediaData, callerDistricts: string[], isAdmin: boolean) {
+  async upload(data: UploadMediaData, callerDistricts: string[], isAdmin: boolean, isDistrictAdmin: boolean = false) {
     const survey = await prisma.survey.findUnique({
       where: { id: data.surveyId },
     });
@@ -67,6 +67,15 @@ export class MediaService {
       } else {
         throw new NotFoundError('Survey');
       }
+    } else if (isDistrictAdmin) {
+      // A district admin adds photos to surveys in their districts whoever the owning
+      // enumerator is: that is the point of reviewing and completing a survey. The district
+      // is the boundary, not ownership.
+      const owner = await prisma.stakeholder.findUnique({
+        where: { id: survey.stakeholderId },
+        select: { district: true },
+      });
+      assertStakeholderAccess(owner ?? {}, callerDistricts, false);
     } else {
       // C3 FIX: verify the caller owns the existing survey before attaching media
       if (!isAdmin && survey.enumeratorId !== data.enumeratorId) {

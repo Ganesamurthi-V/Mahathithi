@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { User } from '../types';
+import { isDistrictAdminUser } from '../UserContext';
 import { LoadingButton } from './Loading';
 
 export default function Layout({ user, onLogout }: { user: User; onLogout: () => void | Promise<void> }) {
@@ -12,6 +13,7 @@ export default function Layout({ user, onLogout }: { user: User; onLogout: () =>
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const activePage = location.pathname.substring(1) || 'dashboard';
+  const districtAdmin = isDistrictAdminUser(user);
 
   // Close the drawer whenever the route changes, so tapping a nav item on mobile
   // navigates AND dismisses the sidebar in one action.
@@ -90,9 +92,11 @@ export default function Layout({ user, onLogout }: { user: User; onLogout: () =>
             <div className={`nav-item ${activePage === 'stakeholders' ? 'active' : ''}`} onClick={() => go('/stakeholders')}>
               <span className="icon">🏢</span> Stakeholders
             </div>
-            <div className={`nav-item ${activePage === 'enumerators' ? 'active' : ''}`} onClick={() => go('/enumerators')}>
-              <span className="icon">👥</span> Enumerators
-            </div>
+            {!districtAdmin && (
+              <div className={`nav-item ${activePage === 'enumerators' ? 'active' : ''}`} onClick={() => go('/enumerators')}>
+                <span className="icon">👥</span> Enumerators
+              </div>
+            )}
             <div className={`nav-item ${activePage === 'districts' ? 'active' : ''}`} onClick={() => go('/districts')}>
               <span className="icon">📍</span> Districts
             </div>
@@ -100,9 +104,11 @@ export default function Layout({ user, onLogout }: { user: User; onLogout: () =>
 
           <div className="nav-section">
             <div className="nav-section-title">Monitoring</div>
-            <div className={`nav-item ${activePage === 'audit' ? 'active' : ''}`} onClick={() => go('/audit')}>
-              <span className="icon">📋</span> Audit Logs
-            </div>
+            {!districtAdmin && (
+              <div className={`nav-item ${activePage === 'audit' ? 'active' : ''}`} onClick={() => go('/audit')}>
+                <span className="icon">📋</span> Audit Logs
+              </div>
+            )}
             <div className={`nav-item ${activePage === 'export' ? 'active' : ''}`} onClick={() => go('/export')}>
               <span className="icon">📥</span> Export SQL
             </div>
@@ -122,6 +128,11 @@ export default function Layout({ user, onLogout }: { user: User; onLogout: () =>
             <div>
               <div style={{ fontSize: '13px', fontWeight: '600' }}>{user.name}</div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{user.loginId}</div>
+              {districtAdmin && (
+                <div style={{ fontSize: '11px', color: 'var(--primary)', fontWeight: 600 }}>
+                  District Admin{user.districts && user.districts.length > 0 ? ' · ' + user.districts.map(d => d.name).join(', ') : ''}
+                </div>
+              )}
             </div>
           </div>
           <LoadingButton

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { StakeholderController } from './stakeholder.controller';
 import { authMiddleware, adminOnly } from '../../middleware/auth';
 import { districtGuard } from '../../middleware/district-guard';
+import { denyDistrictAdmin } from '../../middleware/district-admin-gate';
 
 const router = Router();
 const controller = new StakeholderController();
@@ -10,8 +11,8 @@ const controller = new StakeholderController();
 router.use(authMiddleware);
 
 router.get('/search', controller.search);
-router.get('/assigned/paged', controller.getAssignedPaged); // paginated sync — safe for 1 L+ rows
-router.get('/assigned', controller.getAssigned);            // legacy — kept for backward compat
+router.get('/assigned/paged', denyDistrictAdmin, controller.getAssignedPaged); // paginated sync — safe for 1 L+ rows
+router.get('/assigned', denyDistrictAdmin, controller.getAssigned);            // legacy — kept for backward compat
 
 // Create a stakeholder by hand (mobile + admin panel). Any authenticated user may
 // create, but the service confines a non-admin to their assigned districts, so
@@ -21,10 +22,10 @@ router.post('/', controller.create);
 
 // Top up this enumerator's work queue from the unassigned pool in their districts.
 // Declared before '/:id' so 'claim' is not swallowed as an id parameter.
-router.post('/claim', controller.claim);
+router.post('/claim', denyDistrictAdmin, controller.claim);
 
 router.get('/:id', districtGuard, controller.getById);
-router.patch('/:id/lock', districtGuard, controller.lock);
+router.patch('/:id/lock', denyDistrictAdmin, districtGuard, controller.lock);
 // N3 FIX: status changes (OPEN/CLOSED) lock or reopen a record and bypass every
 // survey-completion requirement, so this is an admin-only operation. Previously
 // any in-district enumerator could force-close or reopen a stakeholder.

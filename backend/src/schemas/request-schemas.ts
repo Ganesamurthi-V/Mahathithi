@@ -448,9 +448,20 @@ export const createEnumeratorSchema = z.object({
   phone: optText(20),
   email: optText(200),
   isAdmin: z.boolean().optional(),
+  // A restricted admin-panel user. Their whole reach is their districts, so at least one is
+  // required, and they are never also a full admin.
+  isDistrictAdmin: z.boolean().optional(),
   districtIds: z.array(uuid).max(50).optional(),
-}).strict();
+}).strict().superRefine((v, ctx) => {
+  if (v.isAdmin && v.isDistrictAdmin) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['isDistrictAdmin'], message: 'An account cannot be both a full admin and a district admin' });
+  }
+  if (v.isDistrictAdmin && (!v.districtIds || v.districtIds.length === 0)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['districtIds'], message: 'Select at least one district for a district admin' });
+  }
+});
 
+// Role flags are deliberately absent: an account's role cannot be changed after creation.
 export const updateEnumeratorSchema = z.object({
   name: text(200).optional(),
   phone: optText(20),

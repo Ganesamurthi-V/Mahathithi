@@ -23,6 +23,8 @@ interface SearchParams {
   limit: number;
   assignedDistricts: string[];
   isAdmin: boolean;
+  /** Admin-panel user limited to their districts: scoped like an enumerator, but sees completed records. */
+  isDistrictAdmin?: boolean;
 }
 
 export class StakeholderService {
@@ -34,7 +36,7 @@ export class StakeholderService {
   async search(params: SearchParams) {
     const {
       name, org, state, district, pinCode, category,
-      nicCode, gst, status, taluka, city, digipin, page, limit, assignedDistricts, isAdmin
+      nicCode, gst, status, taluka, city, digipin, page, limit, assignedDistricts, isAdmin, isDistrictAdmin
     } = params;
 
     const where: Prisma.StakeholderWhereInput = {};
@@ -189,7 +191,9 @@ export class StakeholderService {
       conditions.push({ digipin: { equals: digipin, mode: 'insensitive' } });
     }
 
-    if (!isAdmin) {
+    // A field enumerator never sees completed records. A district admin does (they review
+    // and edit completed surveys); their district scope above still applies.
+    if (!isAdmin && !isDistrictAdmin) {
       conditions.push({ status: { not: 'CLOSED' } });
     }
 
@@ -362,13 +366,22 @@ export class StakeholderService {
    */
   // X2 FIX: thread the caller's enumeratorId so non-admins only see their own
   // surveys/phone validations for this stakeholder, not other enumerators'.
-  async getById(id: string, enumeratorId: string, enumeratorDistricts: string[], isAdmin: boolean) {
+  async getById(
+    id: string,
+    enumeratorId: string,
+    enumeratorDistricts: string[],
+    isAdmin: boolean,
+    isDistrictAdmin: boolean = false,
+  ) {
+    // Staff see every survey and validation on the record; a district admin is still held
+    // to their districts by the check below.
+    const seesAll = isAdmin || isDistrictAdmin;
     const stakeholder = await prisma.stakeholder.findUnique({
       where: { id },
       include: {
         surveys: {
           // X2 FIX: admins see all surveys; enumerators see only their own.
-          where: isAdmin ? undefined : { enumeratorId },
+          where: seesAll ? undefined : { enumeratorId },
           include: {
             // B5 FIX: exclude soft-deleted (tombstoned) media so deleted
             // S3 keys / presigned URLs aren't leaked in the detail view.
@@ -376,7 +389,7 @@ export class StakeholderService {
           },
         },
         // X2 FIX: scope phone validations to the caller as well.
-        phoneValidations: isAdmin ? true : { where: { enumeratorId } },
+        phoneValidations: seesAll ? true : { where: { enumeratorId } },
         lockedBy: {
           select: { id: true, name: true },
         },
@@ -389,7 +402,7 @@ export class StakeholderService {
 
     // District and status restriction check
     if (!isAdmin) {
-      if (stakeholder.status === 'CLOSED') {
+      if (!isDistrictAdmin && stakeholder.status === 'CLOSED') {
         throw new NotFoundError('Stakeholder');
       }
       if (stakeholder.district) {

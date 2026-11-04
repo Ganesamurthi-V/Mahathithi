@@ -9,6 +9,7 @@ import cookie from 'cookie';
 interface AuthenticatedSocket extends Socket {
   enumeratorId?: string;
   isAdmin?: boolean;
+  isDistrictAdmin?: boolean;
   districts?: string[];
 }
 
@@ -53,6 +54,7 @@ export function initRealtime(httpServer: HTTPServer): SocketIOServer {
 
       socket.enumeratorId = enumerator.id;
       socket.isAdmin = enumerator.isAdmin;
+      socket.isDistrictAdmin = Boolean(enumerator.isDistrictAdmin) && !enumerator.isAdmin;
       socket.districts = enumerator.districts.map((d) => d.district.name.toUpperCase());
 
       next();
@@ -86,8 +88,9 @@ export function initRealtime(httpServer: HTTPServer): SocketIOServer {
 
     logger.info(`[realtime] connected: enumerator=${socket.enumeratorId} admin=${socket.isAdmin} districts=${(socket.districts || []).join(',')}`);
 
-    // Presence: tell every admin someone came online.
-    if (!socket.isAdmin) {
+    // Presence: tell every admin a FIELD ENUMERATOR came online. A district admin is staff,
+    // not a field worker, so they are not announced as one.
+    if (!socket.isAdmin && !socket.isDistrictAdmin) {
       io!.to('admin:global').emit('enumerator:presence', {
         enumeratorId: socket.enumeratorId,
         status: 'online',
@@ -97,7 +100,7 @@ export function initRealtime(httpServer: HTTPServer): SocketIOServer {
 
     socket.on('disconnect', () => {
       logger.info(`[realtime] disconnected: enumerator=${socket.enumeratorId}`);
-      if (!socket.isAdmin) {
+      if (!socket.isAdmin && !socket.isDistrictAdmin) {
         io!.to('admin:global').emit('enumerator:presence', {
           enumeratorId: socket.enumeratorId,
           status: 'offline',

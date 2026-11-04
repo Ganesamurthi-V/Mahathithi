@@ -3,6 +3,9 @@ export interface User {
   loginId: string;
   name: string;
   isAdmin: boolean;
+  /** Admin-panel user limited to their districts; never true together with isAdmin. */
+  isDistrictAdmin?: boolean;
+  districts?: { id: string; name: string; state?: string }[];
 }
 
 export interface Enumerator {
@@ -13,6 +16,7 @@ export interface Enumerator {
   email: string;
   isActive: boolean;
   isAdmin: boolean;
+  isDistrictAdmin?: boolean;
   districts: { id: string; name: string }[];
   surveysCount: number;
 }

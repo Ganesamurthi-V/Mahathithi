@@ -1,0 +1,152 @@
+# Pulls the latest changes from another GitHub repository into this repository's main
+# branch, when you press "Run workflow" in the Actions tab. Nothing runs automatically.
+#
+# SETUP (in the repository that should RECEIVE the updates)
+#   1. Copy this file to  .github/workflows/sync-from-upstream.yml  and push it to the
+#      default branch. The "Run workflow" button only appears once it is there.
+#   2. Settings > Actions > General > Workflow permissions: choose
+#      "Read and write permissions" (the job also asks for it below).
+#   3. Actions tab > "Sync from upstream repo" > Run workflow.
+#
+# OPTIONAL SECRETS (Settings > Secrets and variables > Actions)
+#   SOURCE_REPO_TOKEN  A token that can READ the source repo. Only needed if the source
+#                      is private. A fine-grained token with "Contents: read" is enough.
+#   SYNC_PUSH_TOKEN    A token that can PUSH to this repo. Needed when the incoming
+#                      changes touch files under .github/workflows/, or when main is
+#                      protected. GitHub refuses to let the built-in token change
+#                      workflow files. Use a classic token with "repo" and "workflow"
+#                      scopes, or a fine-grained token with Contents and Workflows
+#                      read/write.
+#
+# MODES
+#   merge      Keeps everything already in this repo and brings in the source's new
+#              commits. If the same lines were edited on both sides, the run stops
+#              without changing anything and lists the conflicting files.
+#   overwrite  Makes this repo's branch an exact copy of the source's branch. Anything
+#              that exists only here is DISCARDED (force push). Use it when this repo
+#              is just a mirror, or the histories are unrelated.
+
+name: Sync from upstream repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: Repository to pull updates from (https URL)
+        required: true
+        default: https://github.com/Ganesamurthi-V/Mahathithi.git
+      source_branch:
+        description: Branch to pull from
+        required: true
+        default: main
+      target_branch:
+        description: Branch in THIS repo to update
+        required: true
+        default: main
+      mode:
+        description: merge keeps your changes; overwrite makes this branch identical to the source (discards local-only work)
+        type: choice
+        required: true
+        default: merge
+        options:
+          - merge
+          - overwrite
+
+permissions:
+  contents: write
+
+# Two runs at once would push over each other.
+concurrency:
+  group: sync-from-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # Inputs reach the script as environment variables, never pasted into the shell
+      # text, so a crafted branch name or URL cannot inject commands.
+      - name: Sync
+        env:
+          SOURCE_REPO: ${{ inputs.source_repo }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          MODE: ${{ inputs.mode }}
+          SOURCE_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          case "$SOURCE_REPO" in
+            https://github.com/*) ;;
+            *) echo "::error::source_repo must be an https://github.com/... URL"; exit 1 ;;
+          esac
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Read access to a private source repo, without writing the token to .git/config.
+          AUTH=()
+          if [ -n "${SOURCE_TOKEN:-}" ]; then
+            echo "::add-mask::$SOURCE_TOKEN"
+            B64=$(printf 'x-access-token:%s' "$SOURCE_TOKEN" | base64 | tr -d '\n')
+            echo "::add-mask::$B64"
+            AUTH=(-c "http.https://github.com/.extraheader=AUTHORIZATION: basic $B64")
+          fi
+
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream "$SOURCE_REPO"
+          git "${AUTH[@]}" fetch --no-tags upstream "+refs/heads/$SOURCE_BRANCH:refs/remotes/upstream/$SOURCE_BRANCH"
+
+          UP="refs/remotes/upstream/$SOURCE_BRANCH"
+          BEFORE=$(git rev-parse HEAD)
+          PUSH=(git push origin "HEAD:refs/heads/$TARGET_BRANCH")
+
+          summary() { echo "$1" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"; }
+
+          if [ "$MODE" = "overwrite" ]; then
+            if [ "$BEFORE" = "$(git rev-parse "$UP")" ]; then
+              echo "Already identical to $SOURCE_BRANCH. Nothing to do."
+              summary "### Already identical, nothing to do"
+              exit 0
+            fi
+            git reset --hard "$UP"
+            PUSH=(git push --force-with-lease origin "HEAD:refs/heads/$TARGET_BRANCH")
+          else
+            if git merge-base --is-ancestor "$UP" HEAD; then
+              echo "Already up to date with $SOURCE_BRANCH. Nothing to do."
+              summary "### Already up to date, nothing to do"
+              exit 0
+            fi
+            if ! git merge-base HEAD "$UP" > /dev/null 2>&1; then
+              echo "::error::This repo and the source share no common history, so they cannot be merged. Run again with mode = overwrite to make this branch an exact copy of the source."
+              exit 1
+            fi
+            if ! git merge --no-edit -m "Merge updates from $SOURCE_REPO ($SOURCE_BRANCH)" "$UP"; then
+              CONFLICTS=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+              git merge --abort
+              echo "::error::Merge conflict in: $CONFLICTS. Nothing was changed. Resolve it locally (git pull from the source, fix, push), or run with mode = overwrite."
+              summary "### Merge conflict, nothing was changed"
+              summary "Conflicting files: $CONFLICTS"
+              exit 1
+            fi
+          fi
+
+          "${PUSH[@]}"
+
+          COUNT=$(git rev-list --count "$BEFORE..HEAD" 2>/dev/null || echo "?")
+          summary "### Synced from \`$SOURCE_REPO\` (\`$SOURCE_BRANCH\`) into \`$TARGET_BRANCH\` ($MODE)"
+          summary ""
+          summary "Commits brought in: **$COUNT**"
+          summary ""
+          summary '```'
+          git diff --stat "$BEFORE" HEAD | tail -n 25 >> "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+          summary '```'
+          echo "Done. $COUNT commit(s) brought in."

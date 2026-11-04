@@ -31,6 +31,7 @@ export class StakeholderController {
         limit: Math.min(parseInt(limit as string, 10) || 20, 100),
         assignedDistricts: req.enumerator!.districts,
         isAdmin: req.enumerator!.isAdmin,
+        isDistrictAdmin: req.enumerator!.isDistrictAdmin,
       });
 
       res.json({ success: true, data: result });
@@ -46,7 +47,8 @@ export class StakeholderController {
         (req.params.id as string),
         req.enumerator!.id,
         req.enumerator!.districts,
-        req.enumerator!.isAdmin
+        req.enumerator!.isAdmin,
+        req.enumerator!.isDistrictAdmin
       );
 
       res.json({ success: true, data: stakeholder });

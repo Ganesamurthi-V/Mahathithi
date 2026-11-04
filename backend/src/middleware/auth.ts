@@ -2,7 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { prisma } from '../config/database';
-import { UnauthorizedError } from '../utils/errors';
+import { UnauthorizedError, ForbiddenError } from '../utils/errors';
+import { isStaff } from '../utils/roles';
 import { logger } from '../utils/logger';
 
 export interface AuthenticatedRequest extends Request {
@@ -11,6 +12,8 @@ export interface AuthenticatedRequest extends Request {
     loginId: string;
     name: string;
     isAdmin: boolean;
+    /** Admin-panel user limited to their districts; never true together with isAdmin. */
+    isDistrictAdmin: boolean;
     districts: string[];
   };
 }
@@ -49,6 +52,7 @@ async function loadEnumerator(id: string): Promise<AuthedEnumerator | null> {
     loginId: enumerator.loginId,
     name: enumerator.name,
     isAdmin: enumerator.isAdmin,
+    isDistrictAdmin: Boolean(enumerator.isDistrictAdmin) && !enumerator.isAdmin,
     districts: enumerator.districts.map(d => d.district.name),
   };
   if (authCache.size >= AUTH_CACHE_MAX_ENTRIES) authCache.clear();
@@ -103,13 +107,28 @@ export async function authMiddleware(
   }
 }
 
+// 403, not 401: the admin panel reads a 401 as "session expired" and signs the user out,
+// which is wrong for a signed-in user who simply may not do this.
 export function adminOnly(
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ): void {
   if (!req.enumerator?.isAdmin) {
-    next(new UnauthorizedError('Admin access required'));
+    next(new ForbiddenError('Admin access required'));
+    return;
+  }
+  next();
+}
+
+/** Any admin-panel user: a full admin or a district admin. */
+export function staffOnly(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void {
+  if (!isStaff(req.enumerator)) {
+    next(new ForbiddenError('Admin access required'));
     return;
   }
   next();

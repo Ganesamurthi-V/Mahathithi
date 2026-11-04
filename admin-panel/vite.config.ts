@@ -4,10 +4,13 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: {
-    // 5173 (Vite's default) falls inside a Windows-reserved TCP exclusion range
-    // on this machine (Hyper-V/WSL), so binding it fails with EACCES. 4173 is
-    // outside every reserved range.
-    port: 4173,
+    // Windows (Hyper-V/WSL) reserves shifting blocks of TCP ports and binding one
+    // fails with EACCES. 5173 and then 4173 both ended up inside a reserved block.
+    // If this one is ever hit too, run `netsh interface ipv4 show excludedportrange
+    // protocol=tcp` and pick a port outside every range, or reserve this one for good
+    // from an Administrator shell:
+    //   netsh int ipv4 add excludedportrange protocol=tcp startport=5175 numberofports=1
+    port: 5175,
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

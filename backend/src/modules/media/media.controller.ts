@@ -34,7 +34,8 @@ export class MediaController {
           localId,
         },
         req.enumerator!.districts,
-        req.enumerator!.isAdmin
+        req.enumerator!.isAdmin,
+        req.enumerator!.isDistrictAdmin
       );
 
       res.json({ success: true, data: media });

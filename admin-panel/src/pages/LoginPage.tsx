@@ -22,7 +22,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: User) => void }
       const res = await apiLogin(loginId, password);
       const { enumerator } = res.data.data;
 
-      if (!enumerator.isAdmin) {
+      if (!enumerator.isAdmin && !enumerator.isDistrictAdmin) {
         setError('Access denied. Admin privileges required.');
         setSubmitting(false);
         return;

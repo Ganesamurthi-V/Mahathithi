@@ -164,6 +164,7 @@ export class AuthService {
         phone: enumerator.phone,
         email: enumerator.email,
         isAdmin: enumerator.isAdmin,
+        isDistrictAdmin: enumerator.isDistrictAdmin,
         districts: enumerator.districts.map(d => ({
           id: d.district.id,
           name: d.district.name,
@@ -299,6 +300,7 @@ export class AuthService {
       phone: enumerator.phone,
       email: enumerator.email,
       isAdmin: enumerator.isAdmin,
+      isDistrictAdmin: enumerator.isDistrictAdmin,
       districts: enumerator.districts.map(d => ({
         id: d.district.id,
         name: d.district.name,

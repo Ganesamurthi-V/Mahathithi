@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage, updateSurvey, finalizeSurvey, uploadMedia, takeSurvey } from '../api';
 import type { District } from '../types';
 import { getDigiPin } from '../utils/digipin';
+import { useUser, isDistrictAdminUser } from '../UserContext';
 import {
   LoadingButton,
   TableSkeletonWithHeader,
@@ -328,6 +329,8 @@ export default function StakeholdersPage() {
 
 export function VerificationGalleryModal({ stakeholder, onClose }: any) {
   const queryClient = useQueryClient();
+  // A district admin may review and edit but never delete (the server refuses it too).
+  const canDelete = !isDistrictAdminUser(useUser());
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState<any>({
@@ -601,15 +604,17 @@ export function VerificationGalleryModal({ stakeholder, onClose }: any) {
             </p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <LoadingButton
-              variant="danger"
-              size="sm"
-              loading={deleteMut.isPending}
-              loadingText="Deleting…"
-              onClick={confirmDelete}
-            >
-              🗑 Delete
-            </LoadingButton>
+            {canDelete && (
+              <LoadingButton
+                variant="danger"
+                size="sm"
+                loading={deleteMut.isPending}
+                loadingText="Deleting…"
+                onClick={confirmDelete}
+              >
+                🗑 Delete
+              </LoadingButton>
+            )}
             <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ fontSize: '18px', padding: '8px 12px' }}>✕</button>
           </div>
         </div>

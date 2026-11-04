@@ -13,6 +13,8 @@ import {
 export default function EnumeratorsPage() {
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
+  // The same form, creating a district-scoped admin-panel user instead of a field enumerator.
+  const [showCreateAdminModal, setShowCreateAdminModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState<Enumerator | null>(null);
   const [toast, setToast] = useState<{ type: string; message: string } | null>(null);
 
@@ -78,10 +80,11 @@ export default function EnumeratorsPage() {
     mutationFn: createEnumerator,
     onMutate: (vars: any) => {
       setShowCreateModal(false);
+      setShowCreateAdminModal(false);
       showToast('info', `Creating "${vars.name}"…`);
     },
     onSuccess: (_res, vars: any) => {
-      showToast('success', `Enumerator "${vars.name}" created successfully`);
+      showToast('success', `${vars.isDistrictAdmin ? 'Admin user' : 'Enumerator'} "${vars.name}" created successfully`);
     },
     onError: (err: any, vars: any) => {
       // Reopening would lose the typed values, so report clearly instead and let
@@ -197,7 +200,8 @@ export default function EnumeratorsPage() {
           <p>Manage field enumerators and their district assignments</p>
         </div>
         <div style={{ marginBottom: '20px' }}>
-          <button className="btn btn-primary" disabled>+ Create Enumerator</button>
+          <button className="btn btn-primary" disabled>+ Create Enumerator</button>{' '}
+          <button className="btn btn-secondary" disabled>+ Create Admin User</button>
         </div>
         <TableSkeletonWithHeader
           headers={TABLE_HEADERS}
@@ -218,6 +222,13 @@ export default function EnumeratorsPage() {
       <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
         <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
           + Create Enumerator
+        </button>
+        <button
+          className="btn btn-secondary"
+          onClick={() => setShowCreateAdminModal(true)}
+          title="Create a panel user who can view and edit only the districts you choose, and cannot delete anything"
+        >
+          + Create Admin User
         </button>
         {/* A mutation invalidates ['enumerators'], so the list refetches after
             every create/activate/delete. Surfacing it explains why rows change. */}
@@ -258,6 +269,13 @@ export default function EnumeratorsPage() {
                 <td>
                   {e.isAdmin
                     ? <span className="badge badge-admin">Admin</span>
+                    : e.isDistrictAdmin
+                      ? (
+                        <>
+                          <span className="badge badge-admin">District Admin</span>
+                          {!e.isActive && <span className="badge badge-inactive" style={{ marginLeft: '6px' }}>Inactive</span>}
+                        </>
+                      )
                     : e.isActive
                       ? <span className="badge badge-active">Active</span>
                       : <span className="badge badge-inactive">Inactive</span>
@@ -311,6 +329,16 @@ export default function EnumeratorsPage() {
           onSubmit={(data: any) => createMut.mutate(data)}
         />
       )}
+      {showCreateAdminModal && (
+        <CreateEnumeratorModal
+          kind="district_admin"
+          districts={districts}
+          districtsLoading={districtsLoading}
+          submitting={createMut.isPending}
+          onClose={() => setShowCreateAdminModal(false)}
+          onSubmit={(data: any) => createMut.mutate({ ...data, isDistrictAdmin: true })}
+        />
+      )}
       {showAssignModal && (
         <AssignDistrictsModal
           enumerator={showAssignModal}
@@ -353,7 +381,8 @@ const PASSWORD_RULES: { label: string; test: (v: string) => boolean }[] = [
   { label: 'One special character (!@#$…)', test: v => /[^A-Za-z0-9]/.test(v) },
 ];
 
-function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClose, onSubmit }: any) {
+function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClose, onSubmit, kind = 'enumerator' }: any) {
+  const isAdminUser = kind === 'district_admin';
   const [form, setForm] = useState({ loginId: '', password: '', name: '', phone: '', email: '', districtIds: [] as string[] });
   // Rules stay hidden until the field is touched, so an untouched form is not a
   // wall of red crosses before the operator has typed anything.
@@ -377,7 +406,14 @@ function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClos
     // modal mid-request and leave the operator unsure whether it succeeded.
     <div className="modal-overlay" onClick={submitting ? undefined : onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
-        <h3>Create New Enumerator</h3>
+        <h3>{isAdminUser ? 'Create New Admin User' : 'Create New Enumerator'}</h3>
+        {isAdminUser && (
+          <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: '0 0 16px' }}>
+            This person signs in to this admin panel. They can view, edit and add surveys and stakeholders
+            only in the districts you select below, and can export those districts. They cannot delete
+            enumerators or stakeholders, and cannot see other districts, the Enumerators page or the Audit Logs.
+          </p>
+        )}
         <form
           onSubmit={e => {
             e.preventDefault();
@@ -388,6 +424,7 @@ function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClos
               setPasswordTouched(true);
               return;
             }
+            if (isAdminUser && form.districtIds.length === 0) return;
             onSubmit(form);
           }}
         >
@@ -492,7 +529,12 @@ function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClos
             <input type="email" className="form-input" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
           </div>
           <div className="form-group">
-            <label>Assign Districts</label>
+            <label>{isAdminUser ? 'Assign Districts *' : 'Assign Districts'}</label>
+            {isAdminUser && form.districtIds.length === 0 && (
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                Select at least one district. This is the only area they can see.
+              </div>
+            )}
             <div className="checkbox-list">
               {/* The districts query is cached for 10 minutes, so this is usually
                   instant — but on a cold open the list would otherwise render as
@@ -521,10 +563,16 @@ function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClos
               variant="primary"
               loading={submitting}
               loadingText="Creating…"
-              disabled={!passwordValid}
-              title={passwordValid ? undefined : 'Password does not meet all requirements yet'}
+              disabled={!passwordValid || (isAdminUser && form.districtIds.length === 0)}
+              title={
+                !passwordValid
+                  ? 'Password does not meet all requirements yet'
+                  : isAdminUser && form.districtIds.length === 0
+                    ? 'Select at least one district'
+                    : undefined
+              }
             >
-              Create Enumerator
+              {isAdminUser ? 'Create Admin User' : 'Create Enumerator'}
             </LoadingButton>
           </div>
         </form>
@@ -566,6 +614,8 @@ function AssignDistrictsModal({ enumerator, districts, districtsLoading, submitt
             variant="primary"
             loading={submitting}
             loadingText="Saving…"
+            disabled={enumerator.isDistrictAdmin && selected.length === 0}
+            title={enumerator.isDistrictAdmin && selected.length === 0 ? 'A district admin needs at least one district' : undefined}
             onClick={() => onSubmit(enumerator.id, selected)}
           >
             Save Assignments
