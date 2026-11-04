@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { overlayClose } from '../components/overlayClose';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getEnumerators, getDistricts, createEnumerator, updateEnumerator, deleteEnumerator, assignDistricts, getErrorMessage } from '../api';
 import { Enumerator, District } from '../types';
@@ -404,7 +405,7 @@ function CreateEnumeratorModal({ districts, districtsLoading, submitting, onClos
   return (
     // While submitting, ignore the overlay click that would otherwise close the
     // modal mid-request and leave the operator unsure whether it succeeded.
-    <div className="modal-overlay" onClick={submitting ? undefined : onClose}>
+    <div className="modal-overlay" {...overlayClose(submitting ? undefined : onClose)}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <h3>{isAdminUser ? 'Create New Admin User' : 'Create New Enumerator'}</h3>
         {isAdminUser && (
@@ -586,7 +587,7 @@ function AssignDistrictsModal({ enumerator, districts, districtsLoading, submitt
   const toggleDistrict = (id: string) => setSelected(prev => prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id]);
 
   return (
-    <div className="modal-overlay" onClick={submitting ? undefined : onClose}>
+    <div className="modal-overlay" {...overlayClose(submitting ? undefined : onClose)}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <h3>Assign Districts to {enumerator.name}</h3>
         <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '20px' }}>Select the districts this enumerator can access.</p>

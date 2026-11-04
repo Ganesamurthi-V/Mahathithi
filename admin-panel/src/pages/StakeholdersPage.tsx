@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
+import { overlayClose } from '../components/overlayClose';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getStakeholderById, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage, updateSurvey, finalizeSurvey, uploadMedia, takeSurvey } from '../api';
 import type { District, NameMatch } from '../types';
@@ -178,18 +179,6 @@ export default function StakeholdersPage() {
   // PERF: stable handler reference so memoized rows don't re-render on every keystroke.
   const handleSelect = useCallback((s: any) => setSelectedStakeholder(s), []);
 
-  // From the Add Stakeholder form: the business being typed already exists, so open that record
-  // instead. The suggestion carries only a few columns, so the full record is fetched first.
-  const openExistingById = async (id: string) => {
-    try {
-      const res = await getStakeholderById(id);
-      setShowAddForm(false);
-      setSelectedStakeholder(res.data.data);
-    } catch (err) {
-      alert(getErrorMessage(err, 'Could not open that record'));
-    }
-  };
-
   // A refresh of data already on screen, as distinct from the very first load.
   const isRefreshing = isFetching && !isLoading;
 
@@ -210,7 +199,7 @@ export default function StakeholdersPage() {
         </button>
       </div>
 
-      {showAddForm && <AddStakeholderModal onClose={() => setShowAddForm(false)} onOpenExisting={openExistingById} />}
+      {showAddForm && <AddStakeholderModal onClose={() => setShowAddForm(false)} />}
 
       <div className="card" style={{ marginBottom: '24px' }}>
         <form onSubmit={handleSearch} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -607,7 +596,7 @@ export function VerificationGalleryModal({ stakeholder, onClose }: any) {
   console.log('DEBUG_TAKE_SURVEY', { surveyIsNull: !survey, status: stakeholder.status, effectiveStatus });
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" {...overlayClose(onClose)}>
       <div className="gallery-modal" onClick={(e) => e.stopPropagation()}>
         <div className="gallery-header">
           <div>
@@ -1176,7 +1165,7 @@ const ADD_FIELDS: AddField[] = [
  * primaryKeyId, createdAt, updatedAt, status, lockedById, lockedAt, dataSource)
  * are never accepted from a client.
  */
-function AddStakeholderModal({ onClose, onOpenExisting }: { onClose: () => void; onOpenExisting: (id: string) => void }) {
+function AddStakeholderModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   // The same name already in the chosen district, found live while typing (see NameSuggestInput).
   const [exactMatch, setExactMatch] = useState<NameMatch | null>(null);
@@ -1266,7 +1255,7 @@ function AddStakeholderModal({ onClose, onOpenExisting }: { onClose: () => void;
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" {...overlayClose(onClose)}>
       <div className="gallery-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
         <div className="gallery-header">
           <div>
@@ -1305,7 +1294,6 @@ function AddStakeholderModal({ onClose, onOpenExisting }: { onClose: () => void;
                       value={form[f.key] ?? ''}
                       onChange={(v) => set(f.key, v)}
                       district={district}
-                      onOpenExisting={onOpenExisting}
                       onExactMatch={setExactMatch}
                       disabled={createMut.isPending}
                       placeholder={f.placeholder}
@@ -1313,20 +1301,8 @@ function AddStakeholderModal({ onClose, onOpenExisting }: { onClose: () => void;
                       autoFocus
                     />
                     {duplicateError && (
-                      <div
-                        role="alert"
-                        style={{
-                          marginTop: '6px', padding: '8px 10px', fontSize: '12px', color: '#e5484d',
-                          border: '1px solid #e5484d', borderRadius: '8px', background: 'rgba(239,68,68,0.06)',
-                          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px',
-                        }}
-                      >
-                        <span>{duplicateError.message}. It cannot be added twice.</span>
-                        {duplicateError.existing?.id && (
-                          <button type="button" className="btn btn-secondary btn-sm" onClick={() => onOpenExisting(duplicateError.existing!.id)}>
-                            Open it
-                          </button>
-                        )}
+                      <div role="alert" style={{ marginTop: '6px', fontSize: '12px', color: '#e5484d' }}>
+                        {duplicateError.message}
                       </div>
                     )}
                   </>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { overlayClose } from '../components/overlayClose';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getCompletedSurveys, exportSurveys, getStakeholderById, getExportSyncStatus, getSurveysForReview, resolveSurveyReview, type ExportFormat } from '../api';
 import {
@@ -382,7 +383,7 @@ function SurveyDetailsModal({ stakeholderId, onClose }: { stakeholderId: string;
 
   if (isLoading || (!stakeholder && !isError)) {
     return (
-      <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-overlay" {...overlayClose(onClose)}>
         <div className="gallery-modal" onClick={(e) => e.stopPropagation()}>
           <PageLoader label="Loading stakeholder…" />
         </div>
@@ -392,7 +393,7 @@ function SurveyDetailsModal({ stakeholderId, onClose }: { stakeholderId: string;
 
   if (isError || !stakeholder) {
     return (
-      <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-overlay" {...overlayClose(onClose)}>
         <div className="gallery-modal" onClick={(e) => e.stopPropagation()} style={{ padding: '32px', textAlign: 'center' }}>
           <p style={{ color: 'var(--text-muted)' }}>Could not load this stakeholder's details.</p>
           <button className="btn btn-secondary btn-sm" onClick={onClose}>Close</button>
