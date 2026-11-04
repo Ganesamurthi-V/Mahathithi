@@ -3,6 +3,7 @@ import { StakeholderController } from './stakeholder.controller';
 import { authMiddleware, adminOnly } from '../../middleware/auth';
 import { districtGuard } from '../../middleware/district-guard';
 import { denyDistrictAdmin } from '../../middleware/district-admin-gate';
+import { suggestLimiter } from '../../middleware/rate-limiter';
 
 const router = Router();
 const controller = new StakeholderController();
@@ -11,6 +12,8 @@ const controller = new StakeholderController();
 router.use(authMiddleware);
 
 router.get('/search', controller.search);
+// Declared before '/:id' so 'suggest' is not swallowed as an id parameter.
+router.get('/suggest', suggestLimiter, controller.suggest);
 router.get('/assigned/paged', denyDistrictAdmin, controller.getAssignedPaged); // paginated sync — safe for 1 L+ rows
 router.get('/assigned', denyDistrictAdmin, controller.getAssigned);            // legacy — kept for backward compat
 

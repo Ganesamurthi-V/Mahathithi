@@ -1,7 +1,9 @@
 import { Response, NextFunction } from 'express';
 import { StakeholderService } from './stakeholder.service';
 import { AuthenticatedRequest } from '../../middleware/auth';
-import { ValidationError } from '../../utils/errors';
+import { ValidationError, ForbiddenError } from '../../utils/errors';
+import { isStaff, isScopedStaff } from '../../utils/roles';
+import { buildSuggestQuery } from '../../utils/stakeholder-name';
 import { updateStakeholderSchema, createStakeholderSchema } from '../../schemas/request-schemas';
 import { claimStakeholders } from '../../utils/stakeholder-assignment';
 import { broadcastChange } from '../../realtime/events';
@@ -34,6 +36,35 @@ export class StakeholderController {
         isDistrictAdmin: req.enumerator!.isDistrictAdmin,
       });
 
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Live name suggestions for the admin panel's Add Stakeholder form.
+   *
+   * Admin-panel users only: a field enumerator has no use for it, and it would let them probe
+   * names outside their own work. A district admin sees only their districts; a full admin sees
+   * everything. Anything too short to search returns an empty list, not an error, so a user
+   * still typing is never shown a failure.
+   */
+  async suggest(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!isStaff(req.enumerator)) {
+        throw new ForbiddenError('Suggestions are available to admin-panel users only');
+      }
+
+      const query = buildSuggestQuery(req.query.q, req.query.limit);
+      if (!query) {
+        res.json({ success: true, data: { suggestions: [], exactMatch: null } });
+        return;
+      }
+
+      const scope = isScopedStaff(req.enumerator) ? req.enumerator!.districts : null;
+      const district = typeof req.query.district === 'string' ? req.query.district.slice(0, 200) : undefined;
+      const result = await stakeholderService.suggest(query, scope, district);
       res.json({ success: true, data: result });
     } catch (error) {
       next(error);
@@ -150,7 +181,8 @@ export class StakeholderController {
       const result = await stakeholderService.updateStakeholder(
         (req.params.id as string),
         validated,
-        req.enumerator!.id
+        req.enumerator!.id,
+        { staff: isStaff(req.enumerator) }
       );
 
       res.json({ success: true, data: result });
@@ -167,6 +199,7 @@ export class StakeholderController {
         id: req.enumerator!.id,
         districts: req.enumerator!.districts,
         isAdmin: req.enumerator!.isAdmin,
+        isDistrictAdmin: req.enumerator!.isDistrictAdmin,
       });
 
       res.status(201).json({ success: true, data: result });

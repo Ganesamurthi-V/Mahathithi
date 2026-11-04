@@ -56,3 +56,48 @@ export class ConflictError extends AppError {
     super(message, 409, 'CONFLICT');
   }
 }
+
+/** Fields of an existing stakeholder that a duplicate-name refusal can point at. */
+export interface DuplicateStakeholderMatch {
+  id?: string;
+  name: string | null;
+  district: string | null;
+  city: string | null;
+  pinCode?: string | null;
+  status?: string | null;
+}
+
+/**
+ * Creating or renaming a stakeholder would duplicate another business name in the same district.
+ *
+ * Its own code (not ConflictError's 'CONFLICT') so clients can recognise it and offer to open the
+ * existing record. The message is a complete sentence for clients that only print it. `existing`
+ * carries the record for the admin panel; a field enumerator gets only the name, district and city,
+ * so a closed or unassigned record's id and status are not exposed to them.
+ */
+export class DuplicateStakeholderError extends AppError {
+  public errors: any[];
+
+  constructor(existing: DuplicateStakeholderMatch, revealDetails: boolean) {
+    const where = existing.district ? ` in ${existing.district}` : '';
+    const city = existing.city ? ` (${existing.city})` : '';
+    const message = `A business named "${existing.name ?? ''}" already exists${where}${city}`;
+    super(message, 409, 'DUPLICATE_STAKEHOLDER');
+    this.errors = [
+      {
+        field: 'companyNameStandardized',
+        message,
+        existing: revealDetails
+          ? {
+              id: existing.id,
+              name: existing.name,
+              district: existing.district,
+              city: existing.city,
+              pinCode: existing.pinCode ?? null,
+              status: existing.status ?? null,
+            }
+          : { name: existing.name, district: existing.district, city: existing.city },
+      },
+    ];
+  }
+}

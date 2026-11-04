@@ -4,6 +4,7 @@ import { canonicalizeDistricts } from './district-scope';
 import { logger } from './logger';
 import { allocateEqualSplit } from './work-split';
 import { intEnv } from './env';
+import { LOCK_NS_ENUMERATOR, LOCK_NS_DISTRICT } from './advisory-locks';
 
 /**
  * Work assignment: each enumerator holds a bounded, exclusive, FAIR share.
@@ -121,8 +122,7 @@ type Db = Prisma.TransactionClient;
 // The lock statements use $executeRaw, not $queryRaw: pg_advisory_xact_lock returns
 // void, and $queryRaw cannot deserialize a void column (PostgreSQL 17 / Prisma 6), which
 // made every claim, rebalance and idle release fail with P2010.
-const LOCK_NS_ENUMERATOR = 1;
-const LOCK_NS_DISTRICT = 2;
+// The namespace numbers live in ./advisory-locks so every feature's lock is listed in one place.
 
 export interface ClaimResult {
   /** Rows newly claimed by this call. */

@@ -424,14 +424,23 @@ function AddStakeholderModal({
       setForm(blankForm());
       onCreated(created);
     } catch (e: any) {
-      const detail = e.response?.data?.error?.details?.[0];
-      Alert.alert(
-        'Could not add stakeholder',
-        (detail ? `${detail.path?.join('.') || 'field'}: ${detail.message}` : null) ||
-          e.response?.data?.error?.message ||
-          e.message ||
-          'Please try again.'
-      );
+      const body = e.response?.data?.error;
+      if (body?.code === 'DUPLICATE_STAKEHOLDER') {
+        // The server found the same business name already in this district. Its message is a
+        // complete sentence naming the existing record, so it is shown as is.
+        Alert.alert('Already exists', `${body.message}. It cannot be added twice.`);
+      } else {
+        const detail = body?.details?.[0];
+        // The server names the field in `field` (older code here read `path`, which is not sent).
+        const field = detail?.field ?? detail?.path?.join('.');
+        Alert.alert(
+          'Could not add stakeholder',
+          (detail ? `${field ? field + ': ' : ''}${detail.message}` : null) ||
+            body?.message ||
+            e.message ||
+            'Please try again.'
+        );
+      }
     } finally {
       setSaving(false);
     }

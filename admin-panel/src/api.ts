@@ -263,6 +263,15 @@ export const getDashboardStats = () => api.get('/dashboard/stats');
 // Stakeholders
 export const searchStakeholders = (params: any) => api.get('/stakeholders/search', { params });
 export const getStakeholderById = (id: string) => api.get(`/stakeholders/${id}`);
+/**
+ * Live name suggestions for the Add Stakeholder form. `signal` lets react-query cancel a request
+ * the person has already typed past, so slow answers never arrive after fast ones.
+ */
+export const suggestStakeholders = (q: string, district?: string, opts?: { signal?: AbortSignal }) =>
+  api.get('/stakeholders/suggest', {
+    params: { q, ...(district ? { district } : {}) },
+    signal: opts?.signal,
+  });
 export const updateStakeholder = (id: string, data: any) => api.patch(`/stakeholders/${id}`, data);
 export const createStakeholder = (data: any) => api.post('/stakeholders', data);
 /**

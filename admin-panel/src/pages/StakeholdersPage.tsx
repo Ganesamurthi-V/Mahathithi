@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage, updateSurvey, finalizeSurvey, uploadMedia, takeSurvey } from '../api';
-import type { District } from '../types';
+import { searchStakeholders, updateStakeholder, createStakeholder, deleteStakeholder, getStakeholderById, getSurveyByStakeholder, getMediaBySurvey, getDistricts, getErrorMessage, updateSurvey, finalizeSurvey, uploadMedia, takeSurvey } from '../api';
+import type { District, NameMatch } from '../types';
+import NameSuggestInput from '../components/NameSuggestInput';
 import { getDigiPin } from '../utils/digipin';
 import { useUser, isDistrictAdminUser } from '../UserContext';
 import {
@@ -134,7 +135,7 @@ export default function StakeholdersPage() {
     const timer = setTimeout(() => {
       setDebouncedFilters(filters);
       setPage(1); // Reset to page 1 on search
-    }, 500);
+    }, 300); // the name filter is index-backed now, so it can follow typing closely
     return () => clearTimeout(timer);
   }, [filters]);
 
@@ -177,6 +178,18 @@ export default function StakeholdersPage() {
   // PERF: stable handler reference so memoized rows don't re-render on every keystroke.
   const handleSelect = useCallback((s: any) => setSelectedStakeholder(s), []);
 
+  // From the Add Stakeholder form: the business being typed already exists, so open that record
+  // instead. The suggestion carries only a few columns, so the full record is fetched first.
+  const openExistingById = async (id: string) => {
+    try {
+      const res = await getStakeholderById(id);
+      setShowAddForm(false);
+      setSelectedStakeholder(res.data.data);
+    } catch (err) {
+      alert(getErrorMessage(err, 'Could not open that record'));
+    }
+  };
+
   // A refresh of data already on screen, as distinct from the very first load.
   const isRefreshing = isFetching && !isLoading;
 
@@ -197,7 +210,7 @@ export default function StakeholdersPage() {
         </button>
       </div>
 
-      {showAddForm && <AddStakeholderModal onClose={() => setShowAddForm(false)} />}
+      {showAddForm && <AddStakeholderModal onClose={() => setShowAddForm(false)} onOpenExisting={openExistingById} />}
 
       <div className="card" style={{ marginBottom: '24px' }}>
         <form onSubmit={handleSearch} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -1163,8 +1176,12 @@ const ADD_FIELDS: AddField[] = [
  * primaryKeyId, createdAt, updatedAt, status, lockedById, lockedAt, dataSource)
  * are never accepted from a client.
  */
-function AddStakeholderModal({ onClose }: { onClose: () => void }) {
+function AddStakeholderModal({ onClose, onOpenExisting }: { onClose: () => void; onOpenExisting: (id: string) => void }) {
   const queryClient = useQueryClient();
+  // The same name already in the chosen district, found live while typing (see NameSuggestInput).
+  const [exactMatch, setExactMatch] = useState<NameMatch | null>(null);
+  // The server's refusal, if the live check was missed or the record appeared a moment ago.
+  const [duplicateError, setDuplicateError] = useState<{ message: string; existing?: NameMatch } | null>(null);
 
   const [form, setForm] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
@@ -1193,7 +1210,10 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
 
-  const set = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
+  const set = (key: string, value: string) => {
+    setForm(prev => ({ ...prev, [key]: value }));
+    if (key === 'companyNameStandardized') setDuplicateError(null);
+  };
 
   const createMut = useMutation({
     mutationFn: () => {
@@ -1212,6 +1232,13 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
       onClose();
     },
     onError: (err: any) => {
+      // A duplicate name is not a fault: it is shown beside the name field, with a way to open the
+      // record that is already there, instead of in a pop-up.
+      const body = err?.response?.data?.error;
+      if (err?.response?.status === 409 && body?.code === 'DUPLICATE_STAKEHOLDER') {
+        setDuplicateError({ message: body.message, existing: body.details?.[0]?.existing });
+        return;
+      }
       // getErrorMessage already unpacks the server's validation `details` (field +
       // message). The old inline version read `detail.path`, but the backend sends
       // `detail.field`, so the field name never actually showed.
@@ -1229,6 +1256,7 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
       alert('Select a district.');
       return;
     }
+    if (exactMatch) return; // already flagged beside the field; the button is disabled too
     createMut.mutate();
   };
 
@@ -1271,6 +1299,37 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
                     rows={2}
                     style={{ resize: 'vertical' }}
                   />
+                ) : f.key === 'companyNameStandardized' ? (
+                  <>
+                    <NameSuggestInput
+                      value={form[f.key] ?? ''}
+                      onChange={(v) => set(f.key, v)}
+                      district={district}
+                      onOpenExisting={onOpenExisting}
+                      onExactMatch={setExactMatch}
+                      disabled={createMut.isPending}
+                      placeholder={f.placeholder}
+                      maxLength={f.maxLength}
+                      autoFocus
+                    />
+                    {duplicateError && (
+                      <div
+                        role="alert"
+                        style={{
+                          marginTop: '6px', padding: '8px 10px', fontSize: '12px', color: '#e5484d',
+                          border: '1px solid #e5484d', borderRadius: '8px', background: 'rgba(239,68,68,0.06)',
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px',
+                        }}
+                      >
+                        <span>{duplicateError.message}. It cannot be added twice.</span>
+                        {duplicateError.existing?.id && (
+                          <button type="button" className="btn btn-secondary btn-sm" onClick={() => onOpenExisting(duplicateError.existing!.id)}>
+                            Open it
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <input
                     className="form-input"
@@ -1301,7 +1360,7 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
                 className="form-input"
                 list="add-stakeholder-districts"
                 value={district}
-                onChange={(e) => setDistrict(e.target.value)}
+                onChange={(e) => { setDistrict(e.target.value); setDuplicateError(null); }}
                 placeholder={districtsLoading ? 'Loading districts…' : 'Type to search…'}
                 disabled={createMut.isPending || districtsLoading}
                 autoComplete="off"
@@ -1348,8 +1407,12 @@ function AddStakeholderModal({ onClose }: { onClose: () => void }) {
                 // Only a district that exists in the list may be submitted, so a
                 // typo cannot create a stakeholder in a district that does not
                 // exist (which would then be invisible to every district filter).
-                disabled={!districtNames.includes(district)}
-                title={districtNames.includes(district) ? undefined : 'Select a district from the list first'}
+                disabled={!districtNames.includes(district) || !!exactMatch}
+                title={
+                  exactMatch
+                    ? 'This business already exists in the chosen district'
+                    : districtNames.includes(district) ? undefined : 'Select a district from the list first'
+                }
               >
                 Create Stakeholder
               </LoadingButton>

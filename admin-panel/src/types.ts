@@ -32,3 +32,24 @@ export interface District {
   /** completedSurveysCount as a percentage of stakeholdersCount. */
   coverage: number;
 }
+
+/** An existing stakeholder that a typed business name matches. */
+export interface NameMatch {
+  id: string;
+  name: string | null;
+  city: string | null;
+  district: string | null;
+  pinCode: string | null;
+  status: string;
+}
+
+export interface NameSuggestion extends NameMatch {
+  /** The name is the same as the typed one once case, spaces and punctuation are ignored. */
+  nameKeyEquals: boolean;
+}
+
+export interface NameSuggestResponse {
+  suggestions: NameSuggestion[];
+  /** The same name in the district being created in, or null. */
+  exactMatch: NameMatch | null;
+}
