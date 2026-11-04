@@ -1,0 +1,11 @@
+# Single-page app on Apache/LiteSpeed (Hostinger): any path that is not a real file or
+# folder is served by index.html, so refreshing or opening /enumerators directly does
+# not return a 404. Vercel did this through vercel.json.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>

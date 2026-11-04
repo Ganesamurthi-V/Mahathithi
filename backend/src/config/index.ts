@@ -20,11 +20,17 @@ function requireEnv(name: string, minLength = 1): string {
 
 // Websites allowed to call the API from a browser (the admin panel). Override with
 // CORS_ORIGINS, a comma-separated list, when the panel moves to a new address. The
-// mobile app is not a browser and is not subject to this.
+// mobile app is not a browser and is not subject to this. The list is used for both the
+// HTTP API and the live-update socket.
+const ADMIN_PANEL_ORIGINS = [
+  'https://papayawhip-gull-896138.hostingersite.com', // current admin panel (Hostinger)
+  'https://mahaatithi.gov.in',
+  'https://mahathithi.vercel.app',
+];
 const DEFAULT_CORS_ORIGINS =
   process.env.NODE_ENV === 'production'
-    ? ['https://mahaatithi.gov.in', 'https://mahathithi.vercel.app', 'http://localhost:5173']
-    : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'https://mahathithi.vercel.app'];
+    ? [...ADMIN_PANEL_ORIGINS, 'http://localhost:5173']
+    : [...ADMIN_PANEL_ORIGINS, 'http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'];
 
 export const config = {
   env: process.env.NODE_ENV || 'development',
