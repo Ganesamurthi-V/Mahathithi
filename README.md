@@ -198,7 +198,7 @@ For Android Emulator: API_BASE_URL=http://10.0.2.2:3000/api (The emulator uses 1
 For Physical Device: API_BASE_URL=http://<YOUR_LAPTOP_WIFI_IP>:3000/api
 Launch your Android Emulator via Android Studio (or plug in a physical Android device with USB debugging enabled).
 Run the app: npm run android (or npm start followed by pressing a for Android).
-Once the app launches on the device, log in with an enumerator account (e.g., test / enum@123).
+Once the app launches on the device, log in with an enumerator account (e.g., test / enum@123)..
 
 cd "c:\test file\Manasa project\mobile\android"
 .\gradlew clean
